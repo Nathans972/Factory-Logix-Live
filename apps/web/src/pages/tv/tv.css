@@ -210,10 +210,10 @@
 }
 
 .tv-output-table col.c-op {
-  width: 19%;
+  width: 18%;
 }
 .tv-output-table col.c-operator {
-  width: 12.5%;
+  width: 13.5%;
 }
 .tv-output-table col.c-std,
 .tv-output-table col.c-prior {
@@ -600,4 +600,11 @@
 .tv-table td.tv-defect-empty {
   color: #8a8a8a;
   font-weight: 400;
+}
+
+/* "Multiple Operators" stays on one line */
+.tv-table td.tv-operator-multi {
+  white-space: nowrap;
+  font-size: calc(var(--tv-fs-cell) * 0.72);
+  letter-spacing: 0;
 }

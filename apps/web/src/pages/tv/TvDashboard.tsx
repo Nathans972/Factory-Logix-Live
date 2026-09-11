@@ -12,7 +12,7 @@ import type {
 } from '@fld/shared';
 import { TvClock } from './TvClock';
 import { TvGauge } from './TvGauge';
-import { TV_STYLE_VARS, cellClass, cellText, formatStd } from './tvLogic';
+import { TV_STYLE_VARS, cellClass, cellText, formatStd, rowOperatorLabel } from './tvLogic';
 import './tv.css';
 
 export interface TvDashboardProps {
@@ -40,7 +40,7 @@ export function TvDashboard({ dashboard, showGauge, tz, updatedAt, compact = fal
         <table className="tv-table tv-output-table">
           <colgroup>
             <col className="c-op" />
-            {!grouped && <col className="c-operator" />}
+            <col className="c-operator" />
             <col className="c-std" />
             <col className="c-prior" />
             {columns.map((c) => (
@@ -52,7 +52,7 @@ export function TvDashboard({ dashboard, showGauge, tz, updatedAt, compact = fal
           <thead>
             <tr>
               <th className="t-left">Operation</th>
-              {!grouped && <th className="t-left">Operator</th>}
+              <th className="t-left">Operator</th>
               <th>StdHr</th>
               <th>Prior</th>
               {columns.map((c) => (
@@ -64,13 +64,7 @@ export function TvDashboard({ dashboard, showGauge, tz, updatedAt, compact = fal
           </thead>
           <tbody>
             {rows.map((row) => (
-              <OutputRow
-                key={rowKey(row)}
-                row={row}
-                columns={columns}
-                grouped={grouped}
-                showStdDay={show_std_day}
-              />
+              <OutputRow key={rowKey(row)} row={row} columns={columns} showStdDay={show_std_day} />
             ))}
           </tbody>
         </table>
@@ -117,23 +111,16 @@ function TvHeader({ job }: { job: TvDashboardData['job'] }) {
   );
 }
 
-function OutputRow({
-  row,
-  columns,
-  grouped,
-  showStdDay,
-}: {
-  row: TvRow;
-  columns: WindowColumn[];
-  grouped: boolean;
-  showStdDay: boolean;
-}) {
+function OutputRow({ row, columns, showStdDay }: { row: TvRow; columns: WindowColumn[]; showStdDay: boolean }) {
   // Cells arrive in column order; index defensively in case a column is missing.
   const byHour = new Map<number, TvCell>(row.cells.map((c) => [c.hour_start_utc, c]));
   return (
     <tr className={row.visitor_row ? 'tv-row tv-row-visitor' : 'tv-row'}>
       <td className="t-left tv-op">{row.operation}</td>
-      {!grouped && <td className="t-left tv-operator">{row.operator_name ?? row.operator_id ?? ''}</td>}
+      {/* FactoryLogix user name (e.g. "NSessions"); grouped rows say "Multiple Operators" when several worked the step */}
+      <td className={row.operators.length > 1 ? 't-left tv-operator tv-operator-multi' : 't-left tv-operator'}>
+        {rowOperatorLabel(row)}
+      </td>
       <td className="tv-num">{formatStd(row.std_hr)}</td>
       <td className="tv-num">{row.prior}</td>
       {columns.map((col, i) => {

@@ -10,6 +10,8 @@ import {
   deviceCookieString,
   formatProgressPct,
   formatStd,
+  operatorLabel,
+  rowOperatorLabel,
   msUntilNextHour,
   nextHourBoundary,
   readCookie,
@@ -148,5 +150,28 @@ describe('cell mapping', () => {
     expect(TV_STYLE_VARS['--tv-bg']).toBe(TV_COLORS.background);
     expect(TV_STYLE_VARS['--tv-fg']).toBe(TV_COLORS.primaryText);
     expect(TV_STYLE_VARS['--tv-on-red']).toBe(TV_CELL_TEXT.red);
+  });
+});
+
+describe('operator labels', () => {
+  it('shows the FactoryLogix user name as-is', () => {
+    expect(operatorLabel('NSessions', 'Nathan Sessions')).toBe('NSessions');
+    expect(operatorLabel('JRivera', null)).toBe('JRivera');
+  });
+  it('derives first initial + last name from a full-name id', () => {
+    expect(operatorLabel('Nathan Sessions', null)).toBe('NSessions');
+    expect(operatorLabel('  nathan van sessions ', null)).toBe('Nsessions');
+  });
+  it('falls back to the display name for opaque ids', () => {
+    expect(operatorLabel('10423', 'Nathan Sessions')).toBe('NSessions');
+    expect(operatorLabel('n.sessions@example.com', 'Nathan Sessions')).toBe('NSessions');
+    expect(operatorLabel('10423', null)).toBe('10423');
+    expect(operatorLabel(null, 'x')).toBe('');
+  });
+  it('labels grouped rows', () => {
+    expect(rowOperatorLabel({ operator_id: null, operator_name: null, operators: ['A', 'B'] })).toBe('Multiple Operators');
+    expect(rowOperatorLabel({ operator_id: 'JRivera', operator_name: 'Jasmine Rivera', operators: ['JRivera'] })).toBe('JRivera');
+    expect(rowOperatorLabel({ operator_id: null, operator_name: null, operators: ['LNguyen'] })).toBe('LNguyen');
+    expect(rowOperatorLabel({ operator_id: null, operator_name: null, operators: [] })).toBe('');
   });
 });

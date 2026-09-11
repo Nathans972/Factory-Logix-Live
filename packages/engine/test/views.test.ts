@@ -184,7 +184,13 @@ describe('buildTvDashboard (grouped mode)', () => {
 
   it('produces one row per operation with visitor units folded into the count', () => {
     expect(tv.rows.map((r) => r.operation)).toEqual(['Weld', 'Test']);
-    expect(tv.rows.every((r) => r.operator_id === null && r.operator_name === null)).toBe(true);
+    // grouped rows name a single operator; otherwise operator_id is null and `operators` lists them
+    for (const r of tv.rows) {
+      expect(r.operators.length).toBeGreaterThan(0);
+      if (r.operators.length === 1) expect(r.operator_id).toBe(r.operators[0]);
+      else expect(r.operator_id).toBeNull();
+    }
+    expect(tv.rows[0]!.operators.length).toBeGreaterThan(1);
     const weld = tv.rows[0]!;
     expect(weld.cells[10]!.units).toBe(32); // 25 eligible + 3 + 4 visitor
     expect(weld.cells[11]!.units).toBe(37); // 15 + 20 eligible + 2 visitor

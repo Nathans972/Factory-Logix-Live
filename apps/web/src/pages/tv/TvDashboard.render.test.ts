@@ -13,12 +13,12 @@ const d: TvDashboardData = {
   columns: cols,
   rows: [
     {
-      operation: 'Selective Solder - Top', operation_seq: 1, operator_id: 'JRivera', operator_name: 'J Rivera',
+      operation: 'Selective Solder - Top', operation_seq: 1, operator_id: 'JRivera', operator_name: 'J Rivera', operators: ['JRivera'],
       std_hr: 30, prior: 30, shift: 118, std_day: 360, visitor_row: false,
       cells: cols.map((c, i) => ({ hour_start_utc: c.hour_start_utc, units: i, color: colors[i % colors.length], pace: 0.9, charged_minutes: 60, eligible: true, visitor: colors[i % colors.length] === 'visitor', provisional: i === 11 })),
     },
     {
-      operation: 'Pack', operation_seq: 2, operator_id: 'VISIT', operator_name: null,
+      operation: 'Pack', operation_seq: 2, operator_id: 'VISIT', operator_name: null, operators: ['VISIT'],
       std_hr: null, prior: 0, shift: 6, std_day: null, visitor_row: true,
       cells: cols.map((c) => ({ hour_start_utc: c.hour_start_utc, units: 0, color: 'visitor' as const, pace: null, charged_minutes: 2, eligible: false, visitor: true, provisional: false })),
     },
@@ -33,6 +33,8 @@ describe('TvDashboard smoke', () => {
     expect(html).toContain('WO-26-00187');
     expect(html).toContain('Qty Complete');
     expect(html).toContain('>Operator<');
+    expect(html).toContain('>JRivera<'); // user name, not the display name
+    expect(html).not.toContain('J Rivera');
     expect(html).toContain('StdDay');
     expect(html).toContain('tv-c-red');
     expect(html).toContain('tv-provisional');
@@ -40,9 +42,12 @@ describe('TvDashboard smoke', () => {
     expect(html).toContain('24.60%');
     expect(html).toContain('—'); // std_hr null
   });
-  it('renders grouped + compact without operator column or gauge', () => {
-    const html = renderToStaticMarkup(createElement(TvDashboard, { dashboard: { ...d, grouped: true, show_std_day: false, rows: d.rows.map((r) => ({ ...r, operator_id: null, operator_name: null })) }, showGauge: false, tz: 'UTC', updatedAt: null, compact: true }));
-    expect(html).not.toContain('>Operator<');
+  it('renders grouped + compact with "Multiple Operators" and no gauge', () => {
+    const rows = d.rows.map((r, i) => (i === 0 ? { ...r, operator_id: null, operator_name: null, operators: ['JRivera', 'LNguyen'] } : r));
+    const html = renderToStaticMarkup(createElement(TvDashboard, { dashboard: { ...d, grouped: true, show_std_day: false, rows }, showGauge: false, tz: 'UTC', updatedAt: null, compact: true }));
+    expect(html).toContain('>Operator<');
+    expect(html).toContain('Multiple Operators');
+    expect(html).toContain('>VISIT<'); // single-operator grouped row keeps its name
     expect(html).not.toContain('StdDay');
     expect(html).not.toContain('tv-gauge');
     expect(html).toContain('tv-compact');

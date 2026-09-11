@@ -141,6 +141,8 @@ interface TvRowAcc {
   cells: TvCell[];
   anyEligible: boolean;
   anyVisitor: boolean;
+  eligibleOps: Set<string>;
+  visitorOps: Set<string>;
 }
 
 export function buildTvDashboard(input: TvDashboardInput): TvDashboard {
@@ -177,6 +179,8 @@ export function buildTvDashboard(input: TvDashboardInput): TvDashboard {
         cells: blankRow(columns),
         anyEligible: false,
         anyVisitor: false,
+        eligibleOps: new Set<string>(),
+        visitorOps: new Set<string>(),
       };
       rowAccs.set(key, acc);
     }
@@ -192,6 +196,8 @@ export function buildTvDashboard(input: TvDashboardInput): TvDashboard {
       acc.cells[col] = cell;
       if (cell.eligible) acc.anyEligible = true;
       if (cell.visitor) acc.anyVisitor = true;
+      for (const o of g.eligible_operators) acc.eligibleOps.add(o);
+      for (const o of g.visitor_operators) acc.visitorOps.add(o);
     }
   } else {
     for (const c of cells) {
@@ -200,8 +206,13 @@ export function buildTvDashboard(input: TvDashboardInput): TvDashboard {
       const acc = ensureRow(c.operation, c.operator_id);
       const cell = tvCellFromHourCell(c);
       acc.cells[col] = cell;
-      if (c.eligible) acc.anyEligible = true;
-      else acc.anyVisitor = true;
+      if (c.eligible) {
+        acc.anyEligible = true;
+        acc.eligibleOps.add(c.operator_id);
+      } else {
+        acc.anyVisitor = true;
+        acc.visitorOps.add(c.operator_id);
+      }
     }
   }
 
@@ -226,12 +237,16 @@ export function buildTvDashboard(input: TvDashboardInput): TvDashboard {
       ? priorGrouped.get(acc.operation) ?? 0
       : priorSeparate.get(`${acc.operation}|${acc.operator_id ?? ''}`) ?? 0;
 
+    // Distinct operators inside the window: the eligible ones when there are any, else the visitors.
+    const operators = (acc.eligibleOps.size > 0 ? [...acc.eligibleOps] : [...acc.visitorOps]).sort(cmp);
+    // Grouped rows name their operator only when exactly one operator worked the step.
+    const rowOperator = acc.operator_id ?? (operators.length === 1 ? operators[0]! : null);
     rows.push({
       operation: acc.operation,
       operation_seq: seq(acc.operation),
-      operator_id: acc.operator_id,
-      operator_name:
-        acc.operator_id === null ? null : operator_names[acc.operator_id] ?? acc.operator_id,
+      operator_id: rowOperator,
+      operator_name: rowOperator === null ? null : operator_names[rowOperator] ?? rowOperator,
+      operators,
       std_hr,
       prior: priorUnits,
       cells: acc.cells,

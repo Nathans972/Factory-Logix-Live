@@ -5,7 +5,7 @@
  * three thin wrappers at the bottom that touch `window` / `localStorage` / `document.cookie`.
  * Those guard every browser access so the module can also be imported in a node test environment.
  */
-import { TV_CELL_TEXT, TV_COLORS, type CellColor } from '@fld/shared';
+import { TV_CELL_TEXT, TV_COLORS, type CellColor, type TvRow } from '@fld/shared';
 
 export const DEVICE_TOKEN_KEY = 'fld_device_token';
 /** 10 years, in seconds (spec 8.1: the token survives reboots and normal cache behavior). */
@@ -241,4 +241,29 @@ export function getDeviceToken(isMock: boolean): string {
   const res = resolveDeviceToken({ search, stored: readStoredDeviceToken(), isMock, generate: randomToken });
   if (res.persist) persistDeviceToken(res.token);
   return res.token;
+}
+
+/**
+ * Operator label for the TV: the FactoryLogix user name (e.g. "NSessions"). When the id is opaque
+ * (an email or a number) or is a full name with spaces, derive first initial + last name from the
+ * best available name so the column always reads like a user name.
+ */
+export function operatorLabel(operator_id: string | null, operator_name: string | null): string {
+  if (operator_id === null) return '';
+  const opaque = operator_id.includes('@') || /^\d+$/.test(operator_id);
+  const source = (opaque && operator_name ? operator_name : operator_id).trim();
+  const parts = source.split(/\s+/);
+  if (parts.length < 2) return source;
+  const first = parts[0]!;
+  const last = parts[parts.length - 1]!;
+  return `${first.charAt(0).toUpperCase()}${last}`;
+}
+
+export const MULTIPLE_OPERATORS = 'Multiple Operators';
+
+/** Operator column text for a row: the single operator's user name, or "Multiple Operators". */
+export function rowOperatorLabel(row: Pick<TvRow, 'operator_id' | 'operator_name' | 'operators'>): string {
+  if (row.operators.length > 1) return MULTIPLE_OPERATORS;
+  const id = row.operator_id ?? row.operators[0] ?? null;
+  return operatorLabel(id, row.operator_name);
 }

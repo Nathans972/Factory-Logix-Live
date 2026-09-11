@@ -184,7 +184,9 @@ describe('tv', () => {
       if (token === 'demo-1') {
         expect(dash.rows.some((r) => r.operator_id !== null)).toBe(true);
       } else {
-        expect(dash.rows.every((r) => r.operator_id === null)).toBe(true);
+        // grouped: a row names its operator only when exactly one operator worked the step
+        expect(dash.rows.every((r) => r.operators.length > 0)).toBe(true);
+        expect(dash.rows.every((r) => (r.operators.length === 1 ? r.operator_id === r.operators[0] : r.operator_id === null))).toBe(true);
       }
     });
   }
@@ -258,7 +260,9 @@ describe('tv', () => {
 
     // Grouped mode folds the visitor units into the operation row.
     const grouped = await ds.dashboard(FEATURED_JOB, { grouped: true });
-    expect(grouped.rows.every((r) => r.operator_id === null)).toBe(true);
+    expect(grouped.rows.every((r) => (r.operators.length === 1 ? r.operator_id === r.operators[0] : r.operator_id === null))).toBe(true);
+    // Selective Solder - Top has two operators in the window (blue + red scenario) => "Multiple Operators"
+    expect(grouped.rows.find((r) => r.operation === "Selective Solder - Top")!.operators.length).toBeGreaterThan(1);
     const groupedTop = grouped.rows.find((r) => r.operation === 'Selective Solder - Top')!;
     expect(groupedTop.shift).toBeGreaterThan(
       dash.rows.find((r) => r.operator_id === 'JRivera')!.shift,
