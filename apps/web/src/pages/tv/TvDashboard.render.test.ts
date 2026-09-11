@@ -7,7 +7,7 @@ import { TvDashboard } from './TvDashboard';
 const cols = Array.from({ length: 12 }, (_, i) => ({ hour_start_utc: 1000 + i * 3600000, label: String(10 + i) }));
 const colors = ['blank', 'neutral', 'red', 'yellow', 'green', 'blue', 'visitor'] as const;
 const d: TvDashboardData = {
-  job: { job_number: 'WO-26-00187', product_number: 'PB-2200', product_name: 'Controller Board', qty_released: 500, qty_complete: 123, progress: 0.246 },
+  job: { job_number: 'J00004673-0000', product_number: 'PB-2200', product_name: 'Controller Board', qty_released: 500, qty_complete: 123, progress: 0.246 },
   grouped: false,
   show_std_day: true,
   columns: cols,
@@ -30,7 +30,7 @@ const d: TvDashboardData = {
 describe('TvDashboard smoke', () => {
   it('renders separate mode', () => {
     const html = renderToStaticMarkup(createElement(TvDashboard, { dashboard: d, showGauge: true, tz: 'America/New_York', updatedAt: Date.now() }));
-    expect(html).toContain('WO-26-00187');
+    expect(html).toContain('J00004673-0000');
     expect(html).toContain('Qty Complete');
     expect(html).toContain('>Operator<');
     expect(html).toContain('>JRivera<'); // user name, not the display name

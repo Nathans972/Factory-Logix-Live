@@ -199,39 +199,29 @@ export interface DemoJob {
 }
 
 /** The job both demo TVs show (spec 12.4). */
-export const FEATURED_JOB = 'WO-26-00201';
+export const FEATURED_JOB = 'J00004728-0000';
 /** Second job used by the "display job changed" scenario and the half-hour switcher. */
-export const SECONDARY_JOB = 'WO-26-00199';
+export const SECONDARY_JOB = 'J00004715-0000';
 /** The visitor's own job. */
-export const VISITOR_HOME_JOB = 'WO-26-00196';
+export const VISITOR_HOME_JOB = 'J00004702-0000';
 /** Just-released job (a handful of units only). */
-export const NEW_JOB = 'WO-26-00204';
+export const NEW_JOB = 'J00004733-0000';
 
 const FILLER_PRODUCTS = ['PB-2200', 'IO-410', 'PS-900'];
 
+/** Demo job numbers use the J########-#### shape (invented sequence numbers, no real data). */
+export function jobNumber(seq: number): string {
+  return 'J' + String(seq).padStart(8, '0') + '-0000';
+}
+
 /** 14 older, completed jobs carrying the bulk of the 30 days of history. */
 function fillerJobs(): DemoJob[] {
-  const numbers = [
-    '00121',
-    '00125',
-    '00129',
-    '00133',
-    '00137',
-    '00141',
-    '00146',
-    '00150',
-    '00154',
-    '00158',
-    '00163',
-    '00167',
-    '00171',
-    '00175',
-  ];
+  const numbers = [4601, 4605, 4609, 4613, 4617, 4621, 4626, 4630, 4634, 4638, 4643, 4647, 4651, 4655];
   const qtys = [520, 380, 610, 450, 300, 760, 410, 540, 260, 680, 350, 470, 590, 320];
   return numbers.map((n, i) => {
     const start = 31 - i * 1.9;
     return {
-      job_number: 'WO-26-' + n,
+      job_number: jobNumber(n),
       product_number: FILLER_PRODUCTS[i % 3]!,
       qty_released: qtys[i]!,
       start_days_ago: start,
@@ -245,7 +235,7 @@ function fillerJobs(): DemoJob[] {
 export const JOBS: DemoJob[] = [
   ...fillerJobs(),
   {
-    job_number: 'WO-26-00187',
+    job_number: 'J00004673-0000',
     product_number: 'PB-2200',
     qty_released: 600,
     start_days_ago: 12,
@@ -254,7 +244,7 @@ export const JOBS: DemoJob[] = [
     status: 'Closed',
   },
   {
-    job_number: 'WO-26-00190',
+    job_number: 'J00004681-0000',
     product_number: 'IO-410',
     qty_released: 450,
     start_days_ago: 9,
@@ -263,7 +253,7 @@ export const JOBS: DemoJob[] = [
     status: 'Closed',
   },
   {
-    job_number: 'WO-26-00193',
+    job_number: 'J00004690-0000',
     product_number: 'PS-900',
     qty_released: 800,
     start_days_ago: 2.5,

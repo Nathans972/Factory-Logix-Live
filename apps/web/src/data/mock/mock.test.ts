@@ -53,7 +53,7 @@ describe('simulated world', () => {
       for (const op of p.route) expect(OPERATIONS).toContain(op);
     }
     for (const j of JOBS) {
-      expect(j.job_number).toMatch(/^WO-26-\d{5}$/);
+      expect(j.job_number).toMatch(/^J\d{8}-\d{4}$/);
       expect(j.qty_released).toBeGreaterThanOrEqual(200);
       expect(j.qty_released).toBeLessThanOrEqual(800);
     }
@@ -248,7 +248,7 @@ describe('tv', () => {
 
     // The half-hour job switcher appears on both jobs.
     expect(dash.rows.some((r) => r.operator_id === 'AKowalski' && r.operation === 'ICT')).toBe(true);
-    const other = await ds.dashboard('WO-26-00199', { grouped: false });
+    const other = await ds.dashboard('J00004715-0000', { grouped: false });
     expect(other.rows.some((r) => r.operator_id === 'AKowalski' && r.operation === 'ICT')).toBe(
       true,
     );

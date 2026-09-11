@@ -104,7 +104,8 @@ export class UnitAllocator {
       }
     }
     this.counters.set(key, n);
-    const short = job_number.replace('WO-26-', '');
+    // "J00004673-0000" -> "4673" for compact unit serials like NB-4673-00001
+    const short = job_number.replace(/^J0*/, '').replace(/-\d+$/, '');
     return 'NB-' + short + '-' + String(n).padStart(5, '0');
   }
 
@@ -418,8 +419,8 @@ export function buildActors(): Actor[] {
     visitorActor('SPatel', 'AOI', 5),
     halfHourSwitchActor('AKowalski', 'ICT', SECONDARY_JOB, FEATURED_JOB),
     // Other active jobs so the floor and shift views have rows.
-    steadyActor('EBrooks', 'WO-26-00193', 'SMT Placement', 0, null),
-    steadyActor('CDubois', 'WO-26-00193', 'Conformal Coat', 1, null),
+    steadyActor('EBrooks', 'J00004690-0000', 'SMT Placement', 0, null),
+    steadyActor('CDubois', 'J00004690-0000', 'Conformal Coat', 1, null),
     steadyActor('FHaddad', VISITOR_HOME_JOB, 'Final Inspection', 0, null),
     steadyActor('BOsei', NEW_JOB, 'SMT Placement', 3, null),
   ];
