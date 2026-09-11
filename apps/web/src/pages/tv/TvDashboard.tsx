@@ -163,7 +163,13 @@ function HourCell({ cell }: { cell: TvCell | undefined }) {
   );
 }
 
-function DefectTable({ rows, columns }: { rows: TvDefectRow[]; columns: WindowColumn[] }) {
+/** A defect row is shown only when the step actually has defects (before or inside the window). */
+function hasDefects(row: TvDefectRow): boolean {
+  return row.prior > 0 || row.shift_qty > 0 || row.cells.some((c) => c > 0);
+}
+
+function DefectTable({ rows: allRows, columns }: { rows: TvDefectRow[]; columns: WindowColumn[] }) {
+  const rows = allRows.filter(hasDefects);
   return (
     <table className="tv-table tv-defect-table">
       <colgroup>
@@ -185,6 +191,13 @@ function DefectTable({ rows, columns }: { rows: TvDefectRow[]; columns: WindowCo
         </tr>
       </thead>
       <tbody>
+        {rows.length === 0 && (
+          <tr className="tv-row">
+            <td className="t-left tv-op tv-defect-empty" colSpan={columns.length + 3}>
+              No defects
+            </td>
+          </tr>
+        )}
         {rows.map((row) => (
           <tr key={`${row.operation_seq}|${row.operation}`} className="tv-row">
             <td className="t-left tv-op">{row.operation}</td>

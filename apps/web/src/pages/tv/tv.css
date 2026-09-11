@@ -580,3 +580,24 @@
 .tv-root .tv-gauge-track {
   stroke: #8c8c8c;
 }
+
+/* header laid out like the legacy screen: job at the left, product number about a quarter in,
+   product name past the middle, quantities at the right */
+.tv-root .tv-header {
+  display: grid;
+  grid-template-columns: 27% 22% minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0 1vw;
+  padding-top: 0.8vh;
+  padding-bottom: 1vh;
+}
+
+.tv-root .tv-head-qtys {
+  gap: 3.5vw;
+  padding-right: 0.5vw;
+}
+
+.tv-table td.tv-defect-empty {
+  color: #8a8a8a;
+  font-weight: 400;
+}

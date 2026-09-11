@@ -73,10 +73,10 @@ export function cellText(color: CellColor, units: number): string {
   return String(units);
 }
 
-/** StdHr / StdDay display: an em dash when the standard is unavailable (spec 15 scenario 11). */
+/** StdHr / StdDay display: rounded to the nearest whole number; an em dash when unavailable (spec 15 scenario 11). */
 export function formatStd(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
-  return String(Math.round(v * 100) / 100);
+  return String(Math.round(v));
 }
 
 /** Ring gauge label, matching the old dashboard's "0.00%" (spec 8.3). */

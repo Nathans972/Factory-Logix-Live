@@ -12,8 +12,8 @@ export function TvClock({ tz, updatedAt }: { tz: string; updatedAt: number | nul
 
   return (
     <div className="tv-clock">
-      <div className="tv-clock-time">{formatTime(now, tz, true)}</div>
-      <div className="tv-clock-updated">updated {updatedAt == null ? '—' : formatTime(updatedAt, tz, true)}</div>
+      <div className="tv-clock-time">{formatTime(now, tz)}</div>
+      <div className="tv-clock-updated">updated {updatedAt == null ? '—' : formatTime(updatedAt, tz)}</div>
     </div>
   );
 }

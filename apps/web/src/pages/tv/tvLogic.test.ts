@@ -134,7 +134,8 @@ describe('cell mapping', () => {
   it('formats standards and progress', () => {
     expect(formatStd(null)).toBe('—');
     expect(formatStd(30)).toBe('30');
-    expect(formatStd(28.456)).toBe('28.46');
+    expect(formatStd(28.456)).toBe('28');
+    expect(formatStd(28.5)).toBe('29');
     expect(formatProgressPct(0)).toBe('0.00%');
     expect(formatProgressPct(0.1234)).toBe('12.34%');
     expect(formatProgressPct(null)).toBe('0.00%');
