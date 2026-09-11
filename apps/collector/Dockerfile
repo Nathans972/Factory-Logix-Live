@@ -8,6 +8,8 @@ WORKDIR /app
 
 # ---- build: install every workspace dependency and compile shared -> engine -> collector ----
 FROM base AS build
+# Non-interactive pnpm (it otherwise refuses to purge node_modules without a TTY).
+ENV CI=true
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json .npmrc ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/engine/package.json packages/engine/package.json
