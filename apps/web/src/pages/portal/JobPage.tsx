@@ -13,13 +13,14 @@ import { IS_MOCK } from '../../data';
 import { useLiveRefetch } from '../../lib/useLive';
 import { usePlantTz } from '../../lib/usePlantTz';
 import { downloadCsv } from '../../lib/csv';
-import { formatNum, formatPct } from '../../lib/format';
+import { formatInt, formatNum, formatPct, shortDate } from '../../lib/format';
 import {
   Breadcrumbs,
   Button,
   Card,
   CardHeader,
   ErrorBox,
+  HourlyGrid,
   KpiRow,
   KpiTile,
   PageHeader,
@@ -28,8 +29,8 @@ import {
   Spinner,
   StatusBadge,
   Tabs,
+  cellAccent,
 } from '../../ui';
-import { HourlyGrid, cellAccent, intText, shortDate } from './components/HourlyGrid';
 import { JobDefectsTable, JobOperatorsTable, JobShiftHistoryTable } from './components/JobTables';
 import { rowOperatorLabel } from '../tv/tvLogic';
 
@@ -138,7 +139,7 @@ export function JobPage() {
               </Link>
               {dash.job.product_name ? ' · ' + dash.job.product_name : ''}
               {item?.fl_created_at ? ' · Released ' + shortDate(item.fl_created_at, tz) : ''}
-              {' · ' + intText(dash.job.qty_released) + ' units'}
+              {' · ' + formatInt(dash.job.qty_released) + ' units'}
             </>
           ) : (
             'Loading…'
@@ -172,7 +173,7 @@ export function JobPage() {
               label="Qty complete"
               value={
                 <>
-                  {intText(dash.job.qty_complete)} <span className="kpi-den">/ {intText(dash.job.qty_released)}</span>
+                  {formatInt(dash.job.qty_complete)} <span className="kpi-den">/ {formatInt(dash.job.qty_released)}</span>
                 </>
               }
               hint={<ProgressBar value={dash.job.progress} width="100%" />}
@@ -187,17 +188,17 @@ export function JobPage() {
                   : 'no shift recorded yet'
               }
             />
-            <KpiTile label="Units in window" value={intText(unitsInWindow)} hint="last 12 hours" />
+            <KpiTile label="Units in window" value={formatInt(unitsInWindow)} hint="last 12 hours" />
             <KpiTile
               label="Defects"
-              value={intText(defectsTotal)}
+              value={formatInt(defectsTotal)}
               accent={defectsTotal > 0 ? 'red' : 'none'}
-              hint={intText(defectsWindow) + ' in the window' + (topDefectOps.length ? ' · ' + topDefectOps.join(', ') : '')}
+              hint={formatInt(defectsWindow) + ' in the window' + (topDefectOps.length ? ' · ' + topDefectOps.join(', ') : '')}
             />
             <KpiTile
               label="Operators"
-              value={intText(d.operators.length)}
-              hint={intText(visitors) + ' visitor' + (visitors === 1 ? '' : 's')}
+              value={formatInt(d.operators.length)}
+              hint={formatInt(visitors) + ' visitor' + (visitors === 1 ? '' : 's')}
             />
           </KpiRow>
 

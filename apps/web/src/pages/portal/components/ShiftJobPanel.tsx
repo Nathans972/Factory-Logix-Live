@@ -10,15 +10,14 @@ import { Link } from 'react-router-dom';
 import type { ShiftJobSection, ShiftOperationRow } from '@fld/shared';
 import { Button, Card, CardHeader, DataTable, PaceChip, ProgressBar, StatusBadge, type Column } from '../../../ui';
 import { downloadCsv, type CsvColumn } from '../../../lib/csv';
-import { formatHours } from '../../../lib/format';
-import { formatStdHr, formatUnits } from './numbers';
+import { formatHours, formatInt, formatStdHr } from '../../../lib/format';
 
-/** "2 eligible · 1 visitor", or just the name when a single operator worked the operation. */
+/**
+ * "2 eligible · 1 visitor", or the FactoryLogix user name when a single operator worked the
+ * operation (docs/design/shift-view.html shows "JRivera", never the display name).
+ */
 function operatorsLabel(op: ShiftOperationRow): string {
-  if (op.operators.length === 1) {
-    const only = op.operators[0]!;
-    return only.operator_name ?? only.operator_id;
-  }
+  if (op.operators.length === 1) return op.operators[0]!.operator_id;
   const visitors = op.operators.filter((o) => o.visitor).length;
   const parts = [`${op.eligible_operators} eligible`];
   if (visitors > 0) parts.push(`${visitors} visitor${visitors === 1 ? '' : 's'}`);
@@ -44,13 +43,21 @@ export function ShiftJobPanel({ section }: { section: ShiftJobSection }) {
 
   const columns: Column<ShiftOperationRow>[] = [
     { key: 'operation', header: 'Operation', sortable: false, render: (r) => r.operation },
-    { key: 'operators', header: 'Operators', sortable: false, render: (r) => operatorsLabel(r) },
+    {
+      key: 'operators',
+      header: 'Operators',
+      sortable: false,
+      render: (r) => {
+        const only = r.operators.length === 1 ? r.operators[0]! : null;
+        return <span title={only ? (only.operator_name ?? only.operator_id) : undefined}>{operatorsLabel(r)}</span>;
+      },
+    },
     {
       key: 'std',
       header: 'StdHr',
       align: 'right',
       sortable: false,
-      render: (r) => (r.std_hr == null ? <span className="chip chip-neutral">no std</span> : formatStdHr(r.std_hr)),
+      render: (r) => (r.std_hr == null ? <span className="chip chip-neutral">no std</span> : formatStdHr(r.std_hr, 0)),
     },
     {
       key: 'units',
@@ -59,13 +66,13 @@ export function ShiftJobPanel({ section }: { section: ShiftJobSection }) {
       sortable: false,
       render: (r) => (
         <>
-          {formatUnits(r.units)}
+          {formatInt(r.units)}
           {r.visitor_units > 0 && <span className="num-note"> (+{r.visitor_units} visitor)</span>}
         </>
       ),
     },
     { key: 'charged', header: 'Charged', align: 'right', sortable: false, render: (r) => formatHours(r.charged_minutes / 60, 1) },
-    { key: 'target', header: 'Target', align: 'right', sortable: false, render: (r) => formatUnits(Math.round(r.target_units)) },
+    { key: 'target', header: 'Target', align: 'right', sortable: false, render: (r) => formatInt(Math.round(r.target_units)) },
     {
       key: 'pace',
       header: 'Pace',
@@ -95,7 +102,7 @@ export function ShiftJobPanel({ section }: { section: ShiftJobSection }) {
         actions={
           <>
             <span className="card-sub nowrap">
-              {formatUnits(section.qty_complete)} / {formatUnits(section.qty_released)}
+              {formatInt(section.qty_complete)} / {formatInt(section.qty_released)}
             </span>
             <ProgressBar value={section.progress} />
             <PaceChip pace={section.efficiency} color={section.color} />
@@ -126,13 +133,15 @@ export function ShiftJobPanel({ section }: { section: ShiftJobSection }) {
             r.operators.map((o) => (
               <tr key={`${r.operation}:${o.operator_id}`} className={`row-sub${o.visitor ? ' row-visitor' : ''}`}>
                 <td>
-                  <Link to={`/operators/${encodeURIComponent(o.operator_id)}`}>{o.operator_name ?? o.operator_id}</Link>
+                  <Link title={o.operator_name ?? o.operator_id} to={`/operators/${encodeURIComponent(o.operator_id)}`}>
+                    {o.operator_id}
+                  </Link>
                 </td>
                 <td>{o.eligible ? 'Eligible' : 'Visitor'}</td>
-                <td className="dt-num">{o.eligible ? formatStdHr(r.std_hr) : '—'}</td>
-                <td className="dt-num">{formatUnits(o.units)}</td>
+                <td className="dt-num">{o.eligible ? formatStdHr(r.std_hr, 0) : '—'}</td>
+                <td className="dt-num">{formatInt(o.units)}</td>
                 <td className="dt-num">{o.eligible ? formatHours(o.charged_minutes / 60, 1) : '—'}</td>
-                <td className="dt-num">{o.eligible ? formatUnits(Math.round(o.target_units)) : '—'}</td>
+                <td className="dt-num">{o.eligible ? formatInt(Math.round(o.target_units)) : '—'}</td>
                 <td className="dt-num">
                   <PaceChip pace={o.pace} color={o.color} />
                 </td>

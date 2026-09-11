@@ -1,10 +1,8 @@
 /** The three job-detail tables (docs/design/job-detail.html): operators, shift over shift, defects. */
-import { Link } from 'react-router-dom';
 import type { JobOperatorTotal, JobShiftHistoryRow, TvDashboard, TvDefectRow } from '@fld/shared';
-import { ColorChip, DataTable, HourCellBox, StatusBadge, type Column } from '../../../ui';
+import { ColorChip, DataTable, HourCellBox, PersonCell, StatusBadge, type Column } from '../../../ui';
 import { operatorLabel } from '../../tv/tvLogic';
-import { intText, shortDate } from './HourlyGrid';
-import { formatHours, formatNum, formatPct } from '../../../lib/format';
+import { formatHours, formatInt, formatNum, formatPct, shortDate } from '../../../lib/format';
 
 export function JobOperatorsTable({ rows, exportName }: { rows: JobOperatorTotal[]; exportName: string }) {
   const columns: Column<JobOperatorTotal>[] = [
@@ -12,14 +10,10 @@ export function JobOperatorsTable({ rows, exportName }: { rows: JobOperatorTotal
       key: 'operator',
       header: 'Operator',
       value: (r) => operatorLabel(r.operator_id, r.operator_name),
-      render: (r) => (
-        <Link className="link" title={r.operator_name ?? r.operator_id} to={`/operators/${encodeURIComponent(r.operator_id)}`}>
-          {operatorLabel(r.operator_id, r.operator_name)}
-        </Link>
-      ),
+      render: (r) => <PersonCell id={r.operator_id} name={r.operator_name} />,
     },
     { key: 'operations', header: 'Operations', value: (r) => r.operations.join(' / '), render: (r) => r.operations.join(' / ') || '—' },
-    { key: 'units', header: 'Units', align: 'right', value: (r) => r.units, render: (r) => intText(r.units) },
+    { key: 'units', header: 'Units', align: 'right', value: (r) => r.units, render: (r) => formatInt(r.units) },
     {
       key: 'charged',
       header: 'Charged',
@@ -70,7 +64,7 @@ export function JobShiftHistoryTable({
         </>
       ),
     },
-    { key: 'units', header: 'Units', align: 'right', value: (r) => r.units, render: (r) => intText(r.units) },
+    { key: 'units', header: 'Units', align: 'right', value: (r) => r.units, render: (r) => formatInt(r.units) },
     { key: 'charged', header: 'Charged h', align: 'right', value: (r) => r.charged_hours, render: (r) => formatNum(r.charged_hours, 1) },
     { key: 'earned', header: 'Earned h', align: 'right', value: (r) => r.earned_hours, render: (r) => formatNum(r.earned_hours, 1) },
     {
@@ -97,7 +91,7 @@ export function JobShiftHistoryTable({
 export function JobDefectsTable({ dashboard, exportName }: { dashboard: TvDashboard; exportName: string }) {
   const columns: Column<TvDefectRow>[] = [
     { key: 'operation', header: 'Operation', render: (r) => r.operation },
-    { key: 'prior', header: 'Prior', align: 'right', value: (r) => r.prior, render: (r) => intText(r.prior) },
+    { key: 'prior', header: 'Prior', align: 'right', value: (r) => r.prior, render: (r) => formatInt(r.prior) },
     ...dashboard.columns.map((c, i) => ({
       key: `h${c.hour_start_utc}`,
       header: c.label,
@@ -110,7 +104,7 @@ export function JobDefectsTable({ dashboard, exportName }: { dashboard: TvDashbo
         return <HourCellBox units={n === 0 ? null : n} color={n === 0 ? 'blank' : 'red'} title={`${c.label}:00 · ${n} defects`} />;
       },
     })),
-    { key: 'shift', header: 'Shift qty', align: 'right', value: (r) => r.shift_qty, render: (r) => intText(r.shift_qty) },
+    { key: 'shift', header: 'Shift qty', align: 'right', value: (r) => r.shift_qty, render: (r) => formatInt(r.shift_qty) },
   ];
   return (
     <DataTable

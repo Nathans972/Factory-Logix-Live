@@ -1,47 +1,14 @@
 /**
- * Light-theme hourly output grid for the portal job page (docs/design/job-detail.html).
+ * Light-theme hourly output grid (docs/design/job-detail.html).
  *
  * It renders the same `TvDashboard` DTO as the floor TV but with portal tokens: one `HourCellBox`
  * per hour, the current (provisional) hour outlined. The TV component in `pages/tv` keeps its dark
- * legacy look; the only thing shared with it is the pure `rowOperatorLabel` rule.
+ * legacy look; the only things shared with it are the pure `rowOperatorLabel` / `formatStd` rules.
  */
-import type { CellColor, TvCell, TvDashboard } from '@fld/shared';
-import { HourCellBox, type Accent } from '../../../ui';
-import { formatTime24 } from '../../../lib/format';
-import { rowOperatorLabel } from '../../tv/tvLogic';
-
-/** StdHr / StdDay: whole numbers, like the floor TV, so the two screens never disagree. */
-export function stdText(v: number | null | undefined): string {
-  return intText(v);
-}
-
-/** "Sep 8" — the design never shows a year inside a line of context. */
-export function shortDate(ms: number | null | undefined, tz: string): string {
-  if (ms == null) return '—';
-  return new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric' }).format(ms);
-}
-
-/** Thousands-separated integer ("1,226") for every numeric the design shows grouped. */
-export function intText(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return '—';
-  return Math.round(v).toLocaleString('en-US');
-}
-
-/** Map a pace/efficiency CellColor onto the KPI tile accent names. */
-export function cellAccent(color: CellColor | null | undefined): Accent {
-  switch (color) {
-    case 'red':
-      return 'red';
-    case 'yellow':
-      return 'amber';
-    case 'green':
-      return 'green';
-    case 'blue':
-      return 'blue';
-    default:
-      return 'none';
-  }
-}
+import type { TvCell, TvDashboard } from '@fld/shared';
+import { HourCellBox } from './components';
+import { formatInt, formatTime24 } from '../lib/format';
+import { formatStd, rowOperatorLabel } from '../pages/tv/tvLogic';
 
 /** Hover text for one hourly cell: hour, pace, charged minutes and the visitor/in-progress flags. */
 export function hourCellTitle(cell: TvCell, tz: string): string {
@@ -87,15 +54,15 @@ export function HourlyGrid({ dashboard, tz }: { dashboard: TvDashboard; tz: stri
             <tr key={`${r.operation}|${r.operator_id ?? r.operators.join('+')}`}>
               <td className="hgrid-op">{r.operation}</td>
               <td>{rowOperatorLabel(r)}</td>
-              <td className="n">{stdText(r.std_hr)}</td>
-              <td className="n">{intText(r.prior)}</td>
+              <td className="n">{formatStd(r.std_hr)}</td>
+              <td className="n">{formatInt(r.prior)}</td>
               {r.cells.map((cell) => (
                 <td className="c" key={cell.hour_start_utc}>
                   <HourCellBox units={cell.units} color={cell.color} current={cell.provisional} title={hourCellTitle(cell, tz)} />
                 </td>
               ))}
-              <td className="n">{intText(r.shift)}</td>
-              {dashboard.show_std_day && <td className="n">{stdText(r.std_day)}</td>}
+              <td className="n">{formatInt(r.shift)}</td>
+              {dashboard.show_std_day && <td className="n">{formatStd(r.std_day)}</td>}
             </tr>
           ))}
         </tbody>

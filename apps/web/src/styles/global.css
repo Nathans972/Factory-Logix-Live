@@ -815,6 +815,26 @@ tr.row-visitor td {
   letter-spacing: 0.08em;
 }
 
+/* avatar + two-line identity cell (`PersonCell`): display name over user name */
+.person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.person .avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+  background: var(--fl-neutral-soft);
+  color: var(--fl-text-2);
+  flex: none;
+}
+.person small {
+  display: block;
+  color: var(--fl-text-3);
+  font-size: 12px;
+}
+
 /* ---------------------------------------------------------- 10. chips/badges */
 
 .chip {
@@ -1099,6 +1119,11 @@ select[multiple].input {
   background: var(--fl-surface-2);
   color: var(--fl-text-3);
 }
+/* `.input` sets the `font` shorthand, which resets `.mono`'s family — win on specificity. */
+.input.mono {
+  font-family: var(--fl-mono);
+  font-size: 13px;
+}
 
 .checkbox {
   display: inline-flex;
@@ -1139,6 +1164,30 @@ select[multiple].input {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 0 14px;
+}
+
+/* sticky save bar (settings pages) */
+.sticky-save {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: -4px 0 16px;
+  padding: 12px 16px;
+  background: var(--fl-surface);
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08);
+}
+.sticky-save .msg {
+  color: var(--fl-text-2);
+  font-size: 13px;
+}
+.sticky-save .spacer {
+  flex: 1;
 }
 
 /* ---------------------------------------------- 14. progress / spark / tabs */
@@ -1381,6 +1430,9 @@ select[multiple].input {
 .stepper .step:disabled,
 .stepper span.step {
   cursor: default;
+}
+.stepper span.step[role='button'] {
+  cursor: pointer;
 }
 .stepper .step:disabled {
   opacity: 0.7;

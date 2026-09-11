@@ -1,6 +1,6 @@
 /**
  * Small helpers shared by the admin pages and the first-run wizard (spec 10):
- * role gating, success flashes, confirm dialogs, the clickable stepper and error formatting.
+ * role gating, success flashes, confirm dialogs, field blocks and error formatting.
  *
  * Everything renders with the wave-1 design system (`src/ui`) — no page-specific chrome.
  */
@@ -9,7 +9,7 @@ import type { BackfillProgress } from '@fld/shared';
 import { hasRole, useAuth } from '../../../auth/AuthContext';
 import { DataSourceError } from '../../../data/DataSource';
 import { formatDateTime } from '../../../lib/format';
-import { Button, Card, CardHeader, Modal, Note, PageHeader, ProgressBar, StatusBadge, type BadgeTone } from '../../../ui';
+import { Button, Modal, Note, PageHeader, ProgressBar, StatusBadge, type BadgeTone } from '../../../ui';
 
 /** Wraps an admin-only page body; managers get a "Not allowed" note (spec 10 / 9 role gating). */
 export function AdminOnly({ title, children }: { title: string; children: ReactNode }) {
@@ -143,43 +143,6 @@ export function safeJson(v: unknown): string {
   }
 }
 
-export interface StepDef {
-  label: string;
-  done?: boolean;
-}
-
-/**
- * The design-system `Stepper` pills plus click-to-jump. Identical markup and classes to
- * `ui/components.tsx` `Stepper`; only the buttons are interactive.
- */
-export function StepPills({
-  steps,
-  current,
-  onSelect,
-}: {
-  steps: StepDef[];
-  current: number;
-  onSelect?: (i: number) => void;
-}) {
-  return (
-    <div className="stepper">
-      {steps.map((s, i) => (
-        <button
-          key={s.label}
-          type="button"
-          disabled={!onSelect}
-          className={`step${i === current ? ' on' : ''}${s.done && i !== current ? ' done' : ''}`}
-          onClick={onSelect ? () => onSelect(i) : undefined}
-          aria-current={i === current ? 'step' : undefined}
-        >
-          <span className="n">{s.done && i !== current ? '✓' : i + 1}</span>
-          {s.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /**
  * Like `Field` from the ui kit but rendered as a div, for composite controls
  * (day pickers, job pickers, segmented controls) that must not sit inside a <label>.
@@ -247,31 +210,6 @@ export function BackfillBar({ backfill, tz }: { backfill: BackfillProgress | nul
         )}
       </dl>
     </div>
-  );
-}
-
-/** A card whose body is a plain block — the shape every admin settings section uses. */
-export function SectionCard({
-  title,
-  subtitle,
-  actions,
-  badges,
-  children,
-  bodyless,
-}: {
-  title: ReactNode;
-  subtitle?: ReactNode;
-  actions?: ReactNode;
-  badges?: ReactNode;
-  children: ReactNode;
-  /** skip the padded body (tables render flush) */
-  bodyless?: boolean;
-}) {
-  return (
-    <Card>
-      <CardHeader title={title} subtitle={subtitle} badges={badges} actions={actions} />
-      {bodyless ? children : <div className="card-body">{children}</div>}
-    </Card>
   );
 }
 

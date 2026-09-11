@@ -12,13 +12,14 @@ import {
   KpiTile,
   Note,
   PageHeader,
+  SectionCard,
   Spinner,
   StatusBadge,
   type Accent,
   type BadgeTone,
   type Column,
 } from '../../ui';
-import { ApiError, BackfillBar, SectionCard } from './components/common';
+import { ApiError, BackfillBar } from './components/common';
 
 const STATUS_TONE: Record<SyncStatus, BadgeTone> = { ok: 'ok', degraded: 'warn', down: 'off', never: 'neutral' };
 const STATUS_ACCENT: Record<SyncStatus, Accent> = { ok: 'green', degraded: 'amber', down: 'red', never: 'none' };

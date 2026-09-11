@@ -2,12 +2,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import type { CellColor } from '@fld/shared';
 import type { ShiftViewQuery } from '../../data/DataSource';
 import { useDataSource } from '../../data/DataSourceContext';
 import { useLiveRefetch } from '../../lib/useLive';
 import { usePlantTz } from '../../lib/usePlantTz';
-import { formatHours, formatPct, formatTime } from '../../lib/format';
+import { formatHours, formatInt, formatPct, formatTime } from '../../lib/format';
 import {
   Button,
   Card,
@@ -21,24 +20,13 @@ import {
   Segmented,
   Spinner,
   Tabs,
-  type Accent,
+  cellAccent,
 } from '../../ui';
 import { FilterBar, type ShiftFilters } from './components/FilterBar';
 import { ROLLUP_LABEL, RollupTable, exportRollups, type RollupKind } from './components/RollupTable';
 import { ShiftJobPanel } from './components/ShiftJobPanel';
-import { formatUnits } from './components/numbers';
 
 const FILTER_KEYS = ['job', 'product', 'operation', 'operator'] as const;
-
-const ACCENT: Record<CellColor, Accent> = {
-  red: 'red',
-  yellow: 'amber',
-  green: 'green',
-  blue: 'blue',
-  neutral: 'none',
-  visitor: 'none',
-  blank: 'none',
-};
 
 /** "Thu, Sep 11" in plant-local time. */
 function formatShiftDay(ms: number, tz: string): string {
@@ -167,7 +155,7 @@ export function ShiftPage() {
             )}
             <Input
               type="date"
-              className="input shift-date"
+              className="shift-date"
               aria-label="Shift date"
               value={date}
               onChange={(e) => pickShift(e.target.value, shiftId)}
@@ -195,12 +183,12 @@ export function ShiftPage() {
             <KpiTile
               label="Shift efficiency"
               value={formatPct(v.summary.efficiency)}
-              accent={ACCENT[v.summary.color]}
+              accent={cellAccent(v.summary.color)}
               hint={`${formatHours(v.summary.total_earned_hours, 1)} earned / ${formatHours(v.summary.total_charged_hours, 1)} charged`}
             />
             <KpiTile
               label="Units completed"
-              value={formatUnits(v.summary.total_units)}
+              value={formatInt(v.summary.total_units)}
               hint={`${v.rollups.by_operation.length} operation${v.rollups.by_operation.length === 1 ? '' : 's'}`}
             />
             <KpiTile
@@ -211,7 +199,7 @@ export function ShiftPage() {
             <KpiTile label="Active jobs" value={v.summary.active_jobs} hint={`${products} product${products === 1 ? '' : 's'}`} />
             <KpiTile
               label="Visitor units"
-              value={formatUnits(visitorUnits)}
+              value={formatInt(visitorUnits)}
               hint={visitorUnits > 0 ? 'Excluded from efficiency' : 'No visitor scans'}
             />
             <KpiTile

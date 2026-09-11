@@ -12,7 +12,7 @@ import type { ProductOperationRow, StandardAdjustment, StandardOverride, StdProv
 import { useDataSource } from '../../data/DataSourceContext';
 import { hasRole, useAuth } from '../../auth/AuthContext';
 import { usePlantTz } from '../../lib/usePlantTz';
-import { formatDate, formatDateTime } from '../../lib/format';
+import { formatDate, formatDateTime, formatDecimal, formatInt, formatStdHr, shortDate } from '../../lib/format';
 import {
   Breadcrumbs,
   Button,
@@ -31,7 +31,6 @@ import {
   StatusBadge,
   type Column,
 } from '../../ui';
-import { intText, shortDate } from './components/HourlyGrid';
 
 type ModalKind = 'adjust' | 'override';
 
@@ -46,10 +45,6 @@ const PROVENANCE_WORD: Record<StdProvenance, string> = {
 };
 
 const DAY = 24 * 60 * 60 * 1000;
-
-function stdHr(v: number | null | undefined): string {
-  return v == null ? '—' : v.toFixed(2);
-}
 
 function percentText(a: StandardAdjustment): string {
   return (a.percent > 0 ? '+' : '') + a.percent + '%';
@@ -148,10 +143,10 @@ export function ProductPage() {
       value: (r) => r.standard?.computed_std_hr ?? null,
       render: (r) => (
         <span className="stack">
-          <span>{stdHr(r.standard?.computed_std_hr)}</span>
+          <span>{formatStdHr(r.standard?.computed_std_hr)}</span>
           <small>
             {r.standard
-              ? intText(r.standard.sample_units) +
+              ? formatInt(r.standard.sample_units) +
                 ' units · ' +
                 r.standard.sample_operators +
                 ' operators · ' +
@@ -168,9 +163,9 @@ export function ProductPage() {
       header: 'Median min/unit',
       align: 'right',
       value: (r) => r.standard?.median_minutes_per_unit ?? null,
-      render: (r) => (r.standard?.median_minutes_per_unit == null ? '—' : r.standard.median_minutes_per_unit.toFixed(2)),
+      render: (r) => formatDecimal(r.standard?.median_minutes_per_unit, 2),
     },
-    { key: 'fl', header: 'FL StdHr', align: 'right', value: (r) => r.standard?.fl_std_hr ?? null, render: (r) => stdHr(r.standard?.fl_std_hr) },
+    { key: 'fl', header: 'FL StdHr', align: 'right', value: (r) => r.standard?.fl_std_hr ?? null, render: (r) => formatStdHr(r.standard?.fl_std_hr) },
     {
       key: 'adjustment',
       header: 'Adjustment',
@@ -193,7 +188,7 @@ export function ProductPage() {
       render: (r) =>
         r.effective.override ? (
           <span title={r.effective.override.note ?? ''}>
-            <StatusBadge tone="info">{r.effective.override.std_hr.toFixed(2)}</StatusBadge>
+            <StatusBadge tone="info">{formatStdHr(r.effective.override.std_hr)}</StatusBadge>
           </span>
         ) : (
           '—'
@@ -206,7 +201,7 @@ export function ProductPage() {
       value: (r) => r.effective.effective,
       render: (r) => (
         <span className="stack">
-          <span className="eff-value">{stdHr(r.effective.effective)}</span>
+          <span className="eff-value">{formatStdHr(r.effective.effective)}</span>
           <small>{PROVENANCE_WORD[r.effective.provenance] ?? r.effective.provenance}</small>
         </span>
       ),
@@ -339,7 +334,7 @@ export function ProductPage() {
               ) : (
                 v.overrides.map((o: StandardOverride) => (
                   <div className="list-item" key={o.id}>
-                    <StatusBadge tone="info">{o.std_hr.toFixed(2)}</StatusBadge>
+                    <StatusBadge tone="info">{formatStdHr(o.std_hr)}</StatusBadge>
                     <div className="list-main">
                       <b>{o.operation ?? v.product_name ?? z}</b>
                       <small>

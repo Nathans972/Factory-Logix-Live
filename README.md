@@ -181,3 +181,4 @@ pnpm typecheck                # TypeScript project-wide typecheck
 - [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) — standards, eligibility, pace, and colors explained for managers
 - [`docs/SPEC.md`](docs/SPEC.md) — the full product specification
 - [`docs/API.md`](docs/API.md) — REST/SSE API contract
+- [`docs/DESIGN.md`](docs/DESIGN.md) — portal design system (tokens, components, page patterns); approved reference renderings in `docs/design/`

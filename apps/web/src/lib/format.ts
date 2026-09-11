@@ -48,6 +48,32 @@ export function formatNum(v: number | null | undefined, digits = 0): string {
   return v.toFixed(digits);
 }
 
+/** Grouped decimal with a fixed number of digits ("1,226.50"); an em dash when there is no value. */
+export function formatDecimal(v: number | null | undefined, digits: number): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+/** Thousands-separated integer ("1,226") for every count the design shows grouped. */
+export function formatInt(v: number | null | undefined): string {
+  return formatDecimal(v, 0);
+}
+
+/**
+ * StdHr in the portal: one decimal ("44.2", "48.0"), which is how the product page reads standards.
+ * Pass `digits = 0` where the approved design shows a whole number (the shift view).
+ * The TV's own whole-number rule lives in `pages/tv/tvLogic.ts` (`formatStd`).
+ */
+export function formatStdHr(v: number | null | undefined, digits = 1): string {
+  return formatDecimal(v, digits);
+}
+
+/** "Sep 8" — the design never shows a year inside a line of context. */
+export function shortDate(ms: number | null | undefined, tz: string): string {
+  if (ms == null) return '—';
+  return fmt(tz, { month: 'short', day: 'numeric' }).format(ms);
+}
+
 export function formatMinutes(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
   return `${Math.round(v)} min`;

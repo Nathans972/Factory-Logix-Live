@@ -11,7 +11,7 @@ import { useDataSource } from '../../data/DataSourceContext';
 import { hasRole, useAuth } from '../../auth/AuthContext';
 import { usePlantTz } from '../../lib/usePlantTz';
 import { downloadCsv } from '../../lib/csv';
-import { formatDateTime, formatMinutes, formatNum, formatPct, formatTime } from '../../lib/format';
+import { formatDateTime, formatInt, formatMinutes, formatNum, formatPct, formatTime } from '../../lib/format';
 import {
   Breadcrumbs,
   Button,
@@ -32,10 +32,11 @@ import {
   Select,
   Spinner,
   StatusBadge,
+  cellAccent,
   type Column,
 } from '../../ui';
 import { CellStrip } from './components/CellStrip';
-import { cellAccent, intText, stdText } from './components/HourlyGrid';
+import { formatStd } from '../tv/tvLogic';
 
 type RangeMode = '12h' | 'shift' | 'custom';
 
@@ -202,12 +203,12 @@ export function OperatorPage() {
       header: 'StdHr',
       align: 'right',
       value: (r) => r.std_hr,
-      render: (r) => (r.std_hr == null ? <StatusBadge tone="warn">no std</StatusBadge> : stdText(r.std_hr)),
+      render: (r) => (r.std_hr == null ? <StatusBadge tone="warn">no std</StatusBadge> : formatStd(r.std_hr)),
     },
     { key: 'window', header: 'Window', align: 'right', value: (r) => Math.round(r.window_minutes), render: (r) => formatMinutes(r.window_minutes) },
     { key: 'charged', header: 'Charged', align: 'right', value: (r) => Math.round(r.charged_minutes), render: (r) => formatMinutes(r.charged_minutes) },
-    { key: 'units', header: 'Units', align: 'right', render: (r) => intText(r.units) },
-    { key: 'target', header: 'Target', align: 'right', value: (r) => Math.round(r.target_units), render: (r) => intText(r.target_units) },
+    { key: 'units', header: 'Units', align: 'right', render: (r) => formatInt(r.units) },
+    { key: 'target', header: 'Target', align: 'right', value: (r) => Math.round(r.target_units), render: (r) => formatInt(r.target_units) },
     { key: 'pace', header: 'Pace', align: 'right', value: (r) => r.pace, render: (r) => <PaceChip pace={r.pace} color={r.color} /> },
     {
       key: 'hours',
@@ -326,7 +327,7 @@ export function OperatorPage() {
       {d && (
         <>
           <KpiRow>
-            <KpiTile label="Units in range" value={intText(units)} hint={intText(targetUnits) + ' at standard'} />
+            <KpiTile label="Units in range" value={formatInt(units)} hint={formatInt(targetUnits) + ' at standard'} />
             <KpiTile label="Charged hours" value={formatNum(chargedMinutes / 60, 1)} hint="eligible time against a standard" />
             <KpiTile label="Pace" value={formatPct(pace)} accent={cellAccent(paceColor(pace))} hint={rows.length + ' job/operation rows'} />
             <KpiTile
@@ -355,7 +356,7 @@ export function OperatorPage() {
                         · {s.operation}
                       </div>
                       <small>
-                        {s.product_number} · StdHr {stdText(s.std_hr)} · {intText(s.total_units)} units
+                        {s.product_number} · StdHr {formatStd(s.std_hr)} · {formatInt(s.total_units)} units
                       </small>
                     </div>
                     <CellStrip cells={s.cells} tz={tz} />

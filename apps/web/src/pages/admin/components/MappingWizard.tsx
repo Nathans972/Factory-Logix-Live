@@ -32,11 +32,12 @@ import {
   Note,
   Select,
   Spinner,
+  Stepper,
   type Column,
 } from '../../../ui';
 import { formatDateTime, formatNum } from '../../../lib/format';
 import { usePlantTz } from '../../../lib/usePlantTz';
-import { ApiError, FieldBlock, Flash, StepPills, useFlash } from './common';
+import { ApiError, FieldBlock, Flash, useFlash } from './common';
 
 const STEPS = ['Entity sets', 'Fields', 'Watermarks', 'Test and preview'];
 const OPTIONAL_DATASETS: DatasetName[] = ['defects', 'operators', 'routes', 'standards'];
@@ -265,7 +266,10 @@ export function MappingWizard({
 
   const body = (
     <>
-      <StepPills steps={STEPS.map((label, i) => ({ label, done: i < step }))} current={step} onSelect={setStep} />
+      <Stepper
+        steps={STEPS.map((label, i) => ({ label, state: i === step ? 'current' : i < step ? 'done' : 'todo' }) as const)}
+        onSelect={setStep}
+      />
       <Flash message={flash.message} />
       {refreshM.isError && <ApiError error={refreshM.error} />}
 
@@ -403,7 +407,7 @@ export function MappingWizard({
                   >
                     <Select
                       multiple
-                      className="input multi"
+                      className="multi"
                       size={6}
                       value={dsm.key}
                       onChange={(e) =>

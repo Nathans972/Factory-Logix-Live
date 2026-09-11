@@ -1,7 +1,7 @@
 /* Admin area + first-run setup styles (spec 10).
    global.css owns the theme, the shell and the component library (buttons, cards, tables,
-   badges, drawer, stepper, notes). This file only adds the admin-specific pieces the
-   reference renderings need: the pairing-code boxes, the job picker, the sticky save bar,
+   badges, drawer, stepper, notes, inputs and the sticky save bar). This file only adds the
+   admin-specific pieces the reference renderings need: the pairing-code boxes, the job picker,
    the mapping preview and the first-run wizard chrome. */
 
 /* ---------- Rail extras (legacy sidebar shim) ---------- */
@@ -76,12 +76,6 @@
   }
 }
 
-/* `.input` sets the `font` shorthand, which resets `.mono`'s family — win on specificity. */
-.input.mono {
-  font-family: var(--fl-mono);
-  font-size: 13px;
-}
-
 /* monospace pairing-code chip (docs/design/admin-displays.html `.fl-mono`) */
 .mono-chip {
   font-family: var(--fl-mono);
@@ -129,30 +123,6 @@
 }
 .issues li {
   font-size: 12px;
-}
-
-/* ---------- Sticky save bar (settings pages) ---------- */
-.sticky-save {
-  position: sticky;
-  bottom: 0;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin: -4px 0 16px;
-  padding: 12px 16px;
-  background: var(--fl-surface);
-  border: 1px solid var(--fl-border);
-  border-radius: var(--fl-radius);
-  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08);
-}
-.sticky-save .msg {
-  color: var(--fl-text-2);
-  font-size: 13px;
-}
-.sticky-save .spacer {
-  flex: 1;
 }
 
 /* actions row inside a card body (non-sticky forms) */

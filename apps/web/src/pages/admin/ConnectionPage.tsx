@@ -11,14 +11,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SettingsPatch } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
 import { usePlantTz } from '../../lib/usePlantTz';
-import { Button, PageHeader, Spinner } from '../../ui';
+import { Button, PageHeader, SectionCard, Spinner } from '../../ui';
 import {
   AdminOnly,
   ApiError,
   BackfillBar,
   ConfirmModal,
   Flash,
-  SectionCard,
   TIMEZONE_DATALIST_ID,
   TimeZoneDatalist,
   isValidTimeZone,

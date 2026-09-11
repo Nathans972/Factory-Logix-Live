@@ -10,10 +10,11 @@ import { useDataSource } from '../../data/DataSourceContext';
 import { useLiveRefetch } from '../../lib/useLive';
 import { usePlantTz } from '../../lib/usePlantTz';
 import { downloadCsv } from '../../lib/csv';
-import { formatDateTime, relativeMinutes } from '../../lib/format';
+import { formatDateTime, relativeMinutes, shortDate } from '../../lib/format';
 import {
   Button,
   Card,
+  CodeInput,
   DataTable,
   Drawer,
   Field,
@@ -26,7 +27,6 @@ import {
   type Column,
 } from '../../ui';
 import { AdminOnly, ApiError, ConfirmModal, FieldBlock, Flash, useFlash } from './components/common';
-import { CodeInput } from './components/CodeInput';
 import { JobPicker } from './components/JobPicker';
 
 interface DisplayFormState {
@@ -61,12 +61,6 @@ function formFor(d: Display): DisplayFormState {
     shift_length_hours: String(d.shift_length_hours),
     show_gauge: d.show_gauge,
   };
-}
-
-/** "Sep 2" — the claim date in the list, without the year (docs/design/admin-displays.html). */
-function shortDate(ms: number | null | undefined, tz: string): string {
-  if (ms == null) return '—';
-  return new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric' }).format(ms);
 }
 
 function optionsText(d: Display): string {

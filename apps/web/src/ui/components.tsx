@@ -28,6 +28,22 @@ export function KpiRow({ children }: { children: ReactNode }) {
   return <div className="kpi-row">{children}</div>;
 }
 
+/** Map a pace/efficiency `CellColor` onto the KPI tile accent names. */
+export function cellAccent(color: CellColor | null | undefined): Accent {
+  switch (color) {
+    case 'red':
+      return 'red';
+    case 'yellow':
+      return 'amber';
+    case 'green':
+      return 'green';
+    case 'blue':
+      return 'blue';
+    default:
+      return 'none';
+  }
+}
+
 // -------------------------------------------------------------------- card
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
@@ -42,6 +58,31 @@ export function CardHeader({ title, subtitle, badges, actions }: { title: ReactN
       {badges}
       {actions != null && <div className="card-actions">{actions}</div>}
     </header>
+  );
+}
+
+/** A card whose body is a plain padded block — the shape every settings section uses. */
+export function SectionCard({
+  title,
+  subtitle,
+  actions,
+  badges,
+  children,
+  bodyless,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  badges?: ReactNode;
+  children: ReactNode;
+  /** skip the padded body (tables render flush) */
+  bodyless?: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader title={title} subtitle={subtitle} badges={badges} actions={actions} />
+      {bodyless ? children : <div className="card-body">{children}</div>}
+    </Card>
   );
 }
 
@@ -180,11 +221,29 @@ export function Drawer({
 
 export type StepState = 'done' | 'current' | 'todo';
 
-export function Stepper({ steps }: { steps: { label: ReactNode; state: StepState }[] }) {
+/** Wizard progress pills. Pass `onSelect` to make them clickable (the mapping wizard jumps steps). */
+export function Stepper({ steps, onSelect }: { steps: { label: ReactNode; state: StepState }[]; onSelect?: (index: number) => void }) {
   return (
     <div className="stepper">
       {steps.map((s, i) => (
-        <span key={i} className={`step${s.state === 'current' ? ' on' : s.state === 'done' ? ' done' : ''}`}>
+        <span
+          key={i}
+          className={`step${s.state === 'current' ? ' on' : s.state === 'done' ? ' done' : ''}`}
+          role={onSelect ? 'button' : undefined}
+          tabIndex={onSelect ? 0 : undefined}
+          aria-current={s.state === 'current' ? 'step' : undefined}
+          onClick={onSelect ? () => onSelect(i) : undefined}
+          onKeyDown={
+            onSelect
+              ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelect(i);
+                  }
+                }
+              : undefined
+          }
+        >
           <span className="n">{s.state === 'done' ? '✓' : i + 1}</span>
           {s.label}
         </span>
@@ -266,6 +325,25 @@ export function Avatar({ name }: { name: string }) {
   return (
     <span className="avatar" title={name}>
       {initials(name)}
+    </span>
+  );
+}
+
+/**
+ * Avatar + two-line identity cell used by every operator table: the display name on top, the
+ * FactoryLogix user name underneath, both linking to the operator page.
+ */
+export function PersonCell({ id, name }: { id: string; name?: string | null }) {
+  const primary = name ?? id;
+  return (
+    <span className="person">
+      <Avatar name={primary} />
+      <span>
+        <Link className="link" to={`/operators/${encodeURIComponent(id)}`}>
+          {primary}
+        </Link>
+        {primary !== id && <small>{id}</small>}
+      </span>
     </span>
   );
 }

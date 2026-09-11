@@ -17,12 +17,13 @@ import {
   EmptyState,
   Field,
   Input,
+  SectionCard,
   Select,
   Spinner,
   PageHeader,
   type Column,
 } from '../../ui';
-import { ApiError, ConfirmModal, Flash, SectionCard, useFlash } from './components/common';
+import { ApiError, ConfirmModal, Flash, useFlash } from './components/common';
 import { SettingsForm, type SettingsGroup } from './components/SettingsForm';
 
 const COMPUTATION_GROUP: SettingsGroup = {

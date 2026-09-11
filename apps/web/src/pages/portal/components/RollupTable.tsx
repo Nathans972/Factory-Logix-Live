@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom';
 import type { RollupRow } from '@fld/shared';
 import { ColorChip, DataTable, type Column } from '../../../ui';
 import { downloadCsv, type CsvColumn } from '../../../lib/csv';
-import { formatPct } from '../../../lib/format';
-import { formatUnits } from './numbers';
+import { formatInt, formatPct } from '../../../lib/format';
 
 export type RollupKind = 'job' | 'operation' | 'operator';
 
@@ -69,7 +68,7 @@ export function RollupTable({ rows, kind }: { rows: RollupRow[]; kind: RollupKin
           },
         ]
       : []),
-    { key: 'units', header: 'Units', align: 'right', value: (r) => r.units, render: (r) => formatUnits(r.units) },
+    { key: 'units', header: 'Units', align: 'right', value: (r) => r.units, render: (r) => formatInt(r.units) },
     { key: 'charged', header: 'Charged h', align: 'right', value: (r) => r.charged_hours, render: (r) => r.charged_hours.toFixed(1) },
     { key: 'earned', header: 'Earned h', align: 'right', value: (r) => r.earned_hours, render: (r) => r.earned_hours.toFixed(1) },
     {

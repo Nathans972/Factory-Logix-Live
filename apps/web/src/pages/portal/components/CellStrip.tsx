@@ -5,9 +5,8 @@
  * above, so a strip and a grid row read identically.
  */
 import type { TvCell } from '@fld/shared';
-import { HourCellBox } from '../../../ui';
+import { HourCellBox, hourCellTitle } from '../../../ui';
 import { formatTime24 } from '../../../lib/format';
-import { hourCellTitle } from './HourlyGrid';
 
 export function hourLabel(hourStartUtc: number, tz: string): string {
   return formatTime24(hourStartUtc, tz).slice(0, 2);

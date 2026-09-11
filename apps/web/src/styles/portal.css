@@ -224,26 +224,6 @@
   text-decoration: underline;
 }
 
-/* --- floor: operator identity cell --------------------------------------- */
-.person {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.person .avatar {
-  width: 28px;
-  height: 28px;
-  font-size: 11px;
-  background: var(--fl-neutral-soft);
-  color: var(--fl-text-2);
-  flex: none;
-}
-.person small {
-  display: block;
-  color: var(--fl-text-3);
-  font-size: 12px;
-}
-
 /* =========================================================================
    job + product + operator  (wave 2B)
    Page-level glue for the job detail, product standards, operator detail and
@@ -322,13 +302,6 @@ a.btn {
 }
 .list-item .list-main b {
   font-weight: 600;
-}
-
-/* Avatar + operator id cell (operators list). */
-.who-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
 }
 
 /* Qty + progress cell (jobs list). */

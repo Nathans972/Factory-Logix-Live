@@ -41,7 +41,7 @@ export function FilterBar({ initial, onChange }: { initial: ShiftFilters; onChan
       {FIELDS.map((f) => (
         <Input
           key={f.key}
-          className="input filter-input"
+          className="filter-input"
           aria-label={f.placeholder}
           placeholder={f.placeholder}
           value={v[f.key]}

@@ -4,9 +4,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { JobListItem } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
-import { relativeMinutes } from '../../lib/format';
+import { formatInt, relativeMinutes } from '../../lib/format';
 import { DataTable, ErrorBox, Input, PageHeader, ProgressBar, Segmented, Spinner, StatusBadge, type Column } from '../../ui';
-import { intText } from './components/HourlyGrid';
 import { useDebounced } from './components/useDebounced';
 
 const CLOSED_RE = /clos|complet|cancel/i;
@@ -74,7 +73,7 @@ export function JobsPage() {
       render: (r) => (
         <span className="qty-cell">
           <span>
-            {intText(r.qty_complete_effective)} <span className="kpi-den">/ {intText(r.qty_released)}</span>
+            {formatInt(r.qty_complete_effective)} <span className="kpi-den">/ {formatInt(r.qty_released)}</span>
           </span>
           <ProgressBar value={r.progress} width={90} />
         </span>

@@ -6,9 +6,8 @@ import type { FloorRow } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
 import { useLiveRefetch } from '../../lib/useLive';
 import { usePlantTz } from '../../lib/usePlantTz';
-import { formatTime, relativeMinutes } from '../../lib/format';
+import { formatInt, formatTime, relativeMinutes } from '../../lib/format';
 import {
-  Avatar,
   Button,
   Card,
   CardHeader,
@@ -19,13 +18,13 @@ import {
   KpiTile,
   PaceChip,
   PageHeader,
+  PersonCell,
   Spinner,
   StatusBadge,
   Switch,
   type Column,
 } from '../../ui';
 import { downloadCsv, type CsvColumn } from '../../lib/csv';
-import { formatUnits } from './components/numbers';
 
 /** Engine default; the floor page does not pull the (admin-gated) settings document just for a label. */
 const IDLE_FLAG_MINUTES = 15;
@@ -90,17 +89,7 @@ export function FloorPage() {
       key: 'operator',
       header: 'Operator',
       value: (r) => r.operator_name ?? r.operator_id,
-      render: (r) => (
-        <span className="person">
-          <Avatar name={r.operator_name ?? r.operator_id} />
-          <span>
-            <Link className="link" to={`/operators/${encodeURIComponent(r.operator_id)}`}>
-              {r.operator_name ?? r.operator_id}
-            </Link>
-            <small>{r.operator_id}</small>
-          </span>
-        </span>
-      ),
+      render: (r) => <PersonCell id={r.operator_id} name={r.operator_name} />,
     },
     {
       key: 'job',
@@ -126,9 +115,9 @@ export function FloorPage() {
       ),
     },
     { key: 'operation', header: 'Operation', render: (r) => r.operation },
-    { key: 'units_hour', header: 'Units this hour', align: 'right', value: (r) => r.units_hour, render: (r) => formatUnits(r.units_hour) },
+    { key: 'units_hour', header: 'Units this hour', align: 'right', value: (r) => r.units_hour, render: (r) => formatInt(r.units_hour) },
     { key: 'pace', header: 'Pace', align: 'right', value: (r) => r.pace, render: (r) => <PaceChip pace={r.pace} color={r.color} /> },
-    { key: 'units_12h', header: 'Last 12 h', align: 'right', value: (r) => r.units_12h, render: (r) => formatUnits(r.units_12h) },
+    { key: 'units_12h', header: 'Last 12 h', align: 'right', value: (r) => r.units_12h, render: (r) => formatInt(r.units_12h) },
     {
       key: 'since_scan',
       header: 'Last scan',
@@ -183,7 +172,7 @@ export function FloorPage() {
                 }
               />
             </span>
-            <Input className="input floor-filter" placeholder="Filter…" aria-label="Filter operators" value={text} onChange={(e) => setText(e.target.value)} />
+            <Input className="floor-filter" placeholder="Filter…" aria-label="Filter operators" value={text} onChange={(e) => setText(e.target.value)} />
             <Button onClick={() => downloadCsv('floor-overview', CSV_COLUMNS, rows)} disabled={!data} title="Export the rows shown below as CSV">
               Export CSV
             </Button>
@@ -200,7 +189,7 @@ export function FloorPage() {
             <KpiTile label="On pace" value={onPace} accent="green" hint="90 % of target or better" />
             <KpiTile label="Behind" value={behind} accent="amber" hint="70 – 90 % of target" />
             <KpiTile label="Well behind" value={wellBehind} accent="red" hint="Below 70 % of target" />
-            <KpiTile label="Units this hour" value={formatUnits(unitsHour)} hint={`across ${jobs} job${jobs === 1 ? '' : 's'}`} />
+            <KpiTile label="Units this hour" value={formatInt(unitsHour)} hint={`across ${jobs} job${jobs === 1 ? '' : 's'}`} />
           </KpiRow>
 
           <Card>

@@ -126,8 +126,7 @@ export function ConnectionForm({
         error={urlErr}
       >
         <Input
-          // `Input` spreads props after its own className, so repeat `input` to keep the base style
-          className="input mono"
+          className="mono"
           value={baseUrl}
           placeholder="http://factorylogix.example.local:6065/odata"
           onChange={(e) => setBaseUrl(e.currentTarget.value)}
