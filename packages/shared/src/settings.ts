@@ -2,6 +2,8 @@ import type { FlTimestampMode, LocalTime } from './domain.js';
 
 /** All configurable settings (spec section 11). Stored as jsonb rows in `settings` keyed by property name. */
 export interface Settings {
+  /** Display name of the plant, shown in the portal top bar. `null` hides the slot. */
+  plant_name: string | null;
   plant_timezone: string;
   fl_timestamp_mode: FlTimestampMode;
   poll_interval_seconds: number;
@@ -32,6 +34,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  plant_name: null,
   plant_timezone: 'America/New_York',
   fl_timestamp_mode: 'offset_present',
   poll_interval_seconds: 90,

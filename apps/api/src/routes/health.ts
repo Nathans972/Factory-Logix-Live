@@ -11,11 +11,13 @@ export async function registerHealthRoutes(app: FastifyInstance, ctx: AppContext
     const now = Date.now();
     const db = await pingDb(ctx.db);
     let plantTimezone = DEFAULT_SETTINGS.plant_timezone;
+    let plantName = DEFAULT_SETTINGS.plant_name;
     let needsSetup = false;
     if (db) {
       try {
         const [settings, users] = await Promise.all([getSettings(ctx.db), countUsers(ctx.db)]);
         plantTimezone = settings.plant_timezone;
+        plantName = settings.plant_name;
         needsSetup = users === 0;
       } catch (err) {
         ctx.log.warn({ err }, 'health: could not read settings');
@@ -27,6 +29,7 @@ export async function registerHealthRoutes(app: FastifyInstance, ctx: AppContext
       version: ctx.version,
       server_time: now,
       plant_timezone: plantTimezone,
+      plant_name: plantName,
       needs_setup: needsSetup,
       demo: false,
     };

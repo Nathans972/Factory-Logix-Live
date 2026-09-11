@@ -6,6 +6,8 @@ import { App } from './App';
 import { DataSourceProvider } from './data/DataSourceContext';
 import { createDataSource } from './data';
 import { AuthProvider } from './auth/AuthContext';
+import { initTheme } from './lib/theme';
+import './styles/tokens.css';
 import './styles/global.css';
 
 const queryClient = new QueryClient({
@@ -19,6 +21,9 @@ const queryClient = new QueryClient({
 });
 
 const dataSource = createDataSource();
+
+// Apply the stored theme before the first paint so the page never flashes the wrong palette.
+initTheme();
 
 // Vite's BASE_URL is '/' locally and '/<repo>/' on GitHub Pages.
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '');

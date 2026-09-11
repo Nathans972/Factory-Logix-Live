@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { downloadCsv } from '../lib/csv';
 import { Button } from './primitives';
 
@@ -9,6 +9,7 @@ export interface Column<T> {
   render: (row: T) => ReactNode;
   /** value used for sorting and CSV (defaults to render output when it is a primitive) */
   value?: (row: T) => string | number | null | undefined;
+  /** `right` also turns on tabular figures (docs/DESIGN.md, principle 3) */
   align?: 'left' | 'right' | 'center';
   width?: string | number;
   sortable?: boolean;
@@ -27,6 +28,15 @@ export interface DataTableProps<T> {
   onRowClick?: (row: T) => void;
   toolbar?: ReactNode;
   title?: ReactNode;
+  /** sticky column headers inside the scroll area (default true) */
+  stickyHeader?: boolean;
+  /** drill-down rows; return one or more `<tr className="dt-subrow">` elements */
+  renderSubRows?: (row: T) => ReactNode;
+  /** which rows can expand (default: every row, when `renderSubRows` is given) */
+  expandable?: (row: T) => boolean;
+  /** controlled expansion; omit both to let the table keep its own state */
+  expandedKeys?: (string | number)[];
+  onToggleExpand?: (key: string | number, row: T) => void;
 }
 
 function cellValue<T>(col: Column<T>, row: T): string | number | null | undefined {
@@ -36,7 +46,7 @@ function cellValue<T>(col: Column<T>, row: T): string | number | null | undefine
   return r == null ? null : String(r);
 }
 
-/** Sortable table with CSV export (spec 9.7). */
+/** Sortable table with CSV export, sticky header and optional expander rows (spec 9.7). */
 export function DataTable<T>({
   columns,
   rows,
@@ -49,8 +59,28 @@ export function DataTable<T>({
   onRowClick,
   toolbar,
   title,
+  stickyHeader = true,
+  renderSubRows,
+  expandable,
+  expandedKeys,
+  onToggleExpand,
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(defaultSort ?? null);
+  const [ownExpanded, setOwnExpanded] = useState<Set<string | number>>(new Set());
+
+  const expanded = useMemo(() => (expandedKeys ? new Set<string | number>(expandedKeys) : ownExpanded), [expandedKeys, ownExpanded]);
+
+  const toggleExpand = (key: string | number, row: T) => {
+    if (onToggleExpand) onToggleExpand(key, row);
+    if (!expandedKeys) {
+      setOwnExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    }
+  };
 
   const sorted = useMemo(() => {
     if (!sort) return rows;
@@ -81,6 +111,8 @@ export function DataTable<T>({
     );
   };
 
+  const canExpand = (row: T) => renderSubRows != null && (expandable ? expandable(row) : true);
+
   return (
     <div className="dt">
       {(title || toolbar || exportName) && (
@@ -96,14 +128,14 @@ export function DataTable<T>({
         </div>
       )}
       <div className="dt-scroll">
-        <table className={`dt-table${dense ? ' dt-dense' : ''}`}>
+        <table className={`dt-table${dense ? ' dt-dense' : ''}${stickyHeader ? ' dt-sticky' : ''}`}>
           <thead>
             <tr>
               {columns.map((c) => (
                 <th
                   key={c.key}
                   style={{ textAlign: c.align ?? 'left', width: c.width }}
-                  className={c.sortable === false ? undefined : 'dt-sortable'}
+                  className={`${c.align === 'right' ? 'dt-num' : ''}${c.sortable === false ? '' : ' dt-sortable'}`.trim() || undefined}
                   onClick={c.sortable === false ? undefined : () => toggleSort(c.key)}
                 >
                   {c.header}
@@ -120,19 +152,40 @@ export function DataTable<T>({
                 </td>
               </tr>
             )}
-            {sorted.map((r, i) => (
-              <tr
-                key={rowKey(r, i)}
-                className={`${rowClassName?.(r) ?? ''}${onRowClick ? ' dt-clickable' : ''}`}
-                onClick={onRowClick ? () => onRowClick(r) : undefined}
-              >
-                {columns.map((c) => (
-                  <td key={c.key} style={{ textAlign: c.align ?? 'left' }}>
-                    {c.render(r)}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {sorted.map((r, i) => {
+              const key = rowKey(r, i);
+              const open = expanded.has(key);
+              const showChevron = canExpand(r);
+              return (
+                <Fragment key={key}>
+                  <tr
+                    className={`${rowClassName?.(r) ?? ''}${onRowClick ? ' dt-clickable' : ''}`}
+                    onClick={onRowClick ? () => onRowClick(r) : undefined}
+                  >
+                    {columns.map((c, ci) => (
+                      <td key={c.key} style={{ textAlign: c.align ?? 'left' }} className={c.align === 'right' ? 'dt-num' : undefined}>
+                        {ci === 0 && showChevron && (
+                          <button
+                            type="button"
+                            className="dt-expander"
+                            aria-expanded={open}
+                            aria-label={open ? 'Collapse' : 'Expand'}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpand(key, r);
+                            }}
+                          >
+                            <span className={`chev${open ? ' open' : ''}`} />
+                          </button>
+                        )}
+                        {c.render(r)}
+                      </td>
+                    ))}
+                  </tr>
+                  {open && showChevron && renderSubRows?.(r)}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

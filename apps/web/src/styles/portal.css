@@ -1,63 +1,152 @@
-/* Portal-specific styles (spec 9). Loaded by PortalLayout; global.css owns the shared theme. */
-
-/* Top strip: data freshness indicator (9.2) */
-.top-strip { display: flex; align-items: center; gap: 12px; justify-content: flex-end; margin-bottom: 12px; min-height: 22px; }
-.freshness { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-muted); }
-.freshness .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--neutral); flex: 0 0 9px; }
-.freshness.fresh-ok .dot { background: var(--green); }
-.freshness.fresh-warn .dot { background: var(--yellow); }
-.freshness.fresh-bad .dot { background: var(--red); }
-.freshness.fresh-warn { color: #ffe08a; }
-.freshness.fresh-bad { color: #ffb3b3; }
-
-/* Sidebar footer */
-.sidebar-foot .who { display: block; color: var(--text); }
-.sidebar-foot .role { text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; }
-.sidebar-foot .btn { margin-top: 8px; width: 100%; }
+/* Portal-specific styles (spec 9). global.css owns the shell, the components and the theme;
+   everything here is page-level glue that wave 2 will fold into the component library. */
 
 /* Filters */
-.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; }
-.filters .field { margin-bottom: 0; }
-.picker-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
-.picker-row .field { margin-bottom: 0; min-width: 150px; }
-.search-box { max-width: 320px; }
-
-/* Progress bars */
-.progress { display: inline-block; width: 110px; height: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; vertical-align: middle; }
-.progress > i { display: block; height: 100%; background: var(--accent); }
-.progress-sm { width: 70px; height: 6px; }
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+.filters .field {
+  margin-bottom: 0;
+}
+.picker-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.picker-row .field {
+  margin-bottom: 0;
+  min-width: 150px;
+}
+.search-box {
+  max-width: 320px;
+}
 
 /* Job section header (shift view) */
-.job-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.job-head .job-no { font-weight: 700; font-size: 15px; }
-.job-head .sep { color: var(--text-muted); }
-.sub { color: var(--text-muted); font-size: 12px; }
-.nowrap { white-space: nowrap; }
-
-/* Expander + nested operator rows */
-.expander { font: inherit; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 6px 0 0; }
-.expander:hover { color: var(--accent); }
-tr.row-sub td:first-child { padding-left: 28px; }
-tr.row-sub td { background: rgba(255, 255, 255, 0.02); }
-.annot { color: var(--text-muted); font-size: 11px; margin-left: 4px; }
+.job-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.job-head .job-no {
+  font-weight: 700;
+  font-size: 15px;
+}
+.job-head .sep {
+  color: var(--fl-text-3);
+}
+.sub {
+  color: var(--fl-text-2);
+  font-size: 13px;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.annot {
+  color: var(--fl-text-3);
+  font-size: 11px;
+  margin-left: 4px;
+}
 
 /* Operator detail cell strips */
-.strip { display: flex; gap: 14px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.strip:last-child { border-bottom: none; }
-.strip-meta { min-width: 260px; }
-.strip-meta .t { font-weight: 600; }
-.strip-labels { display: flex; gap: 2px; margin-bottom: 2px; }
-.strip-labels .lbl { width: 34px; text-align: center; font-size: 11px; color: var(--text-muted); }
+.strip {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--fl-border);
+  flex-wrap: wrap;
+}
+.strip:last-child {
+  border-bottom: none;
+}
+.strip-meta {
+  min-width: 260px;
+}
+.strip-meta .t {
+  font-weight: 600;
+}
+.strip-labels {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 3px;
+}
+.strip-labels .lbl {
+  width: 34px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fl-text-3);
+}
 
 /* Embedded TV dashboard (job detail) */
-.tv-embed { width: 100%; max-height: 62vh; min-height: 300px; overflow: auto; border-radius: var(--radius); margin-bottom: 16px; }
+.tv-embed {
+  width: 100%;
+  max-height: 62vh;
+  min-height: 300px;
+  overflow: auto;
+  border-radius: var(--fl-radius);
+  margin-bottom: 16px;
+}
 
 /* Misc */
-.tag { display: inline-block; font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
-.actions { display: inline-flex; gap: 6px; }
-.bold { font-weight: 700; }
-.stack { display: flex; flex-direction: column; gap: 2px; }
-.inline-err { color: #ffb3b3; font-size: 12px; }
-.pin-list { list-style: none; margin: 0; padding: 0; }
-.pin-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); }
-.pin-list li:last-child { border-bottom: none; }
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fl-text-2);
+  background: var(--fl-neutral-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.actions {
+  display: inline-flex;
+  gap: 6px;
+}
+.bold {
+  font-weight: 700;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.inline-err {
+  color: var(--fl-red);
+  font-size: 12px;
+}
+.pin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pin-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--fl-border);
+}
+.pin-list li:last-child {
+  border-bottom: none;
+}
+
+/* Sidebar footer (legacy layout) */
+.sidebar-foot .who {
+  display: block;
+  color: var(--fl-text);
+}
+.sidebar-foot .role {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+.sidebar-foot .btn {
+  margin-top: 8px;
+  width: 100%;
+}

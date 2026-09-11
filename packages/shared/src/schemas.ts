@@ -18,6 +18,7 @@ export const ianaTimeZoneSchema = z.string().min(1).refine(
 );
 
 export const settingsSchema = z.object({
+  plant_name: z.string().max(120).nullable(),
   plant_timezone: ianaTimeZoneSchema,
   fl_timestamp_mode: z.enum(['offset_present', 'utc', 'local_no_offset']),
   poll_interval_seconds: z.number().int().min(30).max(600),

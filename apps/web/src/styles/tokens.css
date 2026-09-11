@@ -1,0 +1,127 @@
+/*
+ * Design tokens (docs/DESIGN.md "Tokens").
+ *
+ * Light is the default on :root; dark is a pure token flip on [data-theme="dark"]
+ * (set by lib/theme.ts). The TV page does not use these tokens — it keeps its own
+ * palette in pages/tv/tv.css.
+ *
+ * The `--fl-*` names are the design system. The short legacy names below them
+ * (`--bg`, `--accent`, …) are aliases kept so pages that have not been migrated
+ * to the new components still pick up the new theme automatically.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces */
+  --fl-canvas: #f4f6f9;
+  --fl-surface: #ffffff;
+  --fl-surface-2: #f8fafc;
+  --fl-border: #e4e7ec;
+  --fl-border-strong: #cbd5e1;
+
+  /* text */
+  --fl-text: #0f172a;
+  --fl-text-2: #475569;
+  --fl-text-3: #94a3b8;
+
+  /* brand */
+  --fl-primary: #2457c5;
+  --fl-primary-hover: #1c46a0;
+  --fl-primary-soft: #e8effb;
+  --fl-primary-text: #ffffff;
+
+  /* semantic pace / status colors (same hues in both themes, tints flip) */
+  --fl-red: #d92d20;
+  --fl-red-soft: #fee4e2;
+  --fl-amber: #d97706;
+  --fl-amber-soft: #fef3c7;
+  --fl-green: #15803d;
+  --fl-green-soft: #dcfce7;
+  --fl-blue: #0369a1;
+  --fl-blue-soft: #e0f2fe;
+  --fl-neutral: #64748b;
+  --fl-neutral-soft: #f1f5f9;
+
+  /* hourly grid cells: solid fills, identical in both themes */
+  --fl-cell-red: #d92d20;
+  --fl-cell-red-ink: #ffffff;
+  --fl-cell-amber: #f5c518;
+  --fl-cell-amber-ink: #1f2937;
+  --fl-cell-green: #22c55e;
+  --fl-cell-green-ink: #052e16;
+  --fl-cell-blue: #38bdf8;
+  --fl-cell-blue-ink: #082f49;
+  --fl-cell-visitor: #94a3b8;
+  --fl-cell-visitor-ink: #ffffff;
+
+  /* shape + depth */
+  --fl-radius: 10px;
+  --fl-radius-sm: 8px;
+  --fl-radius-badge: 6px;
+  --fl-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.08);
+  --fl-shadow-lg: 0 12px 40px rgba(15, 23, 42, 0.08);
+  --fl-ring: 0 0 0 3px rgba(36, 87, 197, 0.15);
+
+  /* type */
+  --fl-font: Inter, 'Segoe UI', system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+  --fl-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* shell metrics */
+  --fl-rail-w: 232px;
+  --fl-topbar-h: 56px;
+
+  /* ---- legacy aliases (pre-redesign class names still use these) ---- */
+  --bg: var(--fl-canvas);
+  --bg-elev: var(--fl-surface);
+  --bg-elev-2: var(--fl-surface-2);
+  --border: var(--fl-border);
+  --text: var(--fl-text);
+  --text-muted: var(--fl-text-2);
+  --accent: var(--fl-primary);
+  --accent-text: var(--fl-primary-text);
+  --link: var(--fl-primary);
+  --red: var(--fl-red);
+  --yellow: var(--fl-amber);
+  --green: var(--fl-green);
+  --blue: var(--fl-blue);
+  --neutral: var(--fl-neutral);
+  --visitor: var(--fl-neutral);
+  --radius: var(--fl-radius-sm);
+  --font: var(--fl-font);
+  --mono: var(--fl-mono);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --fl-canvas: #0f1216;
+  --fl-surface: #171b21;
+  --fl-surface-2: #1d222a;
+  --fl-border: #262c35;
+  --fl-border-strong: #3a4351;
+
+  --fl-text: #e6e9ee;
+  --fl-text-2: #a7b0be;
+  --fl-text-3: #6b7484;
+
+  --fl-primary: #5b8def;
+  --fl-primary-hover: #7aa3f5;
+  --fl-primary-soft: #1b2a47;
+  --fl-primary-text: #0b1220;
+
+  --fl-red: #f87171;
+  --fl-red-soft: #3a1b1b;
+  --fl-amber: #fbbf24;
+  --fl-amber-soft: #3a2e12;
+  --fl-green: #4ade80;
+  --fl-green-soft: #12301f;
+  --fl-blue: #38bdf8;
+  --fl-blue-soft: #0f2a3a;
+  --fl-neutral: #a7b0be;
+  --fl-neutral-soft: #222831;
+
+  --fl-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --fl-shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --fl-ring: 0 0 0 3px rgba(91, 141, 239, 0.25);
+}

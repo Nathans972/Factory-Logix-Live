@@ -2,7 +2,7 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
-import { Banner, Button, Field, Input, Spinner } from '../../ui';
+import { Button, Field, Input, Note, Spinner } from '../../ui';
 
 export function LoginPage() {
   const { user, loading, needsSetup, login } = useAuth();
@@ -43,18 +43,24 @@ export function LoginPage() {
   return (
     <div className="auth-page">
       <form className="auth-card" onSubmit={(e) => void submit(e)}>
-        <h1>FactoryLogix Live</h1>
-        {error && <Banner kind="error">{error}</Banner>}
-        <Field label="Username">
+        <div className="auth-brand">
+          <span className="brand-tile">FL</span>
+          FactoryLogix Live
+        </div>
+        <h1>Sign in</h1>
+        <p className="auth-lede">Use your plant portal account.</p>
+        {error && <Note tone="error" title="Sign in failed">{error}</Note>}
+        <Field label="User name">
           <Input value={username} autoFocus autoComplete="username" onChange={(e) => setUsername(e.target.value)} />
         </Field>
         <Field label="Password">
           <Input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} />
         </Field>
-        <Button type="submit" variant="primary" loading={busy} disabled={!username || !password}>
+        <Button type="submit" variant="primary" className="btn-block" loading={busy} disabled={!username || !password}>
           Sign in
         </Button>
       </form>
+      <div className="auth-foot">FactoryLogix Live · read-only production dashboard</div>
     </div>
   );
 }

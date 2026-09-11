@@ -76,6 +76,8 @@ export interface AppHealth {
   version: string;
   server_time: UtcMs;
   plant_timezone: string;
+  /** Plant display name for the portal top bar (`settings.plant_name`); null when unset. */
+  plant_name: string | null;
   needs_setup: boolean;
   demo: boolean;
 }

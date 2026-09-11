@@ -5,24 +5,50 @@ Read with `docs/SPEC.md` sections 8, 9, 10, 12 and `docs/API.md`.
 
 ## What already exists (do not restructure)
 
+Infrastructure:
+
 - `vite.config.ts` (aliases `@fld/shared`, `@fld/engine` → package **source**, `@` → `src`; `/api` dev proxy to `localhost:3001`; `base` from `VITE_BASE_PATH`).
-- `src/main.tsx` providers: QueryClient → DataSourceProvider → AuthProvider → BrowserRouter(basename = `import.meta.env.BASE_URL`).
+- `src/main.tsx` providers: QueryClient → DataSourceProvider → AuthProvider → BrowserRouter(basename = `import.meta.env.BASE_URL`). It imports `styles/tokens.css` then `styles/global.css` and calls `initTheme()` before render.
 - `src/App.tsx` route map. Page components live at the paths it imports; replace the placeholder files in place, keep the export names.
 - `src/data/DataSource.ts` — the interface both backends implement. `src/data/index.ts` picks `MockDataSource` when `VITE_DATA_SOURCE=mock`, else `ApiDataSource('/api')`. `IS_MOCK` is exported.
 - `src/data/DataSourceContext.tsx` — `useDataSource()`.
 - `src/auth/AuthContext.tsx` — `useAuth()` (`user`, `loading`, `needsSetup`, `login`, `logout`, `refresh`), `hasRole(user, min)`. `src/auth/RequireAuth.tsx` handles redirects to `/setup` and `/login`.
-- `src/ui/primitives.tsx` (Button, Panel, PageHeader, Stat, Banner, Spinner, ErrorBox, Empty, ColorChip, PaceChip, Field, Input, Select, Checkbox, DaysPicker, Modal, Tabs), `src/ui/Table.tsx` (`DataTable` — sortable + "Export CSV"), `src/ui/DemoBadge.tsx`.
-- `src/lib/format.ts` (time/date/pct/num helpers taking the plant tz), `src/lib/csv.ts`.
-- `src/styles/global.css` — portal/admin theme + class names used by the primitives (`.shell`, `.sidebar`, `.main`, `.grid-*`, `.stat`, `.chip-*`, `.cell.c-*`, `.dt-*`, `.modal*`, `.tabs`, `.auth-*`).
+- `src/lib/format.ts` (time/date/pct/num helpers taking the plant tz), `src/lib/csv.ts`, `src/lib/useLive.ts`, `src/lib/usePlantTz.ts`, `src/lib/theme.ts`.
+
+Design system (wave 1, docs/DESIGN.md; reference renderings in `docs/design/`):
+
+- `src/styles/tokens.css` — every `--fl-*` token. Light on `:root`, dark on `[data-theme="dark"]` (a pure token flip). Legacy short names (`--bg`, `--bg-elev`, `--bg-elev-2`, `--border`, `--text`, `--text-muted`, `--accent`, `--accent-text`, `--link`, `--red`, `--yellow`, `--green`, `--blue`, `--neutral`, `--visitor`, `--radius`, `--font`, `--mono`) are aliases of the new tokens — prefer `--fl-*` in new code.
+- `src/styles/global.css` — base, app shell, top bar, rail, page header, breadcrumbs, filter bar, KPI tiles, cards, tables, chips, badges, buttons, segmented control, switch, inputs, progress, sparkline, tabs, modal, drawer, stepper, notes, empty state, hourly cells, auth/wizard card, plus the pre-redesign class names kept working. `src/styles/portal.css` / `admin.css` hold only page-level leftovers (imported by `AppShell`; `admin.css` also by `SetupPage`).
+- `src/lib/theme.ts` — `initTheme()`, `useTheme()` → `{ theme: 'light'|'dark'|'system', resolved, setTheme }`, stored in `localStorage['fld_theme']` (default light), applied as `<html data-theme>`.
+- `src/components/shell/` — `AppShell({ section: 'portal'|'admin' })` renders `TopBar` + `Rail` + `<main class="app-main"><Outlet/></main>`. `TopBar` = brand tile, plant name (`AppHealth.plant_name`), search (Ctrl/Cmd+K focuses, Enter → `/jobs?q=…`), `FreshnessPill`, avatar menu (user, role, Theme light/dark/system, Log out). `Rail` = Operations (Shift view, Floor, Jobs, Operators, Products) + Administration for manager+ (Displays, Shifts, Breaks, FactoryLogix, Mapping, Standards, Engine, Users, Sync health, Audit; admin-only items show a lock for managers) + `v1.0 · <plant tz>` footer. `FreshnessPill` owns the green/amber/red freshness logic (30 s refetch + `sync_health` events).
+- `PortalLayout` and `AdminLayout` are one-liners around `AppShell`; admin pages keep their own role gating.
+
+Components — `src/ui/` (`import { … } from '@/ui'` / relative `../../ui`), one line each:
+
+- `Button({ variant: 'primary'|'secondary'|'ghost'|'danger', size: 'sm'|'md', loading })`, `Panel({ title, actions, children })`, `PageHeader({ title, subtitle, actions })`, `Stat({ label, value, color?: CellColor, hint })`, `Banner({ kind })`, `Spinner`, `ErrorBox({ error })`, `Empty`, `ColorChip({ color: CellColor })`, `PaceChip({ pace, color })` (tinted pill, "96%", dash when null), `Field({ label, hint, error })`, `Input`, `Select`, `Checkbox({ label })`, `DaysPicker({ value, onChange })`, `Modal({ open, title, onClose, footer, wide })`, `Tabs({ value, onChange, tabs })`.
+- `KpiTile({ label, value, hint?, accent?: 'red'|'amber'|'green'|'blue'|'none' })` and `KpiRow({ children })` — the KPI row of every page.
+- `Card({ children, className? })` + `CardHeader({ title, subtitle?, badges?, actions? })` — the standard content card.
+- `StatusBadge({ tone: 'ok'|'off'|'warn'|'info'|'neutral', children })` — dot + text (Online, In process, Working…).
+- `Segmented<T>({ value, onChange, options: {value,label}[], full? })` — Day/Night, Per operator/Grouped.
+- `Switch({ checked, onChange, label?, hint? })` — 36×20 pill; with a label it renders the bordered row.
+- `ProgressBar({ value /* 0..1 */, width? })`, `Sparkline({ values: number[], height? })`.
+- `Drawer({ open, title, onClose, children, footer?, width? /* 440 */ })` — right-side drawer for admin create/edit; Escape and backdrop close it. Modals stay for confirmations.
+- `Stepper({ steps: { label, state: 'done'|'current'|'todo' }[] })`, `Note({ tone: 'success'|'error'|'info'|'warn', title?, children })`, `EmptyState({ title, hint?, action? })`, `Breadcrumbs({ items: { label, to? }[] })`.
+- `HourCellBox({ units, color: CellColor, current?, title? })` — one solid hourly grid cell; `Avatar({ name })` and `initials(name)`.
+- `DataTable({ columns, rows, rowKey, exportName, defaultSort, emptyMessage, dense, rowClassName, onRowClick, toolbar, title, stickyHeader = true, renderSubRows, expandable, expandedKeys, onToggleExpand })` — `Column<T> = { key, header, render, value?, align?, width?, sortable? }`; `align: 'right'` also gives tabular figures; `renderSubRows(row)` returns `<tr className="row-sub">` elements and adds a chevron in the first column (uncontrolled unless `expandedKeys`/`onToggleExpand` are passed).
+- `DemoBadge` — the mock-mode badge (bottom centre).
 
 ## Conventions
 
+- **Page skeleton** (docs/DESIGN.md, principle 4): `Breadcrumbs` when nested → `PageHeader` (title, one line of context, actions right) → filter bar (`.filter-bar`) → `KpiRow` → content `Card`s. Every table card header carries "Export CSV".
+- **CSS classes**: plain CSS only, no UI kits. Layout/shell classes are `app-shell`, `topbar*`, `rail*`, `app-main`; components are `card/card-head/card-title/card-sub/card-actions/card-body`, `kpi*`, `dt*` (tables), `chip chip-red|amber|green|blue|neutral`, `badge badge-ok|off|warn|info|neutral`, `btn btn-primary|ghost|danger` + `btn-sm`, `seg/seg-btn`, `switch`, `input`, `field*`, `progress`, `sparkline`, `tabs/tab`, `note note-*`, `empty-state`, `cell c-red|yellow|green|blue|visitor|neutral|blank` (+ `now`), `drawer*`, `modal*`, `stepper/step`. Row modifiers: `row-sub` (drill-down), `row-flag` (amber tint), `row-visitor` (muted italic). Always use `var(--fl-*)` tokens, never literal colors, so dark mode keeps working.
+- **Pre-redesign classes** (`.shell`, `.sidebar`, `.panel*`, `.stat*`, `.banner*`, `.filters`, `.strip*`, …) are still styled so unmigrated pages stay coherent; when you migrate a page, move it to the components above and stop using them.
 - Data fetching: TanStack Query with `useDataSource()`; query keys `['shiftView', params]`, etc. Errors render `<ErrorBox>`; loading renders `<Spinner>`.
 - Live refresh: a hook `useLiveRefetch(types: SseEvent['type'][], onEvent)` in `src/lib/useLive.ts` subscribes via `ds.subscribe` and invalidates the given queries. The TV also refetches on a 60 s timer as a fallback and re-renders at the top of each local hour (spec 8.4).
-- Plant time zone: read from `AppHealth.plant_timezone` (query `['health']`, refetched every 60 s) and from `TvState.plant_timezone` on the TV. Provide `usePlantTz()` in `src/lib/usePlantTz.ts` (falls back to the browser tz until loaded).
+- Plant time zone: read from `AppHealth.plant_timezone` (query `['health']`, refetched every 60 s) and from `TvState.plant_timezone` on the TV. Provide `usePlantTz()` in `src/lib/usePlantTz.ts` (falls back to the browser tz until loaded). `AppHealth.plant_name` (settings key `plant_name`, nullable) feeds the top-bar plant slot.
 - URL state: filters and pickers persist in the query string (`useSearchParams`).
 - Every portal table uses `DataTable` with `exportName` (spec 9.7).
-- No heavy UI kits. Plain CSS. The TV page has its own stylesheet `src/pages/tv/tv.css` and must not depend on the portal theme.
+- The TV page has its own stylesheet `src/pages/tv/tv.css`, keeps its dark palette and must not depend on the portal theme.
 - Role gating in UI: manager-only actions (pins, adjustments/overrides, recompute) are hidden for viewers; admin-only pages show a "not allowed" message for managers except `/admin/standards` and `/admin/sync` (readable by managers).
 
 ## TV page (spec 8) — `src/pages/tv/`
@@ -36,7 +62,7 @@ Read with `docs/SPEC.md` sections 8, 9, 10, 12 and `docs/API.md`.
 
 ## Portal (spec 9) — `src/pages/portal/`
 
-- `PortalLayout.tsx`: sidebar (brand, nav: Shift view `/`, Floor `/floor`, Jobs `/jobs`, Operators `/operators`, Products `/products`, Admin `/admin` when manager+), user + logout at the bottom, data-freshness indicator (from `syncHealth`, refreshed on `sync_health` events) in the top bar.
+- `PortalLayout.tsx`: `<AppShell section="portal" />` — the shell owns the rail, the search box, the freshness pill and the user menu, so pages render page content only.
 - `ShiftPage.tsx` (default): shift picker (date input + shift select from `shiftPicker()`; default current-or-most-recent), header stats (efficiency w/ color, total units, charged hours, active jobs, eligible operators, freshness), active jobs sections (job header + per-operation rows + expander to per-operator rows; visitor units as small annotation), breakdown tabs (by job / by operation / by operator) using `rollups`, filters (job, product, operation, operator) persisted in URL, live refetch when `in_progress`.
 - `FloorPage.tsx`: `floor(showVisitors)`, one row per eligible operator, idle rows flagged (`row-flag`), toggle visitors (muted rows `row-visitor`), sortable/filterable columns, live.
 - `OperatorsPage.tsx`: searchable list → `/operators/:id`. `OperatorPage.tsx`: header (name, current assignment), 12-hour cell strips (reuse a `CellStrip` component with the TV colors), range table, date/shift picker (query `date`+`shift_id` or default last 12 h), pin/unpin (manager) via `pins`/`createPin`/`deletePin`.
@@ -50,7 +76,7 @@ Read with `docs/SPEC.md` sections 8, 9, 10, 12 and `docs/API.md`.
 
 ## Admin (spec 10) — `src/pages/admin/`
 
-- `AdminLayout.tsx`: sub-nav: Displays, Shifts, Breaks, Connection, Mapping, Standards, Engine, Users, Sync health, Audit; link back to portal.
+- `AdminLayout.tsx`: `<AppShell section="admin" />` — Administration is a group in the shared rail (Displays, Shifts, Breaks, FactoryLogix, Mapping, Standards, Engine, Users, Sync health, Audit), not a separate app; each page keeps its own role check.
 - `DisplaysPage.tsx`: list (name, code, job, mode, last seen, online/offline), Claim modal (code, name, job picker with free-text search over `jobs(q)`, options), Edit modal, Re-pair (enter the new code), Delete.
 - `ShiftsPage.tsx`, `BreaksPage.tsx`: CRUD with `DaysPicker`, time inputs, effective dates; show validation errors from the API.
 - `ConnectionPage.tsx`: URL, username, password (blank = keep), timestamp mode + plant tz (settings), Test connection (shows version + entity sets found), poll/page/overlap/timeout/breaker/backfill settings, Run backfill now.
