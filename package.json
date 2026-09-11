@@ -1,0 +1,26 @@
+{
+  "name": "factorylogix-live-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FactoryLogix Live Production Dashboard and Manager Portal",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "packageManager": "pnpm@11.2.2",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "build:packages": "pnpm --filter @fld/shared --filter @fld/engine run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "dev:api": "pnpm --filter @fld/api run dev",
+    "dev:collector": "pnpm --filter @fld/collector run dev",
+    "dev:web": "pnpm --filter @fld/web run dev",
+    "dev:web:mock": "pnpm --filter @fld/web run dev:mock",
+    "build:web:mock": "pnpm --filter @fld/web run build:mock"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8",
+    "@types/node": "^22.10.2"
+  }
+}

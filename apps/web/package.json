@@ -1,0 +1,34 @@
+{
+  "name": "@fld/web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:mock": "cross-env VITE_DATA_SOURCE=mock vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "build:mock": "cross-env VITE_DATA_SOURCE=mock vite build",
+    "preview": "vite preview",
+    "preview:mock": "cross-env VITE_DATA_SOURCE=mock vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo no-lint-for-web",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@fld/engine": "workspace:*",
+    "@fld/shared": "workspace:*",
+    "@tanstack/react-query": "^5.62.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "cross-env": "^7.0.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
+  }
+}
