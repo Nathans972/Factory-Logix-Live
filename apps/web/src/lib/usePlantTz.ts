@@ -15,6 +15,9 @@ export function browserTz(): string {
   }
 }
 
+/** The browser's own IANA time zone, resolved once (used as the fallback and in the setup wizard). */
+export const BROWSER_TZ: string = browserTz();
+
 export function usePlantTz(): string {
   const ds = useDataSource();
   const { data } = useQuery({
