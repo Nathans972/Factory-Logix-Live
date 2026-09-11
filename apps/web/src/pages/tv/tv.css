@@ -1,0 +1,424 @@
+/*
+ * TV display stylesheet (spec 8.3). Self-contained and scoped under `.tv-root` so the portal
+ * theme never leaks in and this never leaks out. Every color comes from the CSS variables that
+ * `tvLogic.TV_STYLE_VARS` sets inline from the shared tokens (`TV_COLORS` / `TV_CELL_TEXT`).
+ */
+
+.tv-root {
+  /* wide sans-serif, readable from 10 m on a 1080p panel */
+  --tv-font: 'Arial Black', 'Segoe UI Black', 'Helvetica Neue', Arial, sans-serif;
+  --tv-fs-header: 3.2vh;
+  --tv-fs-cell: 2.6vh;
+  --tv-fs-defect: 2.2vh;
+  --tv-fs-label: 1.5vh;
+  --tv-fs-clock: 3vh;
+  --tv-pad-y: 0.25vh;
+  --tv-pad-x: 0.3vw;
+  --tv-outline: 0.35vh;
+
+  color: var(--tv-fg);
+  font-family: var(--tv-font);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------- page shell */
+
+.tv-page {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--tv-bg);
+}
+
+.tv-page-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.tv-page-body > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- banners */
+
+.tv-banners {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6vw;
+  padding: 0.5vh 0.8vw 0;
+}
+
+.tv-banner {
+  font-size: calc(var(--tv-fs-cell) * 0.8);
+  padding: 0.3vh 0.9vw;
+  border-radius: 0.5vh;
+  letter-spacing: 0.03em;
+}
+
+.tv-banner-offline {
+  background: var(--tv-red);
+  color: var(--tv-on-red);
+}
+
+.tv-banner-delayed {
+  background: var(--tv-yellow);
+  color: var(--tv-on-yellow);
+}
+
+/* ---------------------------------------------------------------- messages (8.2) */
+
+.tv-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2vh;
+  padding: 4vh;
+  text-align: center;
+}
+
+.tv-message-title {
+  font-size: 6vh;
+  line-height: 1.1;
+}
+
+.tv-message-code {
+  font-size: 22vh;
+  line-height: 1;
+  letter-spacing: 0.08em;
+}
+
+.tv-message-sub {
+  font-size: 3.2vh;
+  color: var(--tv-label);
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- dashboard */
+
+.tv-dash {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6vh;
+  height: 100%;
+  min-height: 0;
+  padding: 0.8vh 0.9vw;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--tv-bg);
+}
+
+.tv-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 1.6vw;
+  font-size: var(--tv-fs-header);
+  line-height: 1.05;
+}
+
+.tv-head-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tv-head-qtys {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2.5vw;
+}
+
+.tv-qty {
+  text-align: center;
+}
+
+.tv-qty-label {
+  font-size: var(--tv-fs-label);
+  color: var(--tv-label);
+  letter-spacing: 0.06em;
+}
+
+/* output table is anchored to the top; the slack below is left for more rows */
+.tv-output {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- tables */
+
+.tv-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.tv-table th,
+.tv-table td {
+  border: 1px solid var(--tv-grid);
+  padding: var(--tv-pad-y) var(--tv-pad-x);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tv-table th {
+  color: var(--tv-label);
+  font-size: calc(var(--tv-fs-cell) * 0.8);
+  font-weight: normal;
+  letter-spacing: 0.04em;
+}
+
+.tv-table td {
+  font-size: var(--tv-fs-cell);
+  color: var(--tv-fg);
+  line-height: 1.15;
+}
+
+.tv-table .t-left {
+  text-align: left;
+}
+
+/* operation names wrap instead of being truncated (spec 8.3) */
+.tv-op {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: calc(var(--tv-fs-cell) * 0.9);
+}
+
+.tv-operator {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: calc(var(--tv-fs-cell) * 0.9);
+}
+
+/* visitor rows are shown without judgment (spec 8.5) */
+.tv-row-visitor td {
+  color: var(--tv-on-neutral);
+}
+
+.tv-output-table col.c-op {
+  width: 17%;
+}
+.tv-output-table col.c-operator {
+  width: 11%;
+}
+.tv-output-table col.c-std,
+.tv-output-table col.c-prior {
+  width: 5.5%;
+}
+.tv-output-table col.c-shift {
+  width: 6%;
+}
+.tv-output-table col.c-stdday {
+  width: 6.5%;
+}
+
+.tv-defect-table col.c-op {
+  width: 22%;
+}
+.tv-defect-table col.c-prior {
+  width: 6%;
+}
+.tv-defect-table col.c-shift {
+  width: 9%;
+}
+
+.tv-defect-table th,
+.tv-defect-table td {
+  font-size: var(--tv-fs-defect);
+}
+
+.tv-defect-table th {
+  font-size: calc(var(--tv-fs-defect) * 0.85);
+}
+
+.tv-defect-table .tv-op {
+  font-size: calc(var(--tv-fs-defect) * 0.95);
+}
+
+/* ---------------------------------------------------------------- hour cells (7.5) */
+
+.tv-cell {
+  position: relative;
+}
+
+.tv-c-blank {
+  color: transparent;
+}
+
+.tv-c-neutral {
+  color: var(--tv-on-neutral);
+}
+
+.tv-c-red {
+  background: var(--tv-red);
+  color: var(--tv-on-red);
+}
+
+.tv-c-yellow {
+  background: var(--tv-yellow);
+  color: var(--tv-on-yellow);
+}
+
+.tv-c-green {
+  background: var(--tv-green);
+  color: var(--tv-on-green);
+}
+
+.tv-c-blue {
+  background: var(--tv-blue);
+  color: var(--tv-on-blue);
+}
+
+.tv-c-visitor {
+  background: var(--tv-visitor);
+  color: var(--tv-on-visitor);
+}
+
+/* current (still running) hour */
+.tv-provisional {
+  box-shadow: inset 0 0 0 var(--tv-outline) rgba(255, 255, 255, 0.45);
+}
+
+/* spec 14: visitor cells carry a marker so color is not the only signal */
+.tv-visitor-mark {
+  position: absolute;
+  top: 0;
+  right: 0.2vw;
+  font-size: calc(var(--tv-fs-cell) * 0.45);
+  line-height: 1;
+  opacity: 0.85;
+}
+
+/* ---------------------------------------------------------------- bottom strip */
+
+.tv-bottom {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 1vw;
+  padding-top: 0.6vh;
+}
+
+.tv-bottom-left {
+  flex: 0 0 auto;
+  width: 14vh;
+  display: flex;
+  justify-content: center;
+}
+
+.tv-bottom-mid {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tv-bottom-right {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.tv-gauge {
+  position: relative;
+  width: 13vh;
+  height: 13vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tv-gauge-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tv-gauge-track {
+  fill: none;
+  stroke: #2a2a2a;
+  stroke-width: 9;
+}
+
+.tv-gauge-arc {
+  fill: none;
+  stroke: var(--tv-fg);
+  stroke-width: 9;
+  transition: stroke-dashoffset 0.4s ease;
+}
+
+.tv-gauge-label {
+  position: relative;
+  font-size: calc(var(--tv-fs-cell) * 0.9);
+}
+
+.tv-clock-time {
+  font-size: var(--tv-fs-clock);
+  line-height: 1.05;
+}
+
+.tv-clock-updated {
+  font-size: var(--tv-fs-label);
+  color: var(--tv-label);
+  letter-spacing: 0.04em;
+}
+
+/* ---------------------------------------------------------------- compact (portal embed) */
+
+.tv-root.tv-compact {
+  --tv-fs-header: 17px;
+  --tv-fs-cell: 13px;
+  --tv-fs-defect: 11px;
+  --tv-fs-label: 9px;
+  --tv-fs-clock: 15px;
+  --tv-pad-y: 2px;
+  --tv-pad-x: 4px;
+  --tv-outline: 2px;
+
+  height: auto;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+}
+
+.tv-compact .tv-header {
+  gap: 18px;
+}
+
+.tv-compact .tv-head-qtys {
+  gap: 24px;
+}
+
+.tv-compact .tv-output {
+  overflow: visible;
+}
+
+.tv-compact .tv-bottom {
+  gap: 12px;
+  padding-top: 6px;
+}
+
+.tv-compact .tv-bottom-left {
+  width: 84px;
+}
+
+.tv-compact .tv-gauge {
+  width: 78px;
+  height: 78px;
+}
+
+.tv-compact .tv-visitor-mark {
+  right: 2px;
+  font-size: 7px;
+}
