@@ -1,0 +1,42 @@
+/** Job detail (spec 9.5): both dashboards + whole-life cells + shift history + displays showing it. */
+import { pickEngineSettings, type JobDetail, type UtcMs } from '@fld/shared';
+import { buildJobDetail, listShiftInstances } from '@fld/engine';
+import type { Db } from '../db/pool.js';
+import { getCellsForJob } from '../db/repo/cells.js';
+import { listDisplayRowsForJob } from '../db/repo/displays.js';
+import { getOperatorNames } from '../db/repo/operators.js';
+import { listShifts } from '../db/repo/schedule.js';
+import { getSettings } from '../db/repo/settings.js';
+import { buildDashboard } from './dashboard.js';
+
+const HOUR_MS = 3_600_000;
+
+export async function buildJobDetailForJob(db: Db, jobNumber: string, now: UtcMs = Date.now()): Promise<JobDetail> {
+  const settings = await getSettings(db);
+
+  const [separate, grouped, allCells, displays, shifts] = await Promise.all([
+    buildDashboard(db, jobNumber, { grouped: false, shift_length_hours: 12, show_std_day: true }, now, settings),
+    buildDashboard(db, jobNumber, { grouped: true, shift_length_hours: 12, show_std_day: true }, now, settings),
+    getCellsForJob(db, jobNumber),
+    listDisplayRowsForJob(db, jobNumber),
+    listShifts(db),
+  ]);
+
+  const hours = allCells.map((c) => c.hour_start_utc);
+  const fromUtc = hours.length > 0 ? Math.min(...hours) : now - 12 * HOUR_MS;
+  const toUtc = hours.length > 0 ? Math.max(...hours) + HOUR_MS : now;
+  const shiftInstances = shifts.length > 0 ? listShiftInstances(shifts, fromUtc, toUtc, settings.plant_timezone) : [];
+
+  const operatorNames = await getOperatorNames(db, allCells.map((c) => c.operator_id));
+
+  return buildJobDetail({
+    dashboard_separate: separate,
+    dashboard_grouped: grouped,
+    all_cells: allCells,
+    shift_instances: shiftInstances,
+    operator_names: operatorNames,
+    displays_showing: displays.map((d) => ({ id: d.id, name: d.name })),
+    settings: pickEngineSettings(settings),
+    now,
+  });
+}
