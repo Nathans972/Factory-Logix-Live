@@ -4,9 +4,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { BreakDef, BreakWrite } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
 import { formatDays } from '../../lib/format';
-import { Banner, Button, DataTable, Modal, PageHeader, Spinner, type Column } from '../../ui';
+import { Button, Card, DataTable, Drawer, Note, PageHeader, Spinner, type Column } from '../../ui';
 import { AdminOnly, ApiError, ConfirmModal, Flash, useFlash } from './components/common';
 import { BreakForm } from './components/BreakForm';
+
+const FORM_ID = 'break-form';
 
 export function BreaksPage() {
   return (
@@ -61,6 +63,9 @@ function BreaksPageInner() {
     },
   });
 
+  const breaks = breaksQ.data ?? [];
+  const totalMinutes = breaks.reduce((sum, b) => sum + b.duration_minutes, 0);
+
   const shiftNames = (b: BreakDef) =>
     b.shift_ids == null
       ? 'All shifts'
@@ -73,15 +78,22 @@ function BreaksPageInner() {
     { key: 'days', header: 'Days', render: (b) => formatDays(b.days_of_week), value: (b) => b.days_of_week.join(',') },
     { key: 'shifts', header: 'Applies to', render: (b) => shiftNames(b), value: (b) => shiftNames(b) },
     { key: 'from', header: 'Effective from', render: (b) => b.effective_from },
-    { key: 'to', header: 'Effective to', render: (b) => b.effective_to ?? <span className="muted">—</span>, value: (b) => b.effective_to ?? '' },
+    {
+      key: 'to',
+      header: 'Effective to',
+      render: (b) => b.effective_to ?? <span className="dim">—</span>,
+      value: (b) => b.effective_to ?? '',
+    },
     {
       key: 'actions',
       header: '',
+      align: 'right',
       sortable: false,
       render: (b) => (
         <span className="row-actions">
           <Button
             size="sm"
+            variant="ghost"
             onClick={() => {
               updateM.reset();
               setEditing(b);
@@ -89,7 +101,7 @@ function BreaksPageInner() {
           >
             Edit
           </Button>
-          <Button size="sm" variant="danger" onClick={() => setDeleting(b)}>
+          <Button size="sm" variant="ghost" className="btn-danger-text" onClick={() => setDeleting(b)}>
             Delete
           </Button>
         </span>
@@ -101,7 +113,7 @@ function BreaksPageInner() {
     <>
       <PageHeader
         title="Breaks"
-        subtitle="Break minutes are removed from every overlapping operator window."
+        subtitle={`${breaks.length} break${breaks.length === 1 ? '' : 's'} · ${totalMinutes} unpaid minutes a day · Break minutes are removed from every overlapping operator window.`}
         actions={
           <Button
             variant="primary"
@@ -116,48 +128,79 @@ function BreaksPageInner() {
       />
 
       <Flash message={flash.message} />
-      <Banner kind="info">
-        Example: “Afternoon break”, 14:00, 15 minutes, Mon–Fri, all shifts — the 14:00 hour charges 45 minutes instead
-        of 60 for everyone whose window overlaps it.
-      </Banner>
-
       {breaksQ.isError && <ApiError error={breaksQ.error} />}
+
+      <div className="mb">
+        <Note tone="info" title="How a break is charged">
+          “Afternoon break”, 14:00, 15 minutes, Mon–Fri, all shifts — the 14:00 hour charges 45 minutes instead of 60
+          for everyone whose window overlaps it.
+        </Note>
+      </div>
+
       {breaksQ.isLoading ? (
-        <Spinner />
+        <Card>
+          <div className="card-body">
+            <Spinner />
+          </div>
+        </Card>
       ) : (
-        <DataTable
-          columns={columns}
-          rows={breaksQ.data ?? []}
-          rowKey={(b) => b.id}
-          exportName="breaks"
-          defaultSort={{ key: 'start', dir: 'asc' }}
-          emptyMessage="No breaks defined yet."
-        />
+        <Card>
+          <DataTable
+            columns={columns}
+            rows={breaks}
+            rowKey={(b) => b.id}
+            exportName="breaks"
+            defaultSort={{ key: 'start', dir: 'asc' }}
+            emptyMessage="No breaks defined yet."
+          />
+        </Card>
       )}
 
-      <Modal open={adding} title="Add break" onClose={() => setAdding(false)}>
-        <BreakForm
-          shifts={shifts}
-          onSubmit={(v) => createM.mutate(v)}
-          onCancel={() => setAdding(false)}
-          submitting={createM.isPending}
-          error={createM.error}
-        />
-      </Modal>
+      <Drawer
+        open={adding}
+        title="Add break"
+        onClose={() => setAdding(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAdding(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form={FORM_ID} variant="primary" loading={createM.isPending}>
+              Add break
+            </Button>
+          </>
+        }
+      >
+        <BreakForm id={FORM_ID} hideActions shifts={shifts} onSubmit={(v) => createM.mutate(v)} error={createM.error} />
+      </Drawer>
 
-      <Modal open={!!editing} title={`Edit ${editing?.name ?? ''}`} onClose={() => setEditing(null)}>
+      <Drawer
+        open={!!editing}
+        title={`Edit ${editing?.name ?? ''}`}
+        onClose={() => setEditing(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button type="submit" form={FORM_ID} variant="primary" loading={updateM.isPending}>
+              Save break
+            </Button>
+          </>
+        }
+      >
         {editing && (
           <BreakForm
             key={editing.id}
+            id={FORM_ID}
+            hideActions
             initial={editing}
             shifts={shifts}
             onSubmit={(v) => updateM.mutate({ id: editing.id, req: v })}
-            onCancel={() => setEditing(null)}
-            submitting={updateM.isPending}
             error={updateM.error}
           />
         )}
-      </Modal>
+      </Drawer>
 
       <ConfirmModal
         open={!!deleting}

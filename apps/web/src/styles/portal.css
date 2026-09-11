@@ -150,3 +150,210 @@
   margin-top: 8px;
   width: 100%;
 }
+
+/* ============================================================================
+   shift + floor  (wave 2A — docs/design/shift-view.html)
+   Only page-level glue for /: shift view and /floor. Everything visual comes from
+   global.css components; these rules size the page-header controls and add the two
+   small patterns the component library does not have yet.
+   ========================================================================== */
+
+/* --- page header context line ------------------------------------------- */
+.page-subtitle .shift-state {
+  font-weight: 600;
+}
+.shift-state.live {
+  color: var(--fl-green);
+}
+.shift-state.ended {
+  color: var(--fl-text-2);
+}
+.shift-state.warn {
+  color: var(--fl-amber);
+}
+
+/* --- page-header / filter-bar controls ----------------------------------- */
+.input.shift-date {
+  width: 152px;
+  flex: none;
+}
+.shift-filters .filter-input {
+  width: 150px;
+  flex: none;
+}
+.input.floor-filter {
+  width: 200px;
+  flex: none;
+}
+/* the bordered switch row is a form control; in an action row it matches button height */
+.floor-toggle .switch-row {
+  height: 34px;
+  padding: 0 12px;
+  gap: 10px;
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow);
+  white-space: nowrap;
+}
+
+/* --- tabs inline in a card header (Breakdown) ---------------------------- */
+.card-head .card-tabs {
+  display: flex;
+  margin-left: 4px;
+}
+.card-head .card-tabs .tabs {
+  border-bottom: 0;
+  margin: 0;
+}
+
+/* --- job cards ----------------------------------------------------------- */
+.shift-job .card-actions {
+  gap: 10px;
+}
+/* the "(+6 visitor)" annotation next to a unit count */
+.num-note {
+  color: var(--fl-text-3);
+}
+/* operator drill-down rows read as data, not as a wall of links */
+.shift-job tr.row-sub td a {
+  color: inherit;
+  font-weight: 400;
+  text-decoration: none;
+}
+.shift-job tr.row-sub td a:hover {
+  color: var(--fl-primary);
+  text-decoration: underline;
+}
+
+/* --- floor: operator identity cell --------------------------------------- */
+.person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.person .avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+  background: var(--fl-neutral-soft);
+  color: var(--fl-text-2);
+  flex: none;
+}
+.person small {
+  display: block;
+  color: var(--fl-text-3);
+  font-size: 12px;
+}
+
+/* =========================================================================
+   job + product + operator  (wave 2B)
+   Page-level glue for the job detail, product standards, operator detail and
+   the three list pages. Everything else lives in global.css.
+   ========================================================================= */
+
+/* Anchors styled as buttons (Open TV view). */
+a.btn {
+  text-decoration: none;
+}
+
+/* KPI tile extras: the "/ 800" denominator and the in-tile progress bar. */
+.kpi-den {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fl-text-3);
+}
+.kpi-hint > .progress {
+  margin-top: 6px;
+}
+
+/* A card subtitle sitting inside a DataTable title keeps body weight. */
+.dt-title .card-sub {
+  font-weight: 400;
+}
+
+/* Two cards side by side: operators + shift over shift, adjustments + overrides. */
+.pair2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+.pair2 > * {
+  margin-bottom: 0;
+}
+@media (max-width: 1180px) {
+  .pair2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Hourly grid (job detail) — the floor TV table in portal colors. */
+.hgrid {
+  overflow-x: auto;
+}
+.hgrid-table th,
+.hgrid-table td {
+  white-space: nowrap;
+}
+.hgrid-table td.hgrid-op {
+  font-weight: 500;
+}
+.hgrid-table td.c {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* Product standards: the bold effective value and its provenance word. */
+.eff-value {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+/* Adjustment / override list rows. */
+.list-item small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fl-text-3);
+  white-space: normal;
+}
+.list-item .list-main {
+  min-width: 0;
+}
+.list-item .list-main b {
+  font-weight: 600;
+}
+
+/* Avatar + operator id cell (operators list). */
+.who-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Qty + progress cell (jobs list). */
+.qty-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+/* Range controls in the operator page header. */
+.range-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.range-controls .input {
+  width: auto;
+  min-width: 130px;
+}
+
+/* Operator hourly strips: keep the meta column steady and the cells aligned. */
+.strip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}

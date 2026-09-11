@@ -1,7 +1,10 @@
-/** Break add/edit form (spec 10.3). Validation mirrors `breakWriteSchema`. */
+/**
+ * Break add/edit form (spec 10.3). Validation mirrors `breakWriteSchema`.
+ * Rendered inside the 440 px drawer on `/admin/breaks` and inline in the first-run wizard.
+ */
 import { useMemo, useState, type FormEvent } from 'react';
 import type { BreakDef, BreakWrite, ShiftDef } from '@fld/shared';
-import { Button, Checkbox, DaysPicker, Field, Input, Select } from '../../../ui';
+import { Button, Checkbox, DaysPicker, Field, Input, Segmented } from '../../../ui';
 import { formatIsoDate } from '../../../lib/format';
 import { usePlantTz } from '../../../lib/usePlantTz';
 import { ApiError, FieldBlock } from './common';
@@ -10,6 +13,7 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function BreakForm({
+  id,
   initial,
   shifts,
   onSubmit,
@@ -17,7 +21,9 @@ export function BreakForm({
   submitting,
   error,
   submitLabel,
+  hideActions,
 }: {
+  id?: string;
   initial?: BreakDef | null;
   shifts: ShiftDef[];
   onSubmit: (v: BreakWrite) => void;
@@ -25,6 +31,7 @@ export function BreakForm({
   submitting?: boolean;
   error?: unknown;
   submitLabel?: string;
+  hideActions?: boolean;
 }) {
   const tz = usePlantTz();
   const today = useMemo(() => formatIsoDate(Date.now(), tz), [tz]);
@@ -55,8 +62,8 @@ export function BreakForm({
   const valid = Object.keys(errors).length === 0;
   const show = (k: string) => (touched ? errors[k] : undefined);
 
-  const toggleShift = (id: number) =>
-    setShiftIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id].sort((a, b) => a - b)));
+  const toggleShift = (id2: number) =>
+    setShiftIds((s) => (s.includes(id2) ? s.filter((x) => x !== id2) : [...s, id2].sort((a, b) => a - b)));
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -74,22 +81,12 @@ export function BreakForm({
   };
 
   return (
-    <form onSubmit={submit}>
-      <p className="hint-line">
-        A break removes its minutes from the charged time of every operator whose work window overlaps it.
-      </p>
+    <form id={id} onSubmit={submit}>
+      <Field label="Name" error={show('name')}>
+        <Input value={name} onChange={(e) => setName(e.currentTarget.value)} placeholder="Afternoon break" autoFocus />
+      </Field>
 
-      <div className="form-grid">
-        <div className="field-wide">
-          <Field label="Name" error={show('name')}>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.currentTarget.value)}
-              placeholder="Afternoon break"
-              autoFocus
-            />
-          </Field>
-        </div>
+      <div className="grid-2col">
         <Field label="Start (plant local)" error={show('start')}>
           <Input type="time" value={start} onChange={(e) => setStart(e.currentTarget.value)} />
         </Field>
@@ -103,33 +100,43 @@ export function BreakForm({
             onChange={(e) => setDuration(e.currentTarget.value)}
           />
         </Field>
-        <FieldBlock label="Days of week" wide error={show('days')}>
-          <DaysPicker value={days} onChange={setDays} />
-        </FieldBlock>
+      </div>
 
-        <Field label="Applies to">
-          <Select value={appliesToAll ? 'all' : 'some'} onChange={(e) => setAppliesToAll(e.currentTarget.value === 'all')}>
-            <option value="all">All shifts</option>
-            <option value="some">Selected shifts</option>
-          </Select>
-        </Field>
+      <FieldBlock label="Days of week" error={show('days')}>
+        <DaysPicker value={days} onChange={setDays} />
+      </FieldBlock>
+
+      <FieldBlock
+        label="Applies to"
+        hint="Break minutes are removed from every operator window that overlaps them."
+        error={show('shifts')}
+      >
+        <Segmented
+          value={appliesToAll ? 'all' : 'some'}
+          onChange={(v) => setAppliesToAll(v === 'all')}
+          options={[
+            { value: 'all', label: 'All shifts' },
+            { value: 'some', label: 'Selected shifts' },
+          ]}
+          full
+        />
         {!appliesToAll && (
-          <FieldBlock label="Shifts" wide error={show('shifts')}>
-            <div className="picker-list">
-              {shifts.length === 0 && <div className="opt muted">No shifts defined yet.</div>}
-              {shifts.map((s) => (
-                <div className="opt" key={s.id}>
-                  <Checkbox
-                    label={`${s.name} · ${s.start_local}–${s.end_local}`}
-                    checked={shiftIds.includes(s.id)}
-                    onChange={() => toggleShift(s.id)}
-                  />
-                </div>
-              ))}
-            </div>
-          </FieldBlock>
+          <div className="picker-list mt">
+            {shifts.length === 0 && <div className="opt muted">No shifts defined yet.</div>}
+            {shifts.map((s) => (
+              <div className="opt" key={s.id}>
+                <Checkbox
+                  label={`${s.name} · ${s.start_local}–${s.end_local}`}
+                  checked={shiftIds.includes(s.id)}
+                  onChange={() => toggleShift(s.id)}
+                />
+              </div>
+            ))}
+          </div>
         )}
+      </FieldBlock>
 
+      <div className="grid-2col">
         <Field label="Effective from" error={show('from')}>
           <Input type="date" value={from} onChange={(e) => setFrom(e.currentTarget.value)} />
         </Field>
@@ -138,18 +145,20 @@ export function BreakForm({
         </Field>
       </div>
 
-      {error != null && <ApiError error={error} />}
+      {error != null && <ApiError error={error} title="Could not save this break" />}
 
-      <div className="sticky-actions">
-        <Button type="submit" variant="primary" loading={submitting} disabled={touched && !valid}>
-          {submitLabel ?? (initial ? 'Save break' : 'Add break')}
-        </Button>
-        {onCancel && (
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
+      {!hideActions && (
+        <div className="form-actions">
+          <Button type="submit" variant="primary" loading={submitting}>
+            {submitLabel ?? (initial ? 'Save break' : 'Add break')}
           </Button>
-        )}
-      </div>
+          {onCancel && (
+            <Button type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      )}
     </form>
   );
 }

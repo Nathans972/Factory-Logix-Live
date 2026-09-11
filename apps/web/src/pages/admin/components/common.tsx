@@ -1,32 +1,34 @@
 /**
- * Small helpers shared by the admin pages (spec 10):
- * role gating, success flashes, confirm dialogs, the wizard stepper and error formatting.
+ * Small helpers shared by the admin pages and the first-run wizard (spec 10):
+ * role gating, success flashes, confirm dialogs, the clickable stepper and error formatting.
+ *
+ * Everything renders with the wave-1 design system (`src/ui`) — no page-specific chrome.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { BackfillProgress } from '@fld/shared';
 import { hasRole, useAuth } from '../../../auth/AuthContext';
 import { DataSourceError } from '../../../data/DataSource';
 import { formatDateTime } from '../../../lib/format';
-import { Banner, Button, Modal, PageHeader } from '../../../ui';
+import { Button, Card, CardHeader, Modal, Note, PageHeader, ProgressBar, StatusBadge, type BadgeTone } from '../../../ui';
 
-/** Wraps an admin-only page body; managers get a "Not allowed" banner (spec 10 / 9 role gating). */
+/** Wraps an admin-only page body; managers get a "Not allowed" note (spec 10 / 9 role gating). */
 export function AdminOnly({ title, children }: { title: string; children: ReactNode }) {
   const { user } = useAuth();
   if (!hasRole(user, 'admin')) {
     return (
       <>
-        <PageHeader title={title} />
-        <Banner kind="warn">
-          Not allowed — this page needs the admin role. Your role is {user?.role ?? 'unknown'}. Managers can open{' '}
-          <strong>Standards</strong> and <strong>Sync health</strong>.
-        </Banner>
+        <PageHeader title={title} subtitle="This page needs the admin role." />
+        <Note tone="warn" title="Not allowed">
+          Your role is {user?.role ?? 'unknown'}. Managers can open <strong>Standards</strong> and{' '}
+          <strong>Sync health</strong>.
+        </Note>
       </>
     );
   }
   return <>{children}</>;
 }
 
-/** Success banner text that clears itself after a few seconds. */
+/** Success message that clears itself after a few seconds (docs/DESIGN.md: auto-dismiss success). */
 export function useFlash(ms = 4000): { message: string | null; show: (m: string) => void; clear: () => void } {
   const [message, setMessage] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -56,10 +58,14 @@ export function useFlash(ms = 4000): { message: string | null; show: (m: string)
   return { message, show, clear };
 }
 
-/** Renders the flash banner when there is one. */
+/** Renders the auto-dismissing success note when there is one. */
 export function Flash({ message }: { message: string | null }) {
   if (!message) return null;
-  return <Banner kind="success">{message}</Banner>;
+  return (
+    <div className="mb">
+      <Note tone="success">{message}</Note>
+    </div>
+  );
 }
 
 /** Debounce a fast-changing value (search boxes). */
@@ -72,6 +78,7 @@ export function useDebouncedValue<T>(value: T, ms = 300): T {
   return v;
 }
 
+/** Confirmations stay modals; create/edit forms use the drawer (docs/DESIGN.md "Components"). */
 export function ConfirmModal({
   open,
   title,
@@ -115,16 +122,16 @@ export function ConfirmModal({
   );
 }
 
-/** Error banner that also surfaces structured API validation details when present. */
-export function ApiError({ error }: { error: unknown }) {
+/** Error note that also surfaces structured API validation details when present. */
+export function ApiError({ error, title }: { error: unknown; title?: ReactNode }) {
   if (error == null) return null;
   const message = error instanceof Error ? error.message : String(error);
   const details = error instanceof DataSourceError ? error.details : undefined;
   return (
-    <div className="banner banner-error">
+    <Note tone="error" title={title}>
       <div>{message}</div>
       {details != null && <pre className="json-block mt">{safeJson(details)}</pre>}
-    </div>
+    </Note>
   );
 }
 
@@ -141,7 +148,11 @@ export interface StepDef {
   done?: boolean;
 }
 
-export function Stepper({
+/**
+ * The design-system `Stepper` pills plus click-to-jump. Identical markup and classes to
+ * `ui/components.tsx` `Stepper`; only the buttons are interactive.
+ */
+export function StepPills({
   steps,
   current,
   onSelect,
@@ -171,7 +182,7 @@ export function Stepper({
 
 /**
  * Like `Field` from the ui kit but rendered as a div, for composite controls
- * (day pickers, job pickers, checkbox lists) that must not sit inside a <label>.
+ * (day pickers, job pickers, segmented controls) that must not sit inside a <label>.
  */
 export function FieldBlock({
   label,
@@ -180,7 +191,7 @@ export function FieldBlock({
   wide,
   children,
 }: {
-  label: ReactNode;
+  label?: ReactNode;
   hint?: ReactNode;
   error?: ReactNode;
   wide?: boolean;
@@ -188,7 +199,7 @@ export function FieldBlock({
 }) {
   return (
     <div className={`field${wide ? ' field-wide' : ''}`}>
-      <span className="field-label">{label}</span>
+      {label != null && <span className="field-label">{label}</span>}
       {children}
       {hint && <span className="field-hint">{hint}</span>}
       {error && <span className="field-error">{error}</span>}
@@ -197,26 +208,33 @@ export function FieldBlock({
 }
 
 export function OnlineBadge({ online }: { online: boolean }) {
-  return <span className={`badge ${online ? 'badge-on' : 'badge-off'}`}>{online ? 'Online' : 'Offline'}</span>;
+  return <StatusBadge tone={online ? 'ok' : 'off'}>{online ? 'Online' : 'Offline'}</StatusBadge>;
 }
 
-/** Backfill progress readout shared by the Connection and Sync health pages (spec 10.4 / 10.9). */
+const BACKFILL_TONE: Record<BackfillProgress['status'], BadgeTone> = {
+  idle: 'neutral',
+  scheduled: 'info',
+  running: 'info',
+  paused: 'warn',
+  done: 'ok',
+  error: 'off',
+};
+
+/** Backfill progress readout shared by the Connection, Sync health and setup pages (spec 10.4 / 10.9). */
 export function BackfillBar({ backfill, tz }: { backfill: BackfillProgress | null; tz: string }) {
   if (!backfill) return <p className="muted">No backfill has been scheduled.</p>;
   const pct = backfill.days_total > 0 ? Math.min(1, backfill.days_done / backfill.days_total) : 0;
   return (
-    <div>
-      <div className="row mb">
-        <span className="badge badge-off">{backfill.status}</span>
+    <div className="stack-sm">
+      <div className="row">
+        <StatusBadge tone={BACKFILL_TONE[backfill.status]}>{backfill.status}</StatusBadge>
+        <ProgressBar value={pct} width={220} />
         <span className="muted small">
           {backfill.days_done} of {backfill.days_total} days
           {backfill.current_day ? ` · working on ${backfill.current_day}` : ''}
         </span>
       </div>
-      <span className="bar">
-        <i style={{ width: `${Math.round(pct * 100)}%` }} />
-      </span>
-      <dl className="kv mt">
+      <dl className="kv">
         <dt>Started</dt>
         <dd>{formatDateTime(backfill.started_at, tz)}</dd>
         <dt>Finished</dt>
@@ -229,6 +247,31 @@ export function BackfillBar({ backfill, tz }: { backfill: BackfillProgress | nul
         )}
       </dl>
     </div>
+  );
+}
+
+/** A card whose body is a plain block — the shape every admin settings section uses. */
+export function SectionCard({
+  title,
+  subtitle,
+  actions,
+  badges,
+  children,
+  bodyless,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  badges?: ReactNode;
+  children: ReactNode;
+  /** skip the padded body (tables render flush) */
+  bodyless?: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader title={title} subtitle={subtitle} badges={badges} actions={actions} />
+      {bodyless ? children : <div className="card-body">{children}</div>}
+    </Card>
   );
 }
 

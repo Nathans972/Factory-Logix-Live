@@ -8,7 +8,7 @@ export function MappingPage() {
     <AdminOnly title="Mapping">
       <PageHeader
         title="Mapping"
-        subtitle="Tell the collector which FactoryLogix entity sets and fields hold jobs, unit events and defects."
+        subtitle="Four steps · Tell the collector which FactoryLogix entity sets and fields hold jobs, unit events and defects."
       />
       <MappingWizard />
     </AdminOnly>

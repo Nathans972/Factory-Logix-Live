@@ -1,16 +1,35 @@
 /** Users admin (spec 10.8). Password hashes are never sent to the client. */
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateUserRequest, Role, User } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
 import { useAuth } from '../../auth/AuthContext';
 import { usePlantTz } from '../../lib/usePlantTz';
 import { formatDateTime } from '../../lib/format';
-import { Button, DataTable, Field, Input, Modal, PageHeader, Select, Spinner, type Column } from '../../ui';
+import {
+  Avatar,
+  Button,
+  Card,
+  DataTable,
+  Drawer,
+  Field,
+  Input,
+  PageHeader,
+  Select,
+  Spinner,
+  StatusBadge,
+  type Column,
+} from '../../ui';
 import { AdminOnly, ApiError, ConfirmModal, Flash, useFlash } from './components/common';
 
 const ROLES: Role[] = ['admin', 'manager', 'viewer'];
 const USERNAME_RE = /^[a-zA-Z0-9._@-]+$/;
+
+const ROLE_CLASS: Record<Role, string> = {
+  admin: 'badge badge-info',
+  manager: 'badge badge-neutral',
+  viewer: 'badge badge-neutral',
+};
 
 export function UsersPage() {
   return (
@@ -71,43 +90,39 @@ function UsersPageInner() {
   const passwordError = cPassword && cPassword.length < 8 ? 'At least 8 characters' : undefined;
   const canCreate = !!cUsername && !!cPassword && !usernameError && !passwordError;
 
-  const submitCreate = (e: FormEvent) => {
-    e.preventDefault();
-    if (!canCreate) return;
-    createM.mutate({ username: cUsername.trim(), password: cPassword, role: cRole });
-  };
+  const users = usersQ.data ?? [];
+  const active = users.filter((u) => u.active).length;
+  const admins = users.filter((u) => u.role === 'admin').length;
 
   const columns: Column<User>[] = [
     {
       key: 'username',
-      header: 'User name',
+      header: 'User',
       render: (u) => (
-        <>
-          {u.username}
-          {me?.id === u.id && <span className="muted small"> (you)</span>}
-        </>
+        <span className="row" style={{ flexWrap: 'nowrap' }}>
+          <Avatar name={u.username} />
+          <span>
+            {u.username}
+            {me?.id === u.id && <small>you</small>}
+          </span>
+        </span>
       ),
       value: (u) => u.username,
     },
     {
       key: 'role',
       header: 'Role',
-      render: (u) => (
-        <Select
-          value={u.role}
-          disabled={updateM.isPending}
-          onChange={(e) => updateM.mutate({ id: u.id, req: { role: e.currentTarget.value as Role } })}
-        >
-          {ROLES.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </Select>
-      ),
+      width: 130,
+      render: (u) => <span className={ROLE_CLASS[u.role]}>{u.role}</span>,
       value: (u) => u.role,
     },
-    { key: 'active', header: 'Active', render: (u) => (u.active ? 'Yes' : 'No'), value: (u) => (u.active ? 1 : 0) },
+    {
+      key: 'active',
+      header: 'Status',
+      width: 120,
+      render: (u) => <StatusBadge tone={u.active ? 'ok' : 'off'}>{u.active ? 'Active' : 'Inactive'}</StatusBadge>,
+      value: (u) => (u.active ? 'Active' : 'Inactive'),
+    },
     { key: 'created', header: 'Created', render: (u) => formatDateTime(u.created_at, tz), value: (u) => u.created_at },
     {
       key: 'last_login',
@@ -118,11 +133,26 @@ function UsersPageInner() {
     {
       key: 'actions',
       header: '',
+      align: 'right',
       sortable: false,
       render: (u) => (
         <span className="row-actions">
+          <Select
+            value={u.role}
+            aria-label={`Role for ${u.username}`}
+            disabled={updateM.isPending || me?.id === u.id}
+            style={{ width: 110, height: 28, fontSize: 12 }}
+            onChange={(e) => updateM.mutate({ id: u.id, req: { role: e.currentTarget.value as Role } })}
+          >
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </Select>
           <Button
             size="sm"
+            variant="ghost"
             onClick={() => {
               setNewPassword('');
               updateM.reset();
@@ -131,7 +161,13 @@ function UsersPageInner() {
           >
             Reset password
           </Button>
-          <Button size="sm" variant={u.active ? 'danger' : 'secondary'} disabled={me?.id === u.id} onClick={() => setToggling(u)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={u.active ? 'btn-danger-text' : undefined}
+            disabled={me?.id === u.id}
+            onClick={() => setToggling(u)}
+          >
             {u.active ? 'Deactivate' : 'Activate'}
           </Button>
         </span>
@@ -143,7 +179,7 @@ function UsersPageInner() {
     <>
       <PageHeader
         title="Users"
-        subtitle="Admins manage everything; managers see the portal and standards; viewers are read-only."
+        subtitle={`${users.length} account${users.length === 1 ? '' : 's'} · ${active} active · ${admins} admin${admins === 1 ? '' : 's'} · Admins manage everything, managers see the portal and standards, viewers are read-only.`}
         actions={
           <Button
             variant="primary"
@@ -159,21 +195,28 @@ function UsersPageInner() {
 
       <Flash message={flash.message} />
       {usersQ.isError && <ApiError error={usersQ.error} />}
-      {updateM.isError && <ApiError error={updateM.error} />}
+      {updateM.isError && !resetting && !toggling && <ApiError error={updateM.error} />}
+
       {usersQ.isLoading ? (
-        <Spinner />
+        <Card>
+          <div className="card-body">
+            <Spinner />
+          </div>
+        </Card>
       ) : (
-        <DataTable
-          columns={columns}
-          rows={usersQ.data ?? []}
-          rowKey={(u) => u.id}
-          exportName="users"
-          defaultSort={{ key: 'username', dir: 'asc' }}
-          emptyMessage="No users."
-        />
+        <Card>
+          <DataTable
+            columns={columns}
+            rows={users}
+            rowKey={(u) => u.id}
+            exportName="users"
+            defaultSort={{ key: 'username', dir: 'asc' }}
+            emptyMessage="No users."
+          />
+        </Card>
       )}
 
-      <Modal
+      <Drawer
         open={creating}
         title="Create user"
         onClose={() => setCreating(false)}
@@ -183,20 +226,31 @@ function UsersPageInner() {
               Cancel
             </Button>
             <Button variant="primary" type="submit" form="create-user-form" loading={createM.isPending} disabled={!canCreate}>
-              Create
+              Create user
             </Button>
           </>
         }
       >
-        <form id="create-user-form" onSubmit={submitCreate}>
+        <form
+          id="create-user-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (canCreate) createM.mutate({ username: cUsername.trim(), password: cPassword, role: cRole });
+          }}
+        >
           {createM.isError && <ApiError error={createM.error} />}
           <Field label="User name" error={usernameError}>
             <Input autoFocus value={cUsername} onChange={(e) => setCUsername(e.currentTarget.value)} />
           </Field>
           <Field label="Password" hint="At least 8 characters." error={passwordError}>
-            <Input type="password" autoComplete="new-password" value={cPassword} onChange={(e) => setCPassword(e.currentTarget.value)} />
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={cPassword}
+              onChange={(e) => setCPassword(e.currentTarget.value)}
+            />
           </Field>
-          <Field label="Role">
+          <Field label="Role" hint="Admins configure the system; managers can adjust standards; viewers read only.">
             <Select value={cRole} onChange={(e) => setCRole(e.currentTarget.value as Role)}>
               {ROLES.map((r) => (
                 <option key={r} value={r}>
@@ -206,9 +260,9 @@ function UsersPageInner() {
             </Select>
           </Field>
         </form>
-      </Modal>
+      </Drawer>
 
-      <Modal
+      <Drawer
         open={!!resetting}
         title={`Reset password for ${resetting?.username ?? ''}`}
         onClose={() => setResetting(null)}
@@ -223,16 +277,22 @@ function UsersPageInner() {
               disabled={newPassword.length < 8}
               onClick={() => resetting && updateM.mutate({ id: resetting.id, req: { password: newPassword } })}
             >
-              Reset
+              Reset password
             </Button>
           </>
         }
       >
         {updateM.isError && <ApiError error={updateM.error} />}
         <Field label="New password" hint="At least 8 characters. The user is not notified automatically.">
-          <Input type="password" autoComplete="new-password" autoFocus value={newPassword} onChange={(e) => setNewPassword(e.currentTarget.value)} />
+          <Input
+            type="password"
+            autoComplete="new-password"
+            autoFocus
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.currentTarget.value)}
+          />
         </Field>
-      </Modal>
+      </Drawer>
 
       <ConfirmModal
         open={!!toggling}

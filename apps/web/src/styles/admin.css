@@ -1,8 +1,10 @@
-/* Admin area + first-run setup styles (spec 10). global.css owns the theme, the shell and the
-   component library (buttons, cards, tables, badges, stepper, notes); this file only carries the
-   page-level layout bits that wave 2 will migrate onto those components. */
+/* Admin area + first-run setup styles (spec 10).
+   global.css owns the theme, the shell and the component library (buttons, cards, tables,
+   badges, drawer, stepper, notes). This file only adds the admin-specific pieces the
+   reference renderings need: the pairing-code boxes, the job picker, the sticky save bar,
+   the mapping preview and the first-run wizard chrome. */
 
-/* ---------- Sidebar / rail extras ---------- */
+/* ---------- Rail extras (legacy sidebar shim) ---------- */
 .sidebar a.nav.locked {
   color: var(--fl-text-3);
 }
@@ -10,47 +12,91 @@
   content: ' 🔒';
   font-size: 10px;
 }
-.sidebar .back-link {
-  color: var(--fl-text-3);
-  font-size: 12px;
-}
 
 /* ---------- Generic bits ---------- */
 .row-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
 }
 .hint-line {
   color: var(--fl-text-2);
   font-size: 13px;
   margin-bottom: 12px;
 }
+/* a segmented control inside a stacked field must not stretch to the column width */
+.field > .seg:not(.seg-full) {
+  align-self: flex-start;
+}
+
+/* ghost button with danger text (reference `.fl-btn.g.d`) */
+.btn-ghost.btn-danger-text {
+  color: var(--fl-red);
+}
+.btn-ghost.btn-danger-text:hover:not(:disabled) {
+  background: var(--fl-red-soft);
+  color: var(--fl-red);
+}
+/* A DataTable dropped straight into a card reads as one card, not two. */
+.card > .dt {
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  margin-bottom: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 0 16px;
 }
-.form-grid .field-wide {
+.form-grid .field-wide,
+.form-grid > .field-wide {
   grid-column: 1 / -1;
 }
-.inline-form {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-  flex-wrap: wrap;
+.grid-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
 }
-.inline-form .field {
-  margin-bottom: 0;
-  min-width: 150px;
+@media (max-width: 720px) {
+  .grid-2col {
+    grid-template-columns: 1fr;
+  }
 }
-.sticky-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-top: 8px;
-  flex-wrap: wrap;
+
+/* `.input` sets the `font` shorthand, which resets `.mono`'s family — win on specificity. */
+.input.mono {
+  font-family: var(--fl-mono);
+  font-size: 13px;
 }
+
+/* monospace pairing-code chip (docs/design/admin-displays.html `.fl-mono`) */
+.mono-chip {
+  font-family: var(--fl-mono);
+  font-size: 13px;
+  background: var(--fl-neutral-soft);
+  color: var(--fl-text);
+  padding: 2px 7px;
+  border-radius: 5px;
+  letter-spacing: 0.08em;
+}
+
+.dim {
+  color: var(--fl-text-3);
+}
+
 .json-block {
   background: var(--fl-surface-2);
   border: 1px solid var(--fl-border);
@@ -62,12 +108,14 @@
   font-family: var(--fl-mono);
   font-size: 12px;
   white-space: pre;
+  color: var(--fl-text-2);
 }
 .kv {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 6px 16px;
   font-size: 13px;
+  margin: 0;
 }
 .kv dt {
   color: var(--fl-text-2);
@@ -76,161 +124,146 @@
   margin: 0;
 }
 .issues {
-  margin: 0;
+  margin: 4px 0 0;
   padding-left: 18px;
 }
 .issues li {
   font-size: 12px;
 }
 
-/* ---------- Progress bar (backfill) ---------- */
-.bar {
-  display: block;
-  width: 100%;
-  max-width: 420px;
-  height: 8px;
-  background: var(--fl-neutral-soft);
-  border-radius: 999px;
-  overflow: hidden;
-}
-.bar > i {
-  display: block;
-  height: 100%;
-  background: var(--fl-primary);
-  transition: width 0.4s ease;
-}
-
-/* ---------- Mapping wizard ---------- */
-.map-dataset {
+/* ---------- Sticky save bar (settings pages) ---------- */
+.sticky-save {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: -4px 0 16px;
+  padding: 12px 16px;
+  background: var(--fl-surface);
   border: 1px solid var(--fl-border);
   border-radius: var(--fl-radius);
-  margin-bottom: 12px;
-  background: var(--fl-surface);
-  overflow: hidden;
+  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08);
 }
-.map-dataset > header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 16px;
-  background: var(--fl-surface-2);
-  border-bottom: 1px solid var(--fl-border);
-  flex-wrap: wrap;
-}
-.map-dataset > header .t {
-  font-weight: 600;
-}
-.map-dataset > .body {
-  padding: 16px;
-}
-.map-dataset.off > .body {
-  display: none;
-}
-.req {
-  color: var(--fl-primary);
-}
-.map-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 0 16px;
-}
-.multi {
-  min-height: 120px;
-}
-.preview-scroll {
-  max-height: 340px;
-  overflow: auto;
-  border: 1px solid var(--fl-border);
-  border-radius: var(--fl-radius-sm);
-}
-.preview-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  font-family: var(--fl-mono);
-}
-.preview-table th,
-.preview-table td {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--fl-border);
-  white-space: nowrap;
-  text-align: left;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.preview-table th {
-  position: sticky;
-  top: 0;
-  background: var(--fl-surface-2);
-  color: var(--fl-text-3);
-  font-family: var(--fl-font);
-  text-transform: uppercase;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-}
-.checks {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.check {
-  background: var(--fl-surface);
-  border: 1px solid var(--fl-border);
-  border-radius: var(--fl-radius-sm);
-  padding: 10px 12px;
-}
-.check .l {
+.sticky-save .msg {
   color: var(--fl-text-2);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
 }
-.check .v {
-  font-size: 18px;
-  font-weight: 700;
-  margin-top: 2px;
-  font-variant-numeric: tabular-nums;
-}
-.check.bad {
-  border-color: var(--fl-red-soft);
-  background: var(--fl-red-soft);
-}
-.check.bad .v {
-  color: var(--fl-red);
+.sticky-save .spacer {
+  flex: 1;
 }
 
-/* ---------- Job picker ---------- */
-.picker-list {
-  max-height: 230px;
+/* actions row inside a card body (non-sticky forms) */
+.form-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.form-actions .spacer {
+  flex: 1;
+}
+
+/* ---------- Four-digit pairing code entry ---------- */
+.code-boxes {
+  display: flex;
+  gap: 8px;
+}
+.code-box {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  text-align: center;
+  font-family: var(--fl-mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--fl-text);
+  background: var(--fl-surface);
+  border: 1px solid var(--fl-border-strong);
+  border-radius: var(--fl-radius-sm);
+}
+.code-box:focus {
+  outline: none;
+  border-color: var(--fl-primary);
+  box-shadow: var(--fl-ring);
+}
+.code-boxes.invalid .code-box {
+  border-color: var(--fl-red);
+}
+
+/* ---------- Job picker (drawer) ---------- */
+.jp-list {
+  max-height: 220px;
   overflow: auto;
   border: 1px solid var(--fl-border);
   border-radius: var(--fl-radius-sm);
   margin-top: 8px;
 }
-.picker-list .opt {
-  display: block;
+.jp-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   font: inherit;
   background: none;
-  border: none;
-  border-bottom: 1px solid var(--fl-border);
+  border: 0;
+  border-top: 1px solid var(--fl-border);
   color: var(--fl-text);
   padding: 9px 12px;
   cursor: pointer;
 }
-.picker-list .opt:last-child {
-  border-bottom: none;
+.jp-opt:first-child {
+  border-top: 0;
 }
-.picker-list .opt:hover {
+.jp-opt:hover {
   background: var(--fl-surface-2);
 }
-.picker-list .opt.on {
+.jp-opt.on {
   background: var(--fl-primary-soft);
   color: var(--fl-primary);
+}
+.jp-opt b {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.jp-opt .p {
+  color: var(--fl-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jp-opt.on .p {
+  color: var(--fl-primary);
+}
+.jp-opt small {
+  color: var(--fl-text-3);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.jp-note {
+  padding: 10px 12px;
+  color: var(--fl-text-3);
+  font-size: 13px;
+}
+
+/* checkbox / read-only list inside a field (break shifts, setup lists) */
+.picker-list {
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius-sm);
+  overflow: hidden;
+}
+.picker-list .opt {
+  display: block;
+  padding: 9px 12px;
+  border-top: 1px solid var(--fl-border);
+  font-size: 13px;
+}
+.picker-list .opt:first-child {
+  border-top: 0;
 }
 .picker-list .opt .sub {
   display: block;
@@ -238,26 +271,71 @@
   font-size: 12px;
 }
 
-/* ---------- Audit expander ---------- */
-.expander-btn {
-  font: inherit;
-  background: none;
-  border: none;
-  color: var(--fl-text-3);
-  cursor: pointer;
-  padding: 0 6px 0 0;
+/* ---------- Mapping wizard ---------- */
+.map-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
 }
-.expander-btn:hover {
+@media (max-width: 860px) {
+  .map-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.req {
   color: var(--fl-primary);
 }
-tr.audit-detail td {
-  background: var(--fl-surface-2);
-  white-space: normal;
+.multi {
+  min-height: 132px;
 }
+.preview-scroll {
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius-sm);
+  overflow: hidden;
+}
+.preview-scroll .dt {
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  margin-bottom: 0;
+}
+.preview-scroll .dt-scroll {
+  max-height: 320px;
+}
+.preview-scroll .dt-table td {
+  font-family: var(--fl-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.checks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.checks-grid .kpi {
+  padding: 10px 12px;
+}
+.checks-grid .kpi-value {
+  font-size: 18px;
+}
+.query-line {
+  font-family: var(--fl-mono);
+  font-size: 12px;
+  color: var(--fl-text-3);
+  overflow-x: auto;
+  white-space: nowrap;
+  padding-bottom: 2px;
+}
+
+/* ---------- Audit ---------- */
 .audit-diff {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 10px;
+  padding: 4px 0;
 }
 .audit-diff h4 {
   margin: 0 0 4px;
@@ -272,12 +350,7 @@ tr.audit-detail td {
   align-items: center;
 }
 
-/* ---------- Collapsible advanced section ---------- */
-.collapse {
-  border-top: 1px solid var(--fl-border);
-  margin-top: 6px;
-  padding-top: 12px;
-}
+/* ---------- Collapsible advanced card body ---------- */
 .collapse > summary {
   cursor: pointer;
   color: var(--fl-text-2);
@@ -285,6 +358,10 @@ tr.audit-detail td {
   font-weight: 600;
   list-style: none;
   user-select: none;
+  padding: 12px 16px;
+}
+.collapse > summary::-webkit-details-marker {
+  display: none;
 }
 .collapse > summary::before {
   content: '▸ ';
@@ -292,46 +369,88 @@ tr.audit-detail td {
 .collapse[open] > summary::before {
   content: '▾ ';
 }
-.collapse > .collapse-body {
-  padding-top: 12px;
+.collapse[open] > summary {
+  border-bottom: 1px solid var(--fl-border);
 }
 
-/* ---------- First-run setup wizard (centered card, docs/design/setup.html) ---------- */
+/* ---------- First-run setup wizard (docs/design/setup.html) ---------- */
 .setup-page {
   min-height: 100vh;
-  padding: 48px 24px 72px;
-  display: grid;
-  place-items: start center;
+  display: flex;
+  flex-direction: column;
   background: var(--fl-canvas);
 }
-.setup-inner {
-  width: min(880px, 100%);
+.setup-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  height: var(--fl-topbar-h);
+  flex: none;
+  background: var(--fl-surface);
+  border-bottom: 1px solid var(--fl-border);
 }
-.setup-brand {
+.setup-top .brand {
   display: flex;
   align-items: center;
   gap: 10px;
   font-weight: 700;
-  font-size: 15px;
-  margin-bottom: 14px;
+  letter-spacing: -0.01em;
+}
+.setup-top .spacer {
+  flex: 1;
+}
+.setup-top .who {
+  color: var(--fl-text-3);
+  font-size: 13px;
+}
+.setup-center {
+  flex: 1;
+  display: grid;
+  place-items: start center;
+  padding: 48px 24px 72px;
 }
 .setup-card {
+  width: 760px;
+  max-width: 100%;
   background: var(--fl-surface);
   border: 1px solid var(--fl-border);
   border-radius: 14px;
   box-shadow: var(--fl-shadow-lg);
   padding: 28px 32px;
 }
+.setup-card h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.setup-card .lede {
+  margin: 0 0 20px;
+  color: var(--fl-text-2);
+}
 .setup-card h2 {
+  margin: 0 0 4px;
   font-size: 17px;
   font-weight: 600;
-  margin-bottom: 4px;
+}
+.setup-card .help {
+  margin: 0 0 18px;
+  color: var(--fl-text-2);
+}
+.setup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.setup-body .card {
+  box-shadow: none;
 }
 .setup-foot {
   display: flex;
-  gap: 8px;
   align-items: center;
-  margin-top: 18px;
+  gap: 8px;
+  margin-top: 22px;
   padding-top: 18px;
   border-top: 1px solid var(--fl-border);
   flex-wrap: wrap;

@@ -99,12 +99,12 @@ export function Field({ label, hint, error, children }: { label: ReactNode; hint
   );
 }
 
-export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={`input${props.className ? ' ' + props.className : ''}`} {...props} />;
+export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return <input className={`input${className ? ' ' + className : ''}`} {...props} />;
 }
 
-export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={`input${props.className ? ' ' + props.className : ''}`} {...props} />;
+export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select className={`input${className ? ' ' + className : ''}`} {...props} />;
 }
 
 export function Checkbox({ label, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: ReactNode }) {

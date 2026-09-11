@@ -1,14 +1,70 @@
-/** Job detail: the TV dashboard embedded in the portal plus totals and history (spec 9.5). */
+/**
+ * Job detail (spec 9.5, docs/design/job-detail.html).
+ *
+ * Breadcrumb → title with status → KPI row → tabs. The dashboard tab carries the light-theme
+ * hourly grid (the same `TvDashboard` DTO the floor TV renders) plus the operators and
+ * shift-over-shift cards.
+ */
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { JobOperatorTotal, JobShiftHistoryRow, TvDefectRow } from '@fld/shared';
+import type { TvDashboard, TvRow } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
+import { IS_MOCK } from '../../data';
 import { useLiveRefetch } from '../../lib/useLive';
 import { usePlantTz } from '../../lib/usePlantTz';
-import { formatDate, formatHours, formatMinutes, formatPct, formatTime } from '../../lib/format';
-import { ColorChip, DataTable, ErrorBox, PageHeader, Panel, Spinner, Stat, Tabs, type Column } from '../../ui';
-import { TvDashboard } from '../tv';
-import { ProgressBar } from './components/ProgressBar';
+import { downloadCsv } from '../../lib/csv';
+import { formatNum, formatPct } from '../../lib/format';
+import {
+  Breadcrumbs,
+  Button,
+  Card,
+  CardHeader,
+  ErrorBox,
+  KpiRow,
+  KpiTile,
+  PageHeader,
+  ProgressBar,
+  Segmented,
+  Spinner,
+  StatusBadge,
+  Tabs,
+} from '../../ui';
+import { HourlyGrid, cellAccent, intText, shortDate } from './components/HourlyGrid';
+import { JobDefectsTable, JobOperatorsTable, JobShiftHistoryTable } from './components/JobTables';
+import { rowOperatorLabel } from '../tv/tvLogic';
+
+type JobTab = 'dashboard' | 'defects' | 'operators' | 'history';
+
+const TABS: { value: JobTab; label: string }[] = [
+  { value: 'dashboard', label: 'Dashboard' },
+  { value: 'defects', label: 'Defects' },
+  { value: 'operators', label: 'Operators' },
+  { value: 'history', label: 'Shift history' },
+];
+
+const CLOSED_RE = /clos|complet|cancel/i;
+
+/** `/tv` with the mock demo token so reviewers land on a claimed display. */
+function tvHref(): string {
+  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+  return base + '/tv' + (IS_MOCK ? '?demo=1' : '');
+}
+
+function exportDashboard(job: string, dash: TvDashboard): void {
+  downloadCsv(
+    'job-' + job + '-hourly',
+    [
+      { header: 'Operation', value: (r: TvRow) => r.operation },
+      { header: 'Operator', value: (r: TvRow) => rowOperatorLabel(r) },
+      { header: 'StdHr', value: (r: TvRow) => r.std_hr },
+      { header: 'Prior', value: (r: TvRow) => r.prior },
+      ...dash.columns.map((c, i) => ({ header: c.label, value: (r: TvRow) => r.cells[i]?.units ?? 0 })),
+      { header: 'Shift', value: (r: TvRow) => r.shift },
+      ...(dash.show_std_day ? [{ header: 'StdDay', value: (r: TvRow) => r.std_day }] : []),
+    ],
+    dash.rows,
+  );
+}
 
 export function JobPage() {
   const ds = useDataSource();
@@ -16,85 +72,93 @@ export function JobPage() {
   const { job = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const grouped = params.get('grouped') === '1';
+  const tab = (params.get('tab') as JobTab | null) ?? 'dashboard';
 
   const detail = useQuery({ queryKey: ['jobDetail', job], queryFn: () => ds.jobDetail(job) });
+  const list = useQuery({ queryKey: ['jobs', job, false], queryFn: () => ds.jobs(job, false), staleTime: 60_000 });
   useLiveRefetch(['data_updated']);
 
   const d = detail.data;
   const dash = d ? (grouped ? d.dashboard_grouped : d.dashboard_separate) : null;
+  const item = list.data?.jobs.find((j) => j.job_number === job) ?? null;
 
-  const defectColumns: Column<TvDefectRow>[] = dash
-    ? [
-        { key: 'operation', header: 'Operation', render: (r) => r.operation },
-        { key: 'prior', header: 'Prior', align: 'right', render: (r) => r.prior },
-        ...dash.columns.map((c, i) => ({
-          key: `h${c.hour_start_utc}`,
-          header: c.label,
-          align: 'right' as const,
-          value: (r: TvDefectRow) => r.cells[i] ?? 0,
-          render: (r: TvDefectRow) => r.cells[i] ?? 0,
-        })),
-        { key: 'shift', header: 'Shift qty', align: 'right', render: (r) => r.shift_qty },
-      ]
-    : [];
+  const setParam = (key: string, value: string | null) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value == null) next.delete(key);
+        else next.set(key, value);
+        return next;
+      },
+      { replace: true },
+    );
 
-  const operatorColumns: Column<JobOperatorTotal>[] = [
-    {
-      key: 'operator',
-      header: 'Operator',
-      value: (r) => r.operator_name ?? r.operator_id,
-      render: (r) => <Link to={`/operators/${encodeURIComponent(r.operator_id)}`}>{r.operator_name ?? r.operator_id}</Link>,
-    },
-    { key: 'operations', header: 'Operations', value: (r) => r.operations.join(' / '), render: (r) => r.operations.join(' / ') },
-    { key: 'units', header: 'Units', align: 'right', render: (r) => r.units },
-    { key: 'charged', header: 'Charged', align: 'right', value: (r) => Math.round(r.charged_minutes), render: (r) => formatMinutes(r.charged_minutes) },
-  ];
+  // ---- header ------------------------------------------------------------
+  const closed = item ? (item.status ? CLOSED_RE.test(item.status) : !item.active) : false;
+  const statusLabel = closed ? 'Closed' : (item?.status ?? 'In process');
+  const displays = d?.displays_showing ?? [];
+  const tvNames = displays.map((x) => x.name ?? 'Display ' + x.id).join(', ');
+  const tvLabel =
+    displays.length === 0 ? 'Not on any TV' : 'On ' + displays.length + ' TV' + (displays.length === 1 ? '' : 's') + ' · ' + tvNames;
 
-  const historyColumns: Column<JobShiftHistoryRow>[] = [
-    { key: 'shift', header: 'Shift', value: (r) => `${r.shift.date} ${r.shift.name}`, render: (r) => `${r.shift.name} · ${formatDate(r.shift.start_utc, tz)}` },
-    { key: 'units', header: 'Units', align: 'right', render: (r) => r.units },
-    { key: 'charged', header: 'Charged h', align: 'right', value: (r) => r.charged_hours, render: (r) => formatHours(r.charged_hours) },
-    { key: 'earned', header: 'Earned h', align: 'right', value: (r) => r.earned_hours, render: (r) => formatHours(r.earned_hours) },
-    {
-      key: 'efficiency',
-      header: 'Efficiency',
-      align: 'right',
-      value: (r) => r.efficiency,
-      render: (r) => <ColorChip color={r.color}>{formatPct(r.efficiency)}</ColorChip>,
-    },
-  ];
+  // ---- KPIs --------------------------------------------------------------
+  // `shift_history` is oldest-first: "this shift" is the one in progress, else the most recent.
+  const history = d?.shift_history ?? [];
+  const shiftNow =
+    history.find((r) => d != null && d.generated_at >= r.shift.start_utc && d.generated_at < r.shift.end_utc) ??
+    history[history.length - 1] ??
+    null;
+  const unitsInWindow = dash ? dash.rows.reduce((s, r) => s + r.shift, 0) : 0;
+  const defectsTotal = dash ? dash.defect_rows.reduce((s, r) => s + r.prior + r.shift_qty, 0) : 0;
+  const defectsWindow = dash ? dash.defect_rows.reduce((s, r) => s + r.cells.reduce((a, b) => a + b, 0), 0) : 0;
+  const topDefectOps = (dash?.defect_rows ?? [])
+    .map((r) => ({ op: r.operation, n: r.cells.reduce((a, b) => a + b, 0) }))
+    .filter((r) => r.n > 0)
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 2)
+    .map((r) => r.op);
+  const visitors = new Set((d?.dashboard_separate.rows ?? []).filter((r) => r.visitor_row).flatMap((r) => r.operators)).size;
 
   return (
     <>
+      <Breadcrumbs items={[{ label: 'Jobs', to: '/jobs' }, { label: job }]} />
+
       <PageHeader
-        title={job}
+        title={
+          <>
+            {job}
+            <StatusBadge tone={closed ? 'off' : 'ok'}>{statusLabel}</StatusBadge>
+          </>
+        }
         subtitle={
           dash ? (
-            <span>
-              <Link to={`/products/${encodeURIComponent(dash.job.product_number)}`}>{dash.job.product_number}</Link>
-              {dash.job.product_name ? ` · ${dash.job.product_name}` : ''}
-              {` · updated ${formatTime(d?.generated_at ?? null, tz, true)}`}
-            </span>
+            <>
+              <Link className="link" to={'/products/' + encodeURIComponent(dash.job.product_number)}>
+                {dash.job.product_number}
+              </Link>
+              {dash.job.product_name ? ' · ' + dash.job.product_name : ''}
+              {item?.fl_created_at ? ' · Released ' + shortDate(item.fl_created_at, tz) : ''}
+              {' · ' + intText(dash.job.qty_released) + ' units'}
+            </>
           ) : (
             'Loading…'
           )
         }
         actions={
-          <Tabs
-            value={grouped ? 'grouped' : 'separate'}
-            onChange={(v) =>
-              setParams((prev) => {
-                const next = new URLSearchParams(prev);
-                if (v === 'grouped') next.set('grouped', '1');
-                else next.delete('grouped');
-                return next;
-              })
-            }
-            tabs={[
-              { value: 'separate', label: 'Per operator' },
-              { value: 'grouped', label: 'Grouped' },
-            ]}
-          />
+          <>
+            <StatusBadge tone={displays.length ? 'info' : 'neutral'}>{tvLabel}</StatusBadge>
+            <Segmented
+              value={grouped ? 'grouped' : 'separate'}
+              onChange={(v) => setParam('grouped', v === 'grouped' ? '1' : null)}
+              options={[
+                { value: 'separate', label: 'Per operator' },
+                { value: 'grouped', label: 'Grouped' },
+              ]}
+            />
+            <Button disabled={!dash} onClick={() => dash && exportDashboard(job, dash)}>
+              Export CSV
+            </Button>
+          </>
         }
       />
 
@@ -103,64 +167,77 @@ export function JobPage() {
 
       {d && dash && (
         <>
-          <div className="tv-embed">
-            <TvDashboard dashboard={dash} showGauge tz={tz} updatedAt={d.generated_at} compact />
-          </div>
-
-          <div className="grid grid-4 mb">
-            <Stat label="Qty complete" value={dash.job.qty_complete} />
-            <Stat label="Qty released" value={dash.job.qty_released} />
-            <Stat label="Progress" value={formatPct(dash.job.progress)} hint={<ProgressBar value={dash.job.progress} />} />
-            <Stat
-              label="Defects"
-              value={dash.defect_rows.reduce((s, r) => s + r.shift_qty + r.prior, 0)}
-              hint={`${dash.defect_rows.reduce((s, r) => s + r.shift_qty, 0)} in the window`}
+          <KpiRow>
+            <KpiTile
+              label="Qty complete"
+              value={
+                <>
+                  {intText(dash.job.qty_complete)} <span className="kpi-den">/ {intText(dash.job.qty_released)}</span>
+                </>
+              }
+              hint={<ProgressBar value={dash.job.progress} width="100%" />}
             />
-          </div>
+            <KpiTile
+              label="Efficiency this shift"
+              value={formatPct(shiftNow?.efficiency)}
+              accent={cellAccent(shiftNow?.color)}
+              hint={
+                shiftNow
+                  ? formatNum(shiftNow.earned_hours, 1) + ' h earned / ' + formatNum(shiftNow.charged_hours, 1) + ' h charged'
+                  : 'no shift recorded yet'
+              }
+            />
+            <KpiTile label="Units in window" value={intText(unitsInWindow)} hint="last 12 hours" />
+            <KpiTile
+              label="Defects"
+              value={intText(defectsTotal)}
+              accent={defectsTotal > 0 ? 'red' : 'none'}
+              hint={intText(defectsWindow) + ' in the window' + (topDefectOps.length ? ' · ' + topDefectOps.join(', ') : '')}
+            />
+            <KpiTile
+              label="Operators"
+              value={intText(d.operators.length)}
+              hint={intText(visitors) + ' visitor' + (visitors === 1 ? '' : 's')}
+            />
+          </KpiRow>
 
-          <DataTable
-            title="Defects"
-            columns={defectColumns}
-            rows={dash.defect_rows}
-            rowKey={(r) => r.operation}
-            exportName={`job-${job}-defects`}
-            dense
-            emptyMessage="No defects recorded"
-          />
+          <Tabs value={tab} onChange={(v) => setParam('tab', v === 'dashboard' ? null : v)} tabs={TABS} />
 
-          <DataTable
-            title="Operators on this job"
-            columns={operatorColumns}
-            rows={d.operators}
-            rowKey={(r) => r.operator_id}
-            exportName={`job-${job}-operators`}
-            defaultSort={{ key: 'units', dir: 'desc' }}
-            emptyMessage="No operator activity yet"
-          />
+          {tab === 'dashboard' && (
+            <>
+              <Card>
+                <CardHeader
+                  title="Hourly output"
+                  subtitle="Rolling 12 hours · same rules as the floor TV"
+                  actions={
+                    <>
+                      <span className="card-sub">Current hour outlined</span>
+                      <a className="btn btn-ghost btn-sm" href={tvHref()} target="_blank" rel="noreferrer">
+                        Open TV view
+                      </a>
+                    </>
+                  }
+                />
+                <HourlyGrid dashboard={dash} tz={tz} />
+              </Card>
 
-          <DataTable
-            title="Shift history"
-            columns={historyColumns}
-            rows={d.shift_history}
-            rowKey={(r) => `${r.shift.date}|${r.shift.shift_id}`}
-            exportName={`job-${job}-shift-history`}
-            defaultSort={{ key: 'shift', dir: 'desc' }}
-            emptyMessage="No completed shifts on this job"
-          />
+              <div className="pair2">
+                <JobOperatorsTable rows={d.operators} exportName={'job-' + job + '-operators'} />
+                <JobShiftHistoryTable
+                  rows={d.shift_history}
+                  tz={tz}
+                  now={d.generated_at}
+                  exportName={'job-' + job + '-shift-history'}
+                />
+              </div>
+            </>
+          )}
 
-          <Panel title="Open on TV">
-            {d.displays_showing.length === 0 ? (
-              <span className="muted">Not on any TV.</span>
-            ) : (
-              <span className="row">
-                {d.displays_showing.map((disp) => (
-                  <span className="tag" key={disp.id}>
-                    {disp.name ?? `Display ${disp.id}`}
-                  </span>
-                ))}
-              </span>
-            )}
-          </Panel>
+          {tab === 'defects' && <JobDefectsTable dashboard={dash} exportName={'job-' + job + '-defects'} />}
+          {tab === 'operators' && <JobOperatorsTable rows={d.operators} exportName={'job-' + job + '-operators'} />}
+          {tab === 'history' && (
+            <JobShiftHistoryTable rows={d.shift_history} tz={tz} now={d.generated_at} exportName={'job-' + job + '-shift-history'} />
+          )}
         </>
       )}
     </>

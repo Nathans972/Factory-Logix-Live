@@ -1,40 +1,65 @@
-/** Product standards view with manager adjustments/overrides (spec 9.6). */
+/**
+ * Product standards (spec 9.6, docs/DESIGN.md "Product standards").
+ *
+ * One row per route operation: computed value + sample, median, FactoryLogix value, the active
+ * adjustment and override, and the bold effective value with its provenance. Managers can adjust,
+ * override and recompute; every write takes a required note (audited).
+ */
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ProductOperationRow, StandardAdjustment, StandardOverride } from '@fld/shared';
+import type { ProductOperationRow, StandardAdjustment, StandardOverride, StdProvenance } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
 import { hasRole, useAuth } from '../../auth/AuthContext';
 import { usePlantTz } from '../../lib/usePlantTz';
 import { formatDate, formatDateTime } from '../../lib/format';
 import {
+  Breadcrumbs,
   Button,
+  Card,
+  CardHeader,
   DataTable,
-  Empty,
+  EmptyState,
   ErrorBox,
   Field,
   Input,
   Modal,
+  Note,
   PageHeader,
-  Panel,
   Select,
   Spinner,
+  StatusBadge,
   type Column,
 } from '../../ui';
+import { intText, shortDate } from './components/HourlyGrid';
 
 type ModalKind = 'adjust' | 'override';
 
-const PROVENANCE_LABEL: Record<string, string> = {
-  override_product_operation: 'override (operation)',
-  override_product: 'override (product)',
+/** The one word under the effective value (docs/DESIGN.md "Product standards"). */
+const PROVENANCE_WORD: Record<StdProvenance, string> = {
+  override_product_operation: 'override',
+  override_product: 'override',
   adjusted: 'adjusted',
   base_computed: 'computed',
-  base_fl: 'FactoryLogix',
+  base_fl: 'FL fallback',
   none: 'none',
 };
 
+const DAY = 24 * 60 * 60 * 1000;
+
 function stdHr(v: number | null | undefined): string {
   return v == null ? '—' : v.toFixed(2);
+}
+
+function percentText(a: StandardAdjustment): string {
+  return (a.percent > 0 ? '+' : '') + a.percent + '%';
+}
+
+function scopeText(scope: string, operation: string | null): string {
+  if (scope === 'global') return 'every product';
+  if (scope === 'product') return 'whole product';
+  if (scope === 'operation') return 'operation ' + (operation ?? '');
+  return operation ?? 'one operation';
 }
 
 export function ProductPage() {
@@ -94,27 +119,47 @@ export function ProductPage() {
         ? await run(() =>
             ds.createProductAdjustment(z, { scope, product_number: z, operation: op, percent: Number(percent), note: note.trim() }),
           )
-        : await run(() =>
-            ds.createOverride(z, { scope, product_number: z, operation: op, std_hr: Number(stdHrValue), note: note.trim() }),
-          );
+        : await run(() => ds.createOverride(z, { scope, product_number: z, operation: op, std_hr: Number(stdHrValue), note: note.trim() }));
     if (ok) setModal(null);
   };
+
+  // ---- header context ----------------------------------------------------
+  const recomputedAt = (v?.rows ?? []).reduce<number | null>(
+    (m, r) => (r.standard ? (m == null || r.standard.computed_at > m ? r.standard.computed_at : m) : m),
+    null,
+  );
+  const lookbackDays = (v?.rows ?? []).reduce<number>((m, r) => {
+    const s = r.standard;
+    if (!s || s.sample_from == null || s.sample_to == null) return m;
+    return Math.max(m, Math.round((s.sample_to - s.sample_from) / DAY));
+  }, 0);
+
+  const subtitleParts: string[] = [];
+  if (v) subtitleParts.push(v.rows.length + ' route operations');
+  if (recomputedAt != null) subtitleParts.push('Standards recomputed ' + formatDate(recomputedAt, tz));
+  if (lookbackDays > 0) subtitleParts.push(lookbackDays + '-day sample');
 
   const columns: Column<ProductOperationRow>[] = [
     { key: 'operation', header: 'Operation', value: (r) => r.operation, render: (r) => r.operation },
     {
       key: 'base',
-      header: 'Base computed',
+      header: 'Computed StdHr',
       align: 'right',
       value: (r) => r.standard?.computed_std_hr ?? null,
       render: (r) => (
         <span className="stack">
           <span>{stdHr(r.standard?.computed_std_hr)}</span>
-          <span className="sub">
+          <small>
             {r.standard
-              ? `${r.standard.sample_units} units · ${r.standard.sample_operators} ops · ${formatDate(r.standard.sample_from, tz)} – ${formatDate(r.standard.sample_to, tz)}`
+              ? intText(r.standard.sample_units) +
+                ' units · ' +
+                r.standard.sample_operators +
+                ' operators · ' +
+                shortDate(r.standard.sample_from, tz) +
+                ' – ' +
+                shortDate(r.standard.sample_to, tz)
               : 'no sample'}
-          </span>
+          </small>
         </span>
       ),
     },
@@ -133,12 +178,8 @@ export function ProductPage() {
       value: (r) => r.effective.adjustment?.percent ?? null,
       render: (r) =>
         r.effective.adjustment ? (
-          <span className="stack" title={r.effective.adjustment.note ?? ''}>
-            <span>
-              {r.effective.adjustment.percent > 0 ? '+' : ''}
-              {r.effective.adjustment.percent}%
-            </span>
-            <span className="sub">{r.effective.adjustment.scope}</span>
+          <span title={r.effective.adjustment.note ?? ''}>
+            <StatusBadge tone="warn">{percentText(r.effective.adjustment)}</StatusBadge>
           </span>
         ) : (
           '—'
@@ -151,9 +192,8 @@ export function ProductPage() {
       value: (r) => r.effective.override?.std_hr ?? null,
       render: (r) =>
         r.effective.override ? (
-          <span className="stack" title={r.effective.override.note ?? ''}>
-            <span>{r.effective.override.std_hr.toFixed(2)}</span>
-            <span className="sub">{r.effective.override.scope}</span>
+          <span title={r.effective.override.note ?? ''}>
+            <StatusBadge tone="info">{r.effective.override.std_hr.toFixed(2)}</StatusBadge>
           </span>
         ) : (
           '—'
@@ -161,27 +201,21 @@ export function ProductPage() {
     },
     {
       key: 'effective',
-      header: 'Effective StdHr',
+      header: 'Effective',
       align: 'right',
       value: (r) => r.effective.effective,
       render: (r) => (
         <span className="stack">
-          <span className="bold">{stdHr(r.effective.effective)}</span>
-          <span className="sub">{PROVENANCE_LABEL[r.effective.provenance] ?? r.effective.provenance}</span>
+          <span className="eff-value">{stdHr(r.effective.effective)}</span>
+          <small>{PROVENANCE_WORD[r.effective.provenance] ?? r.effective.provenance}</small>
         </span>
       ),
-    },
-    {
-      key: 'computed_at',
-      header: 'Computed',
-      value: (r) => r.standard?.computed_at ?? null,
-      render: (r) => formatDateTime(r.standard?.computed_at ?? null, tz),
     },
     ...(isManager
       ? [
           {
             key: 'actions',
-            header: 'Actions',
+            header: '',
             sortable: false,
             value: () => '',
             render: (r: ProductOperationRow) => (
@@ -192,12 +226,12 @@ export function ProductPage() {
                 {r.effective.adjustment && (
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="danger"
                     disabled={busy}
-                    title={`Clear the ${r.effective.adjustment.scope} adjustment`}
+                    title={'Clear the ' + r.effective.adjustment.scope + ' adjustment'}
                     onClick={() => void run(() => ds.deleteAdjustment(r.effective.adjustment!.id))}
                   >
-                    Clear adj.
+                    Clear
                   </Button>
                 )}
                 <Button size="sm" variant="ghost" onClick={() => openModal('override', r.operation)}>
@@ -206,12 +240,12 @@ export function ProductPage() {
                 {r.effective.override && (
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="danger"
                     disabled={busy}
-                    title={`Clear the ${r.effective.override.scope} override`}
+                    title={'Clear the ' + r.effective.override.scope + ' override'}
                     onClick={() => void run(() => ds.deleteOverride(r.effective.override!.id))}
                   >
-                    Clear ovr.
+                    Clear override
                   </Button>
                 )}
               </span>
@@ -221,67 +255,19 @@ export function ProductPage() {
       : []),
   ];
 
-  const adjustmentColumns: Column<StandardAdjustment>[] = [
-    { key: 'scope', header: 'Scope', render: (a) => a.scope },
-    { key: 'operation', header: 'Operation', value: (a) => a.operation, render: (a) => a.operation ?? '(all)' },
-    { key: 'percent', header: 'Percent', align: 'right', value: (a) => a.percent, render: (a) => `${a.percent > 0 ? '+' : ''}${a.percent}%` },
-    { key: 'note', header: 'Note', value: (a) => a.note, render: (a) => a.note ?? '' },
-    { key: 'by', header: 'Created', value: (a) => a.created_at, render: (a) => `${formatDateTime(a.created_at, tz)}${a.created_by ? ` · ${a.created_by}` : ''}` },
-    ...(isManager
-      ? [
-          {
-            key: 'delete',
-            header: '',
-            sortable: false,
-            value: () => '',
-            render: (a: StandardAdjustment) => (
-              <Button size="sm" variant="danger" disabled={busy} onClick={() => void run(() => ds.deleteAdjustment(a.id))}>
-                Delete
-              </Button>
-            ),
-          } as Column<StandardAdjustment>,
-        ]
-      : []),
-  ];
-
-  const overrideColumns: Column<StandardOverride>[] = [
-    { key: 'scope', header: 'Scope', render: (o) => o.scope },
-    { key: 'operation', header: 'Operation', value: (o) => o.operation, render: (o) => o.operation ?? '(all)' },
-    { key: 'std', header: 'StdHr', align: 'right', value: (o) => o.std_hr, render: (o) => o.std_hr.toFixed(2) },
-    { key: 'note', header: 'Note', value: (o) => o.note, render: (o) => o.note ?? '' },
-    { key: 'by', header: 'Created', value: (o) => o.created_at, render: (o) => `${formatDateTime(o.created_at, tz)}${o.created_by ? ` · ${o.created_by}` : ''}` },
-    ...(isManager
-      ? [
-          {
-            key: 'delete',
-            header: '',
-            sortable: false,
-            value: () => '',
-            render: (o: StandardOverride) => (
-              <Button size="sm" variant="danger" disabled={busy} onClick={() => void run(() => ds.deleteOverride(o.id))}>
-                Delete
-              </Button>
-            ),
-          } as Column<StandardOverride>,
-        ]
-      : []),
-  ];
-
   return (
     <>
+      <Breadcrumbs items={[{ label: 'Products', to: '/products' }, { label: z }]} />
+
       <PageHeader
-        title={v?.product_name ?? z}
-        subtitle={v ? `${v.product_number} · ${v.rows.length} operations` : 'Loading…'}
+        title={v?.product_name ? z + ' · ' + v.product_name : z}
+        subtitle={v ? subtitleParts.join(' · ') : 'Loading…'}
         actions={
           isManager && (
             <>
-              <Button size="sm" onClick={() => openModal('adjust', null)}>
-                Adjust product
-              </Button>
-              <Button size="sm" onClick={() => openModal('override', null)}>
-                Override product
-              </Button>
-              <Button size="sm" variant="primary" loading={busy} onClick={() => void run(() => ds.recomputeProduct(z))}>
+              <Button onClick={() => openModal('adjust', null)}>Adjust product</Button>
+              <Button onClick={() => openModal('override', null)}>Override product</Button>
+              <Button variant="primary" loading={busy} onClick={() => void run(() => ds.recomputeProduct(z))}>
                 Recompute now
               </Button>
             </>
@@ -289,36 +275,93 @@ export function ProductPage() {
         }
       />
 
-      {error && <ErrorBox error={error} />}
+      {error && modal == null && <Note tone="error">{error}</Note>}
       {view.isError && <ErrorBox error={view.error} />}
       {!v && !view.isError && <Spinner />}
 
       {v && (
         <>
           <DataTable
-            title="Route operations"
+            title={
+              <>
+                Standards by operation <span className="card-sub">Effective = override, else base × adjustment</span>
+              </>
+            }
+            toolbar={
+              <>
+                <StatusBadge tone="neutral">Computed</StatusBadge>
+                <StatusBadge tone="warn">Adjusted</StatusBadge>
+                <StatusBadge tone="info">Override</StatusBadge>
+              </>
+            }
             columns={columns}
             rows={v.rows}
             rowKey={(r) => r.operation}
-            exportName={`product-${z}-standards`}
+            exportName={'product-' + z + '-standards'}
             emptyMessage="No operations on this product's route"
           />
 
-          <Panel title="Active adjustments">
-            {v.adjustments.length === 0 ? (
-              <Empty>No adjustments in scope.</Empty>
-            ) : (
-              <DataTable columns={adjustmentColumns} rows={v.adjustments} rowKey={(a) => a.id} exportName={`product-${z}-adjustments`} dense />
-            )}
-          </Panel>
+          <div className="pair2">
+            <Card>
+              <CardHeader title="Active adjustments" subtitle="most specific wins, no stacking" />
+              {v.adjustments.length === 0 ? (
+                <EmptyState title="No adjustments in scope" hint="A percentage adjustment nudges the computed standard." />
+              ) : (
+                v.adjustments.map((a: StandardAdjustment) => (
+                  <div className="list-item" key={a.id}>
+                    <StatusBadge tone="warn">{percentText(a)}</StatusBadge>
+                    <div className="list-main">
+                      <b>{a.operation ?? v.product_name ?? z}</b>
+                      <small>
+                        {scopeText(a.scope, a.operation) +
+                          (a.created_by ? ' · by ' + a.created_by : '') +
+                          ' · ' +
+                          formatDateTime(a.created_at, tz) +
+                          (a.note ? ' · “' + a.note + '”' : '')}
+                      </small>
+                    </div>
+                    {isManager && (
+                      <div className="right-actions">
+                        <Button size="sm" variant="danger" disabled={busy} onClick={() => void run(() => ds.deleteAdjustment(a.id))}>
+                          Remove
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </Card>
 
-          <Panel title="Active overrides">
-            {v.overrides.length === 0 ? (
-              <Empty>No overrides.</Empty>
-            ) : (
-              <DataTable columns={overrideColumns} rows={v.overrides} rowKey={(o) => o.id} exportName={`product-${z}-overrides`} dense />
-            )}
-          </Panel>
+            <Card>
+              <CardHeader title="Active overrides" subtitle="replace everything else" />
+              {v.overrides.length === 0 ? (
+                <EmptyState title="No overrides" hint="An override pins the standard to a fixed StdHr." />
+              ) : (
+                v.overrides.map((o: StandardOverride) => (
+                  <div className="list-item" key={o.id}>
+                    <StatusBadge tone="info">{o.std_hr.toFixed(2)}</StatusBadge>
+                    <div className="list-main">
+                      <b>{o.operation ?? v.product_name ?? z}</b>
+                      <small>
+                        {scopeText(o.scope, o.operation) +
+                          (o.created_by ? ' · by ' + o.created_by : '') +
+                          ' · ' +
+                          formatDateTime(o.created_at, tz) +
+                          (o.note ? ' · “' + o.note + '”' : '')}
+                      </small>
+                    </div>
+                    {isManager && (
+                      <div className="right-actions">
+                        <Button size="sm" variant="danger" disabled={busy} onClick={() => void run(() => ds.deleteOverride(o.id))}>
+                          Remove
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </Card>
+          </div>
         </>
       )}
 
@@ -335,7 +378,7 @@ export function ProductPage() {
           </>
         }
       >
-        {error && <div className="inline-err mb">{error}</div>}
+        {error && <Note tone="error">{error}</Note>}
         <Field label="Scope">
           <Select value={scope} onChange={(e) => setScope(e.target.value as 'product' | 'product_operation')}>
             <option value="product">Whole product ({z})</option>

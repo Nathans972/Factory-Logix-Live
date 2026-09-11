@@ -1,21 +1,40 @@
-/** Searchable job list (spec 9.5). */
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+/** Searchable job list (spec 9.5). `?q=` is shared with the top-bar search box. */
+import { useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { JobListItem } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
-import { usePlantTz } from '../../lib/usePlantTz';
-import { formatDateTime } from '../../lib/format';
-import { Checkbox, DataTable, ErrorBox, Input, PageHeader, Spinner, type Column } from '../../ui';
-import { ProgressBar } from './components/ProgressBar';
+import { relativeMinutes } from '../../lib/format';
+import { DataTable, ErrorBox, Input, PageHeader, ProgressBar, Segmented, Spinner, StatusBadge, type Column } from '../../ui';
+import { intText } from './components/HourlyGrid';
 import { useDebounced } from './components/useDebounced';
+
+const CLOSED_RE = /clos|complet|cancel/i;
 
 export function JobsPage() {
   const ds = useDataSource();
-  const tz = usePlantTz();
-  const [text, setText] = useState('');
-  const [activeOnly, setActiveOnly] = useState(true);
+  const [params, setParams] = useSearchParams();
+  const urlQ = params.get('q') ?? '';
+  const activeOnly = params.get('active') !== '0';
+
+  const [text, setText] = useState(urlQ);
   const q = useDebounced(text);
+
+  // The top bar navigates to /jobs?q=… — keep the input in sync with the URL both ways.
+  useEffect(() => setText(urlQ), [urlQ]);
+  useEffect(() => {
+    if (q === urlQ) return;
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (q) next.set('q', q);
+        else next.delete('q');
+        return next;
+      },
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   const { data, isError, error } = useQuery({
     queryKey: ['jobs', q, activeOnly],
@@ -23,50 +42,99 @@ export function JobsPage() {
     placeholderData: keepPreviousData,
   });
 
+  const now = Date.now();
+
   const columns: Column<JobListItem>[] = [
     {
       key: 'job',
       header: 'Job',
       value: (r) => r.job_number,
-      render: (r) => <Link to={`/jobs/${encodeURIComponent(r.job_number)}`}>{r.job_number}</Link>,
+      render: (r) => (
+        <Link className="link" to={'/jobs/' + encodeURIComponent(r.job_number)}>
+          {r.job_number}
+        </Link>
+      ),
     },
     {
       key: 'product',
       header: 'Product',
       value: (r) => r.product_number,
-      render: (r) => <Link to={`/products/${encodeURIComponent(r.product_number)}`}>{r.product_number}</Link>,
+      render: (r) => (
+        <Link className="link" to={'/products/' + encodeURIComponent(r.product_number)}>
+          {r.product_number}
+        </Link>
+      ),
     },
     { key: 'name', header: 'Product name', value: (r) => r.product_name, render: (r) => r.product_name ?? '—' },
     {
       key: 'qty',
-      header: 'Complete / Released',
+      header: 'Qty complete',
       align: 'right',
       value: (r) => r.qty_complete_effective,
-      render: (r) => `${r.qty_complete_effective} / ${r.qty_released}`,
+      render: (r) => (
+        <span className="qty-cell">
+          <span>
+            {intText(r.qty_complete_effective)} <span className="kpi-den">/ {intText(r.qty_released)}</span>
+          </span>
+          <ProgressBar value={r.progress} width={90} />
+        </span>
+      ),
     },
-    { key: 'progress', header: 'Progress', value: (r) => r.progress, render: (r) => <ProgressBar value={r.progress} /> },
-    { key: 'status', header: 'Status', value: (r) => r.status ?? (r.active ? 'active' : ''), render: (r) => r.status ?? (r.active ? 'active' : '—') },
-    { key: 'last', header: 'Last activity', value: (r) => r.last_activity_at, render: (r) => formatDateTime(r.last_activity_at, tz) },
+    {
+      key: 'status',
+      header: 'Status',
+      value: (r) => r.status ?? (r.active ? 'In process' : 'Closed'),
+      render: (r) => {
+        const closed = r.status ? CLOSED_RE.test(r.status) : !r.active;
+        return <StatusBadge tone={closed ? 'off' : 'ok'}>{closed ? 'Closed' : (r.status ?? 'In process')}</StatusBadge>;
+      },
+    },
+    {
+      key: 'last',
+      header: 'Last activity',
+      align: 'right',
+      value: (r) => r.last_activity_at,
+      render: (r) => relativeMinutes(r.last_activity_at, now),
+    },
   ];
 
   return (
     <>
-      <PageHeader
-        title="Jobs"
-        subtitle={data ? `${data.jobs.length} jobs` : 'Loading…'}
-        actions={<Checkbox label="Active only" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />}
-      />
+      <PageHeader title="Jobs" subtitle={data ? data.jobs.length + (activeOnly ? ' active jobs' : ' jobs') : 'Loading…'} />
+
+      <div className="filter-bar">
+        <Input className="search-box" placeholder="Search job, product or name…" value={text} onChange={(e) => setText(e.target.value)} />
+        <Segmented
+          value={activeOnly ? 'active' : 'all'}
+          onChange={(v) =>
+            setParams(
+              (prev) => {
+                const next = new URLSearchParams(prev);
+                if (v === 'all') next.set('active', '0');
+                else next.delete('active');
+                return next;
+              },
+              { replace: true },
+            )
+          }
+          options={[
+            { value: 'active', label: 'Active' },
+            { value: 'all', label: 'All' },
+          ]}
+        />
+      </div>
+
       {isError && <ErrorBox error={error} />}
       {!data && !isError && <Spinner />}
       {data && (
         <DataTable
+          title="Jobs"
           columns={columns}
           rows={data.jobs}
           rowKey={(r) => r.job_number}
           exportName="jobs"
           defaultSort={{ key: 'last', dir: 'desc' }}
           emptyMessage="No jobs match"
-          toolbar={<Input className="search-box" placeholder="Search jobs…" value={text} onChange={(e) => setText(e.target.value)} />}
         />
       )}
     </>

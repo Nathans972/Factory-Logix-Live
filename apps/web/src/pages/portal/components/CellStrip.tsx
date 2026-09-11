@@ -1,6 +1,13 @@
-/** 12-hour cell strip reusing the TV colors (spec 9.4). */
+/**
+ * 12-hour cell strip for the operator detail page (spec 9.4).
+ *
+ * Same solid fills as the job page's hourly grid — it renders `HourCellBox` with the hour labels
+ * above, so a strip and a grid row read identically.
+ */
 import type { TvCell } from '@fld/shared';
+import { HourCellBox } from '../../../ui';
 import { formatTime24 } from '../../../lib/format';
+import { hourCellTitle } from './HourlyGrid';
 
 export function hourLabel(hourStartUtc: number, tz: string): string {
   return formatTime24(hourStartUtc, tz).slice(0, 2);
@@ -18,22 +25,22 @@ export function CellStripLabels({ cells, tz }: { cells: TvCell[]; tz: string }) 
   );
 }
 
-export function CellStrip({ cells, tz }: { cells: TvCell[]; tz: string }) {
+/** The strip itself; `labels` (default on) puts the hour row above the cells. */
+export function CellStrip({ cells, tz, labels = true }: { cells: TvCell[]; tz: string; labels?: boolean }) {
   return (
-    <div className="cell-strip">
-      {cells.map((c) => {
-        const parts = [formatTime24(c.hour_start_utc, tz)];
-        parts.push(c.pace == null ? 'pace —' : `pace ${Math.round(c.pace * 100)}%`);
-        parts.push(`charged ${Math.round(c.charged_minutes)} min`);
-        if (c.visitor) parts.push('visitor');
-        if (c.provisional) parts.push('in progress');
-        return (
-          <div className={`cell c-${c.color}`} key={c.hour_start_utc} title={parts.join(' · ')}>
-            {c.color === 'blank' ? '' : c.units}
-            {c.visitor && <sup>V</sup>}
-          </div>
-        );
-      })}
+    <div className="strip-body">
+      {labels && <CellStripLabels cells={cells} tz={tz} />}
+      <div className="cell-strip">
+        {cells.map((c) => (
+          <HourCellBox
+            key={c.hour_start_utc}
+            units={c.units}
+            color={c.color}
+            current={c.provisional}
+            title={hourCellTitle(c, tz)}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -3,6 +3,7 @@
  * Used by `/admin/mapping` and embedded in the first-run setup wizard (10.10).
  *
  * The draft is a plain `MappingConfig`; nothing is written until "Save mapping".
+ * Layout follows docs/DESIGN.md: `Stepper` pills, one `Card` per dataset, a sticky footer bar.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -21,12 +22,23 @@ import {
   type ODataMetadata,
 } from '@fld/shared';
 import { useDataSource } from '../../../data/DataSourceContext';
-import { Banner, Button, Field, Panel, Select, Spinner } from '../../../ui';
+import {
+  Button,
+  Card,
+  CardHeader,
+  DataTable,
+  Field,
+  KpiTile,
+  Note,
+  Select,
+  Spinner,
+  type Column,
+} from '../../../ui';
 import { formatDateTime, formatNum } from '../../../lib/format';
 import { usePlantTz } from '../../../lib/usePlantTz';
-import { ApiError, FieldBlock, Flash, Stepper, useFlash } from './common';
+import { ApiError, FieldBlock, Flash, StepPills, useFlash } from './common';
 
-const STEPS = ['Entity sets', 'Fields', 'Watermarks', 'Test & preview'];
+const STEPS = ['Entity sets', 'Fields', 'Watermarks', 'Test and preview'];
 const OPTIONAL_DATASETS: DatasetName[] = ['defects', 'operators', 'routes', 'standards'];
 
 // ---------- draft helpers ----------
@@ -137,7 +149,16 @@ function cellText(v: unknown): string {
 
 // ---------- component ----------
 
-export function MappingWizard({ onSaved, embedded }: { onSaved?: () => void; embedded?: boolean }) {
+export function MappingWizard({
+  onSaved,
+  embedded,
+  formId,
+}: {
+  onSaved?: () => void;
+  embedded?: boolean;
+  /** when set the wizard renders as a <form> with this id and hides its own Save button */
+  formId?: string;
+}) {
   const ds = useDataSource();
   const qc = useQueryClient();
   const tz = usePlantTz();
@@ -223,104 +244,120 @@ export function MappingWizard({ onSaved, embedded }: { onSaved?: () => void; emb
       return setDataset(d, name, { ...cur, fields: { ...cur.fields, [target]: source } });
     });
 
-  const header = (spec: DatasetSpec, dsm: DatasetMapping) => (
-    <header>
-      <span className="t">
-        {spec.label} {spec.required && <span className="req" title="Required dataset">*</span>}
-      </span>
-      <span className="muted small">{dsm.entity_set}</span>
-    </header>
+  const datasetTitle = (spec: DatasetSpec) => (
+    <>
+      {spec.label}
+      {spec.required && (
+        <span className="req" title="Required dataset">
+          *
+        </span>
+      )}
+    </>
   );
 
-  const metaLine = metadata ? (
-    <span className="muted small">
-      {entitySets.length} entity sets · OData {metadata.version ?? 'version unknown'} · fetched{' '}
-      {formatDateTime(metadata.fetched_at, tz)}
-    </span>
-  ) : (
-    <span className="muted small">No $metadata loaded</span>
-  );
+  const metaLine = metadata
+    ? `${entitySets.length} entity sets · OData ${metadata.version ?? 'version unknown'} · fetched ${formatDateTime(metadata.fetched_at, tz)}`
+    : 'No $metadata loaded yet';
 
-  return (
-    <div>
-      <Stepper steps={STEPS.map((label, i) => ({ label, done: i < step }))} current={step} onSelect={setStep} />
+  const save = () => {
+    if (issues.length === 0) saveM.mutate();
+  };
+
+  const body = (
+    <>
+      <StepPills steps={STEPS.map((label, i) => ({ label, done: i < step }))} current={step} onSelect={setStep} />
       <Flash message={flash.message} />
       {refreshM.isError && <ApiError error={refreshM.error} />}
 
       {/* ---------- Step 1: entity sets ---------- */}
       {step === 0 && (
-        <Panel
-          title="Step 1 · Pick the entity set for each dataset"
-          actions={
-            <>
-              {metaLine}
-              <Button size="sm" loading={refreshM.isPending} onClick={() => refreshM.mutate()}>
-                Refresh from server
-              </Button>
-            </>
-          }
-        >
-          {!metadata && (
-            <Banner kind="warn">
-              No <code>$metadata</code> has been loaded yet. Use “Refresh from server” to read the live entity sets from
-              FactoryLogix.
-            </Banner>
-          )}
+        <>
+          <Card>
+            <CardHeader
+              title="Step 1 · Pick the entity set for each dataset"
+              subtitle={metaLine}
+              actions={
+                <Button
+                  size="sm"
+                  type="button"
+                  loading={refreshM.isPending}
+                  onClick={() => refreshM.mutate()}
+                >
+                  Refresh from server
+                </Button>
+              }
+            />
+            {!metadata && (
+              <div className="card-body">
+                <Note tone="warn" title="No $metadata loaded">
+                  Use “Refresh from server” to read the live entity sets from FactoryLogix.
+                </Note>
+              </div>
+            )}
+          </Card>
+
           {DATASET_SPECS.map((spec) => {
             const dsm = getDataset(draft, spec.name);
             const value = dsm?.entity_set ?? '';
             const known = entitySets.some((e) => e.name === value);
             return (
-              <div className={`map-dataset${dsm ? '' : ' off'}`} key={spec.name}>
-                <header>
-                  <span className="t">
-                    {spec.label} {spec.required && <span className="req">*</span>}
-                  </span>
-                  <span className="muted small">{spec.description}</span>
-                </header>
-                <div className="body">
-                  <Field
-                    label="Entity set"
-                    hint={spec.required ? 'Required — the collector cannot run without it.' : 'Optional — may be left unused.'}
-                  >
-                    <Select value={value} onChange={(e) => onPickEntitySet(spec, e.currentTarget.value)}>
-                      <option value="">{spec.required ? '— pick an entity set —' : '— not used —'}</option>
-                      {value && !known && <option value={value}>{value} (not in $metadata)</option>}
-                      {entitySets.map((e) => (
-                        <option key={e.name} value={e.name}>
-                          {e.name} ({e.fields.length} fields)
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
+              <Card key={spec.name}>
+                <CardHeader
+                  title={datasetTitle(spec)}
+                  subtitle={spec.description}
+                  badges={
+                    <span className={`badge ${dsm ? 'badge-info' : 'badge-neutral'}`}>{dsm ? 'In use' : 'Not used'}</span>
+                  }
+                />
+                <div className="card-body">
+                  <div className="map-grid">
+                    <Field
+                      label="Entity set"
+                      hint={
+                        spec.required ? 'Required — the collector cannot run without it.' : 'Optional — may be left unused.'
+                      }
+                    >
+                      <Select value={value} onChange={(e) => onPickEntitySet(spec, e.currentTarget.value)}>
+                        <option value="">{spec.required ? '— pick an entity set —' : '— not used —'}</option>
+                        {value && !known && <option value={value}>{value} (not in $metadata)</option>}
+                        {entitySets.map((e) => (
+                          <option key={e.name} value={e.name}>
+                            {e.name} ({e.fields.length} fields)
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
                 </div>
-              </div>
+              </Card>
             );
           })}
-        </Panel>
+        </>
       )}
 
       {/* ---------- Step 2: fields ---------- */}
       {step === 1 && (
-        <Panel title="Step 2 · Map the source fields">
-          <p className="hint-line">
-            Dropdowns only offer fields of a compatible type: timestamp targets list date/time fields, number targets
-            list numeric fields, and so on. Fields marked <span className="req">*</span> are required.
-          </p>
-          {usedSpecs.length === 0 && <Banner kind="warn">No datasets selected — go back to step 1.</Banner>}
+        <>
+          <div className="mb">
+            <Note tone="info" title="Step 2 · Map the source fields">
+              Dropdowns only offer fields of a compatible type: timestamp targets list date/time fields, number targets
+              list numeric fields, and so on. Fields marked <span className="req">*</span> are required.
+            </Note>
+          </div>
+          {usedSpecs.length === 0 && <Note tone="warn">No datasets selected — go back to step 1.</Note>}
           {usedSpecs.map((spec) => {
             const dsm = getDataset(draft, spec.name) as DatasetMapping;
             const es = esFor(dsm);
             return (
-              <div className="map-dataset" key={spec.name}>
-                {header(spec, dsm)}
-                <div className="body">
+              <Card key={spec.name}>
+                <CardHeader title={datasetTitle(spec)} subtitle={dsm.entity_set} />
+                <div className="card-body">
                   {!es && (
-                    <Banner kind="warn">
+                    <Note tone="warn">
                       “{dsm.entity_set}” is not in the loaded $metadata — refresh it in step 1 to type-check fields.
-                    </Banner>
+                    </Note>
                   )}
-                  <div className="map-fields">
+                  <div className="map-grid">
                     {spec.fields.map((tf) => {
                       const cur = dsm.fields[tf.name] ?? '';
                       const opts = fieldsOfType(es, tf.type);
@@ -366,7 +403,7 @@ export function MappingWizard({ onSaved, embedded }: { onSaved?: () => void; emb
                   >
                     <Select
                       multiple
-                      className="multi"
+                      className="input multi"
                       size={6}
                       value={dsm.key}
                       onChange={(e) =>
@@ -390,19 +427,21 @@ export function MappingWizard({ onSaved, embedded }: { onSaved?: () => void; emb
                     </Select>
                   </FieldBlock>
                 </div>
-              </div>
+              </Card>
             );
           })}
-        </Panel>
+        </>
       )}
 
       {/* ---------- Step 3: watermarks ---------- */}
       {step === 2 && (
-        <Panel title="Step 3 · Watermark per dataset">
-          <p className="hint-line">
-            The watermark is the monotonic field the collector pages by. Without one it falls back to time-window mode,
-            which re-reads a rolling window on every poll.
-          </p>
+        <>
+          <div className="mb">
+            <Note tone="info" title="Step 3 · Watermark per dataset">
+              The watermark is the monotonic field the collector pages by. Without one it falls back to time-window
+              mode, which re-reads a rolling window on every poll.
+            </Note>
+          </div>
           {usedSpecs.map((spec) => {
             const dsm = getDataset(draft, spec.name) as DatasetMapping;
             const es = esFor(dsm);
@@ -410,97 +449,145 @@ export function MappingWizard({ onSaved, embedded }: { onSaved?: () => void; emb
             const cur = dsm.watermark_field ?? '';
             const known = opts.some((o) => o.name === cur);
             return (
-              <div className="map-dataset" key={spec.name}>
-                {header(spec, dsm)}
-                <div className="body">
-                  <Field
-                    label="Watermark field"
-                    hint={cur ? 'Incremental mode: only rows newer than the stored watermark are fetched.' : 'Time-window mode.'}
-                  >
-                    <Select
-                      value={cur}
-                      onChange={(e) => patchDataset(spec.name, { watermark_field: e.currentTarget.value || null })}
+              <Card key={spec.name}>
+                <CardHeader
+                  title={datasetTitle(spec)}
+                  subtitle={dsm.entity_set}
+                  badges={
+                    <span className={`badge ${cur ? 'badge-info' : 'badge-neutral'}`}>
+                      {cur ? 'Incremental' : 'Time window'}
+                    </span>
+                  }
+                />
+                <div className="card-body">
+                  <div className="map-grid">
+                    <Field
+                      label="Watermark field"
+                      hint={
+                        cur
+                          ? 'Incremental mode: only rows newer than the stored watermark are fetched.'
+                          : 'Time-window mode: a rolling window is re-read on every poll.'
+                      }
                     >
-                      <option value="">none — time-window mode</option>
-                      {cur && !known && <option value={cur}>{cur} (not in $metadata)</option>}
-                      {opts.map((f) => (
-                        <option key={f.name} value={f.name}>
-                          {f.name} · {f.edm_type}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
+                      <Select
+                        value={cur}
+                        onChange={(e) => patchDataset(spec.name, { watermark_field: e.currentTarget.value || null })}
+                      >
+                        <option value="">none — time-window mode</option>
+                        {cur && !known && <option value={cur}>{cur} (not in $metadata)</option>}
+                        {opts.map((f) => (
+                          <option key={f.name} value={f.name}>
+                            {f.name} · {f.edm_type}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
                 </div>
-              </div>
+              </Card>
             );
           })}
-        </Panel>
+        </>
       )}
 
       {/* ---------- Step 4: test & preview ---------- */}
       {step === 3 && (
-        <Panel title="Step 4 · Test and preview">
-          <p className="hint-line">
-            Each test runs the mapped query for the last hour with <code>$top=50</code> against the live server.
-          </p>
+        <>
+          <div className="mb">
+            <Note tone="info" title="Step 4 · Test and preview">
+              Each test runs the mapped query for the last hour with <code>$top=50</code> against the live server.
+            </Note>
+          </div>
           {usedSpecs.map((spec) => {
             const dsm = getDataset(draft, spec.name) as DatasetMapping;
             const res = previews[spec.name];
             const err = previewErrors[spec.name];
             const testing = previewM.isPending && previewM.variables === spec.name;
             return (
-              <div className="map-dataset" key={spec.name}>
-                <header>
-                  <span className="t">
-                    {spec.label} <span className="muted small">· {dsm.entity_set}</span>
-                  </span>
-                  <Button size="sm" loading={testing} onClick={() => previewM.mutate(spec.name)}>
-                    Test
-                  </Button>
-                </header>
-                <div className="body">
+              <Card key={spec.name}>
+                <CardHeader
+                  title={datasetTitle(spec)}
+                  subtitle={dsm.entity_set}
+                  badges={
+                    res ? (
+                      <span className={`badge ${res.ok ? 'badge-ok' : 'badge-off'}`}>
+                        {res.ok ? `${res.rows.length} rows` : 'failed'}
+                      </span>
+                    ) : undefined
+                  }
+                  actions={
+                    <Button size="sm" type="button" loading={testing} onClick={() => previewM.mutate(spec.name)}>
+                      Test
+                    </Button>
+                  }
+                />
+                <div className="card-body">
                   {err != null && <ApiError error={err} />}
-                  {!res && err == null && <p className="muted small">Not tested yet.</p>}
+                  {!res && err == null && <p className="muted">Not tested yet.</p>}
                   {res && <PreviewResult result={res} mapping={dsm} />}
                 </div>
-              </div>
+              </Card>
             );
           })}
-        </Panel>
+        </>
       )}
 
-      {/* ---------- footer ---------- */}
       {saveM.isError && <ApiError error={saveM.error} />}
-      {issues.length > 0 && (
-        <div className="banner banner-warn">
-          <div>Not ready to save yet:</div>
+      {issues.length > 0 && step === STEPS.length - 1 && (
+        <Note tone="warn" title="Not ready to save yet">
           <ul className="issues">
             {issues.slice(0, 12).map((i) => (
               <li key={i}>{i}</li>
             ))}
           </ul>
-        </div>
+        </Note>
       )}
 
-      <div className="sticky-actions">
-        <Button disabled={step === 0} onClick={() => setStep((s) => Math.max(0, s - 1))}>
+      <div className="sticky-save">
+        <Button type="button" disabled={step === 0} onClick={() => setStep((s) => Math.max(0, s - 1))}>
           Back
         </Button>
-        <Button disabled={step === STEPS.length - 1} onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}>
+        <Button
+          type="button"
+          disabled={step === STEPS.length - 1}
+          onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
+        >
           Next
         </Button>
-        <Button
-          variant="primary"
-          loading={saveM.isPending}
-          disabled={issues.length > 0}
-          onClick={() => saveM.mutate()}
-          title={issues.length > 0 ? 'Required fields are still missing' : undefined}
-        >
-          Save mapping
-        </Button>
-        {embedded && <span className="muted small">Saving here also completes the mapping step of setup.</span>}
+        <span className="spacer" />
+        {issues.length > 0 && (
+          <span className="msg">
+            {issues.length} thing{issues.length === 1 ? '' : 's'} still to map
+          </span>
+        )}
+        {!formId && (
+          <Button
+            type="button"
+            variant="primary"
+            loading={saveM.isPending}
+            disabled={issues.length > 0}
+            onClick={save}
+            title={issues.length > 0 ? 'Required fields are still missing' : undefined}
+          >
+            Save mapping
+          </Button>
+        )}
+        {embedded && formId && <span className="msg">Saving completes the mapping step of setup.</span>}
       </div>
-    </div>
+    </>
+  );
+
+  if (!formId) return <div>{body}</div>;
+  return (
+    <form
+      id={formId}
+      onSubmit={(e) => {
+        e.preventDefault();
+        save();
+      }}
+    >
+      {body}
+    </form>
   );
 }
 
@@ -512,90 +599,71 @@ function PreviewResult({ result, mapping }: { result: MappingPreviewResult; mapp
     new Set([...mapping.key, ...Object.values(mapping.fields).filter((v): v is string => !!v)]),
   );
   const present = mapped.filter((c) => rows.some((r) => Object.prototype.hasOwnProperty.call(r, c)));
-  const columns = present.length > 0 ? present : Object.keys(rows[0] ?? {});
+  const colNames = present.length > 0 ? present : Object.keys(rows[0] ?? {});
+  const columns: Column<Record<string, unknown>>[] = colNames.map((name) => ({
+    key: name,
+    header: name,
+    sortable: false,
+    render: (r) => <span title={cellText(r[name])}>{cellText(r[name])}</span>,
+    value: (r) => cellText(r[name]),
+  }));
+
   const c = result.checks;
   const skewBad = c.timestamp_skew_minutes != null && Math.abs(c.timestamp_skew_minutes) > 30;
 
   return (
-    <>
-      {result.ok ? (
-        <Banner kind="success">Query returned {result.rows.length} row(s).</Banner>
-      ) : (
-        <Banner kind="error">{result.error ?? 'The query failed.'}</Banner>
-      )}
-      {result.query && <pre className="json-block mb">{result.query}</pre>}
+    <div className="stack">
+      {!result.ok && <Note tone="error" title="The query failed">{result.error ?? 'Unknown error.'}</Note>}
+      {result.query && <div className="query-line">{result.query}</div>}
 
-      <div className="checks">
-        <Check label="Distinct operators" value={c.distinct_operators} />
-        <Check label="Distinct jobs" value={c.distinct_jobs} />
-        <Check label="Start present" value={c.start_present_pct == null ? null : `${formatNum(c.start_present_pct, 0)}%`} />
-        <Check
+      <div className="checks-grid">
+        <KpiTile label="Distinct operators" value={c.distinct_operators ?? '—'} />
+        <KpiTile label="Distinct jobs" value={c.distinct_jobs ?? '—'} />
+        <KpiTile label="Start present" value={c.start_present_pct == null ? '—' : `${formatNum(c.start_present_pct, 0)}%`} />
+        <KpiTile
           label="Complete present"
-          value={c.complete_present_pct == null ? null : `${formatNum(c.complete_present_pct, 0)}%`}
+          value={c.complete_present_pct == null ? '—' : `${formatNum(c.complete_present_pct, 0)}%`}
         />
-        <Check
+        <KpiTile
           label="Timestamp skew"
-          value={c.timestamp_skew_minutes == null ? null : `${formatNum(c.timestamp_skew_minutes, 0)} min`}
-          bad={skewBad}
+          value={c.timestamp_skew_minutes == null ? '—' : `${formatNum(c.timestamp_skew_minutes, 0)} min`}
+          accent={skewBad ? 'amber' : 'none'}
+          hint={skewBad ? 'more than 30 min from the plant clock' : undefined}
         />
       </div>
 
       {skewBad && (
-        <Banner kind="warn">
+        <Note tone="warn" title="Clock skew">
           The newest sampled timestamp is {formatNum(c.timestamp_skew_minutes, 0)} minutes from the plant clock. Check
-          the timestamp mode on the Connection page (offset present / UTC / plant-local).
-        </Banner>
-      )}
-
-      {c.sample_durations_minutes.length > 0 && (
-        <p className="muted small">
-          Sample durations (minutes): {c.sample_durations_minutes.slice(0, 12).map((d) => formatNum(d, 1)).join(', ')}
-        </p>
+          the timestamp mode on the FactoryLogix page (offset present / UTC / plant-local).
+        </Note>
       )}
 
       {c.warnings.length > 0 && (
-        <div className="banner banner-warn">
+        <Note tone="warn" title={`${c.warnings.length} warning${c.warnings.length === 1 ? '' : 's'}`}>
           <ul className="issues">
             {c.warnings.map((w) => (
               <li key={w}>{w}</li>
             ))}
           </ul>
-        </div>
+        </Note>
+      )}
+
+      {c.sample_durations_minutes.length > 0 && (
+        <p className="muted small">
+          Sample durations (minutes):{' '}
+          {c.sample_durations_minutes
+            .slice(0, 12)
+            .map((d) => formatNum(d, 1))
+            .join(', ')}
+        </p>
       )}
 
       {rows.length > 0 && (
         <div className="preview-scroll">
-          <table className="preview-table">
-            <thead>
-              <tr>
-                {columns.map((col) => (
-                  <th key={col}>{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  {columns.map((col) => (
-                    <td key={col} title={cellText(r[col])}>
-                      {cellText(r[col])}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable columns={columns} rows={rows} rowKey={(_r, i) => i} dense emptyMessage="No rows" />
         </div>
       )}
-    </>
-  );
-}
-
-function Check({ label, value, bad }: { label: string; value: string | number | null; bad?: boolean }) {
-  return (
-    <div className={`check${bad ? ' bad' : ''}`}>
-      <div className="l">{label}</div>
-      <div className="v">{value == null ? '—' : value}</div>
     </div>
   );
 }

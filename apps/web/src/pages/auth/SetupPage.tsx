@@ -1,22 +1,24 @@
 /**
- * First-run setup wizard (spec 10.10).
+ * First-run setup wizard (spec 10.10), matching docs/design/setup.html: the top bar only (no
+ * rail) above a centered 760 px card with the stepper.
+ *
  * Admin user → plant time zone → FactoryLogix connection → mapping → shifts → breaks → backfill.
- * Every step can be skipped; `setupStatus()` decides which steps are already done.
+ * Every step saves on its own and can be skipped; `setupStatus()` decides which are already done.
  */
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { BreakWrite, SetupStatus, ShiftWrite } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
+import { IS_MOCK } from '../../data';
 import { hasRole, useAuth } from '../../auth/AuthContext';
 import { formatDays } from '../../lib/format';
 import { browserTz, usePlantTz } from '../../lib/usePlantTz';
-import { Banner, Button, Field, Input, Spinner } from '../../ui';
+import { Button, Field, Input, Note, Spinner, Stepper } from '../../ui';
 import {
   ApiError,
   BackfillBar,
   Flash,
-  Stepper,
   TIMEZONE_DATALIST_ID,
   TimeZoneDatalist,
   isValidTimeZone,
@@ -30,45 +32,70 @@ import '../../styles/admin.css';
 
 type StepKey = keyof SetupStatus['steps'];
 
-const STEPS: { key: StepKey; label: string; title: string; blurb: string }[] = [
+/** `primary: 'submit'` wires the footer button to the step's own <form id="setup-step-form">. */
+const STEP_FORM = 'setup-step-form';
+
+const STEPS: { key: StepKey; label: string; title: string; blurb: string; primary: 'submit' | 'next' }[] = [
   {
     key: 'admin_user',
     label: 'Admin user',
     title: 'Create the administrator',
     blurb: 'This account can configure everything else. You can add more users later.',
+    primary: 'submit',
   },
   {
     key: 'timezone',
     label: 'Time zone',
     title: 'Plant time zone',
     blurb: 'Hour boundaries, shifts, breaks and the TV clock are all evaluated in this zone.',
+    primary: 'submit',
   },
   {
     key: 'connection',
     label: 'Connection',
-    title: 'FactoryLogix connection',
-    blurb: 'Point the collector at the OData service and check that it answers.',
+    title: 'Connect to FactoryLogix',
+    blurb:
+      'Enter the OData endpoint hosted by the Report Scheduler Service and a read-only FactoryLogix account. Nothing is ever written back.',
+    primary: 'submit',
   },
   {
     key: 'mapping',
     label: 'Mapping',
     title: 'Field mapping',
     blurb: 'Tell the collector which entity sets and fields hold jobs, unit events and defects.',
+    primary: 'submit',
   },
-  { key: 'shifts', label: 'Shifts', title: 'Shifts', blurb: 'At least one shift is needed for the shift view and StdDay.' },
-  { key: 'breaks', label: 'Breaks', title: 'Breaks', blurb: 'Break minutes are removed from charged time.' },
+  {
+    key: 'shifts',
+    label: 'Shifts',
+    title: 'Shifts',
+    blurb: 'At least one shift is needed for the shift view and the StdDay column.',
+    primary: 'next',
+  },
+  {
+    key: 'breaks',
+    label: 'Breaks',
+    title: 'Breaks',
+    blurb: 'Break minutes are removed from charged time for every operator whose window overlaps them.',
+    primary: 'next',
+  },
   {
     key: 'backfill',
     label: 'Backfill',
     title: 'Historical backfill',
     blurb: 'Standards need history. Backfill can run tonight in the off-shift window or start right now.',
+    primary: 'next',
   },
 ];
 
 export function SetupPage() {
   const ds = useDataSource();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const { user, loading, needsSetup: authNeedsSetup } = useAuth();
+
+  /** Demo-only: `/setup?preview=1` opens the wizard even when setup is finished (mock build). */
+  const preview = IS_MOCK && params.get('preview') === '1';
 
   const statusQ = useQuery({ queryKey: ['setupStatus'], queryFn: () => ds.setupStatus(), retry: false });
 
@@ -79,14 +106,19 @@ export function SetupPage() {
     const s = statusQ.data;
     if (!s || started.current) return;
     started.current = true;
+    const forced = Number(params.get('step'));
+    if (preview && Number.isInteger(forced) && forced >= 0 && forced < STEPS.length) {
+      setStep(forced);
+      return;
+    }
     const first = STEPS.findIndex((x) => !s.steps[x.key]);
-    setStep(first === -1 ? STEPS.length - 1 : first);
-  }, [statusQ.data]);
+    setStep(preview && first === -1 ? 0 : first === -1 ? STEPS.length - 1 : first);
+  }, [statusQ.data, preview, params]);
 
   if (loading || statusQ.isLoading) return <Spinner />;
 
   const needsSetup = statusQ.data?.needs_setup ?? authNeedsSetup;
-  if (!needsSetup) {
+  if (!needsSetup && !preview) {
     if (!user) return <Navigate to="/login" replace />;
     if (!hasRole(user, 'admin')) return <Navigate to="/" replace />;
   }
@@ -98,39 +130,52 @@ export function SetupPage() {
   const next = () => setStep((s) => Math.min(STEPS.length - 1, s + 1));
   const finish = () => navigate('/', { replace: true });
 
+  // An already-completed "submit" step has nothing to submit — fall back to Next.
+  const primaryKind = cur.primary === 'submit' && cur.key === 'admin_user' && done?.admin_user ? 'next' : cur.primary;
+
   return (
     <div className="setup-page">
-      <div className="setup-inner">
-        <div className="setup-brand">FactoryLogix Live</div>
-        <h1 className="page-title">First-run setup</h1>
-        <p className="page-subtitle mb">
-          Seven steps. Each one saves on its own, and anything skipped can be finished later in the admin area.
-        </p>
+      <header className="setup-top">
+        <span className="brand">
+          <span className="brand-tile">FL</span>
+          FactoryLogix Live
+        </span>
+        <span className="spacer" />
+        <span className="who">First-run setup · {user ? `signed in as ${user.username}` : 'not signed in'}</span>
+      </header>
 
-        <Stepper
-          steps={STEPS.map((s) => ({ label: s.label, done: !!done?.[s.key] }))}
-          current={step}
-          onSelect={setStep}
-        />
-
+      <div className="setup-center">
         <div className="setup-card">
-          <h2>
-            Step {step + 1} · {cur.title}
-          </h2>
-          <p className="muted mb">{cur.blurb}</p>
+          <h1>Set up FactoryLogix Live</h1>
+          <p className="lede">
+            Seven short steps. Each one saves on its own, and anything you skip can be finished later in
+            Administration.
+          </p>
+
+          <Stepper
+            steps={STEPS.map((s, i) => ({
+              label: s.label,
+              state: i === step ? 'current' : done?.[s.key] ? 'done' : 'todo',
+            }))}
+          />
+
+          <h2>{cur.title}</h2>
+          <p className="help">{cur.blurb}</p>
 
           {statusQ.isError && <ApiError error={statusQ.error} />}
 
-          {cur.key === 'admin_user' && <AdminStep done={!!done?.admin_user} onDone={next} />}
-          {cur.key === 'timezone' && <TimezoneStep onDone={next} />}
-          {cur.key === 'connection' && <ConnectionForm onSaved={next} />}
-          {cur.key === 'mapping' && <MappingWizard embedded onSaved={next} />}
-          {cur.key === 'shifts' && <ShiftsStep />}
-          {cur.key === 'breaks' && <BreaksStep />}
-          {cur.key === 'backfill' && <BackfillStep onDone={() => undefined} />}
+          <div className="setup-body">
+            {cur.key === 'admin_user' && <AdminStep done={!!done?.admin_user} onDone={next} />}
+            {cur.key === 'timezone' && <TimezoneStep onDone={next} />}
+            {cur.key === 'connection' && <ConnectionForm formId={STEP_FORM} hideActions onSaved={next} />}
+            {cur.key === 'mapping' && <MappingWizard embedded formId={STEP_FORM} onSaved={next} />}
+            {cur.key === 'shifts' && <ShiftsStep />}
+            {cur.key === 'breaks' && <BreaksStep />}
+            {cur.key === 'backfill' && <BackfillStep />}
+          </div>
 
           <div className="setup-foot">
-            <Button disabled={step === 0} onClick={() => setStep((s) => Math.max(0, s - 1))}>
+            <Button variant="ghost" disabled={step === 0} onClick={() => setStep((s) => Math.max(0, s - 1))}>
               Back
             </Button>
             <span className="spacer" />
@@ -141,10 +186,16 @@ export function SetupPage() {
             )}
             {isLast ? (
               <Button variant="primary" onClick={finish}>
-                Finish
+                Finish setup
+              </Button>
+            ) : primaryKind === 'submit' ? (
+              <Button variant="primary" type="submit" form={STEP_FORM}>
+                Save and continue
               </Button>
             ) : (
-              <Button onClick={next}>Next →</Button>
+              <Button variant="primary" onClick={next}>
+                Save and continue
+              </Button>
             )}
           </div>
         </div>
@@ -173,7 +224,7 @@ function AdminStep({ done, onDone }: { done: boolean; onDone: () => void }) {
   });
 
   if (done) {
-    return <Banner kind="success">An administrator already exists. Continue to the next step.</Banner>;
+    return <Note tone="success" title="An administrator already exists">Continue to the next step.</Note>;
   }
 
   const userError =
@@ -190,20 +241,27 @@ function AdminStep({ done, onDone }: { done: boolean; onDone: () => void }) {
   };
 
   return (
-    <form className="setup-narrow" onSubmit={submit}>
+    <form id={STEP_FORM} className="setup-narrow" onSubmit={submit}>
       {createM.isError && <ApiError error={createM.error} />}
       <Field label="User name" error={userError}>
-        <Input autoFocus value={username} onChange={(e) => setUsername(e.currentTarget.value)} />
+        <Input autoFocus autoComplete="username" value={username} onChange={(e) => setUsername(e.currentTarget.value)} />
       </Field>
       <Field label="Password" hint="At least 8 characters." error={passError}>
-        <Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
+        <Input
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => setPassword(e.currentTarget.value)}
+        />
       </Field>
       <Field label="Confirm password" error={matchError}>
-        <Input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.currentTarget.value)} />
+        <Input
+          type="password"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.currentTarget.value)}
+        />
       </Field>
-      <Button type="submit" variant="primary" loading={createM.isPending} disabled={!valid}>
-        Create administrator
-      </Button>
     </form>
   );
 }
@@ -232,6 +290,7 @@ function TimezoneStep({ onDone }: { onDone: () => void }) {
 
   return (
     <form
+      id={STEP_FORM}
       className="setup-narrow"
       onSubmit={(e) => {
         e.preventDefault();
@@ -248,23 +307,14 @@ function TimezoneStep({ onDone }: { onDone: () => void }) {
       >
         <Input list={TIMEZONE_DATALIST_ID} value={tz} autoFocus onChange={(e) => setTz(e.currentTarget.value)} />
       </Field>
-      <div className="row">
-        <Button type="submit" variant="primary" loading={saveM.isPending} disabled={!valid}>
-          Save time zone
-        </Button>
-        <Button type="button" variant="ghost" onClick={() => setTz(browserTz())}>
-          Use {browserTz()}
-        </Button>
-      </div>
+      <Button type="button" variant="ghost" onClick={() => setTz(browserTz())}>
+        Use {browserTz()}
+      </Button>
     </form>
   );
 }
 
 // ---------- step 5: shifts ----------
-
-function ListPanel({ children }: { children: ReactNode }) {
-  return <div className="picker-list mb">{children}</div>;
-}
 
 function ShiftsStep() {
   const ds = useDataSource();
@@ -290,7 +340,7 @@ function ShiftsStep() {
     <>
       <Flash message={flash.message} />
       {shiftsQ.isError && <ApiError error={shiftsQ.error} />}
-      <ListPanel>
+      <div className="picker-list">
         {shifts.length === 0 && <div className="opt muted">No shifts yet.</div>}
         {shifts.map((s) => (
           <div className="opt" key={s.id}>
@@ -300,7 +350,7 @@ function ShiftsStep() {
             </span>
           </div>
         ))}
-      </ListPanel>
+      </div>
       <ShiftForm
         key={formKey}
         onSubmit={(v) => createM.mutate(v)}
@@ -339,7 +389,7 @@ function BreaksStep() {
     <>
       <Flash message={flash.message} />
       {breaksQ.isError && <ApiError error={breaksQ.error} />}
-      <ListPanel>
+      <div className="picker-list">
         {breaks.length === 0 && <div className="opt muted">No breaks yet.</div>}
         {breaks.map((b) => (
           <div className="opt" key={b.id}>
@@ -350,7 +400,7 @@ function BreaksStep() {
             </span>
           </div>
         ))}
-      </ListPanel>
+      </div>
       <BreakForm
         key={formKey}
         shifts={shiftsQ.data ?? []}
@@ -365,7 +415,7 @@ function BreaksStep() {
 
 // ---------- step 7: backfill ----------
 
-function BackfillStep({ onDone }: { onDone: () => void }) {
+function BackfillStep() {
   const ds = useDataSource();
   const qc = useQueryClient();
   const tz = usePlantTz();
@@ -380,7 +430,6 @@ function BackfillStep({ onDone }: { onDone: () => void }) {
       void qc.invalidateQueries({ queryKey: ['syncHealth'] });
       void qc.invalidateQueries({ queryKey: ['setupStatus'] });
       flash.show('Backfill started.');
-      onDone();
     },
   });
 
@@ -389,12 +438,12 @@ function BackfillStep({ onDone }: { onDone: () => void }) {
       <Flash message={flash.message} />
       {runM.isError && <ApiError error={runM.error} />}
       {scheduled && (
-        <Banner kind="info">
-          The backfill will start automatically inside the configured off-shift window. You can change the window and
-          trigger it manually on the Connection page.
-        </Banner>
+        <Note tone="info" title="Scheduled">
+          The backfill starts automatically inside the configured off-shift window. You can change the window and
+          trigger it manually on the FactoryLogix page.
+        </Note>
       )}
-      <div className="row mb">
+      <div className="row">
         <Button onClick={() => setScheduled(true)}>Schedule for the off-shift window</Button>
         <Button variant="primary" loading={runM.isPending} onClick={() => runM.mutate()}>
           Run now

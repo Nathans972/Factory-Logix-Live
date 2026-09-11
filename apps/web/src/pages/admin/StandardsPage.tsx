@@ -2,25 +2,41 @@
  * Global standards admin (spec 10.5). Readable and usable by managers as well as admins.
  * Product-level overrides are managed on the product page; they are listed here read-only.
  */
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateAdjustmentRequest, SettingsPatch, StandardAdjustment, StandardOverride } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
 import { usePlantTz } from '../../lib/usePlantTz';
-import { formatDateTime, formatNum } from '../../lib/format';
-import { Button, DataTable, Field, Input, Modal, PageHeader, Panel, Select, Spinner, type Column } from '../../ui';
-import { ApiError, ConfirmModal, Flash, useFlash } from './components/common';
-import { SettingsForm, type SettingsFieldDef } from './components/SettingsForm';
+import { formatDateTime, formatNum, relativeMinutes } from '../../lib/format';
+import {
+  Button,
+  Card,
+  DataTable,
+  Drawer,
+  EmptyState,
+  Field,
+  Input,
+  Select,
+  Spinner,
+  PageHeader,
+  type Column,
+} from '../../ui';
+import { ApiError, ConfirmModal, Flash, SectionCard, useFlash } from './components/common';
+import { SettingsForm, type SettingsGroup } from './components/SettingsForm';
 
-const STANDARD_SETTINGS: SettingsFieldDef[] = [
-  { key: 'std_lookback_days', label: 'Lookback (days)', kind: 'int', min: 1, max: 3650, hint: 'History window used to compute a standard.' },
-  { key: 'std_min_units', label: 'Minimum units', kind: 'int', min: 1, hint: 'Below this the computed standard is not trusted.' },
-  { key: 'std_min_operators', label: 'Minimum operators', kind: 'int', min: 1 },
-  { key: 'std_max_unit_minutes', label: 'Max unit minutes', kind: 'number', min: 1, hint: 'Units slower than this are treated as outliers.' },
-  { key: 'session_gap_minutes', label: 'Session gap (minutes)', kind: 'number', min: 0, hint: 'A gap this long ends a working session.' },
-  { key: 'std_recompute_time', label: 'Nightly recompute time', kind: 'time', hint: 'Plant local.' },
-];
+const COMPUTATION_GROUP: SettingsGroup = {
+  title: 'Computation settings',
+  subtitle: 'How the base standard is derived from history.',
+  fields: [
+    { key: 'std_lookback_days', label: 'Lookback (days)', kind: 'int', min: 1, max: 3650, hint: 'History window used to compute a standard.' },
+    { key: 'std_min_units', label: 'Minimum units', kind: 'int', min: 1, hint: 'Below this the computed standard is not trusted.' },
+    { key: 'std_min_operators', label: 'Minimum operators', kind: 'int', min: 1 },
+    { key: 'std_max_unit_minutes', label: 'Max unit minutes', kind: 'number', min: 1, hint: 'Units slower than this are treated as outliers.' },
+    { key: 'session_gap_minutes', label: 'Session gap (minutes)', kind: 'number', min: 0, hint: 'A gap this long ends a working session.' },
+    { key: 'std_recompute_time', label: 'Nightly recompute time', kind: 'time', hint: 'Plant local.' },
+  ],
+};
 
 function percentText(p: number): string {
   return `${p > 0 ? '+' : ''}${formatNum(p, p % 1 === 0 ? 0 : 1)}%`;
@@ -36,6 +52,7 @@ export function StandardsPage() {
   const settingsQ = useQuery({ queryKey: ['settings'], queryFn: () => ds.settings() });
 
   const [globalOpen, setGlobalOpen] = useState(false);
+  const [opOpen, setOpOpen] = useState(false);
   const [deleting, setDeleting] = useState<StandardAdjustment | null>(null);
   const [confirmRecompute, setConfirmRecompute] = useState(false);
 
@@ -54,12 +71,12 @@ export function StandardsPage() {
     mutationFn: (req: CreateAdjustmentRequest) => ds.createGlobalAdjustment(req),
     onSuccess: (_r, req) => {
       invalidate();
-      setGlobalOpen(false);
       if (req.scope === 'operation') {
+        setOpOpen(false);
         setOpName('');
         setOpPercent('0');
         setOpNote('');
-      }
+      } else setGlobalOpen(false);
       flash.show('Adjustment saved.');
     },
   });
@@ -95,6 +112,7 @@ export function StandardsPage() {
   const opAdjustments = adjustments.filter((a) => a.scope === 'operation');
   const overrides = adminQ.data?.overrides ?? [];
   const operations = adminQ.data?.operations ?? [];
+  const lastRecompute = adminQ.data?.last_recompute_at ?? null;
 
   const validPercent = (v: string) => {
     const n = Number(v);
@@ -102,31 +120,27 @@ export function StandardsPage() {
   };
   const validNote = (v: string) => v.trim().length > 0 && v.trim().length <= 500;
 
-  const submitGlobal = (e: FormEvent) => {
-    e.preventDefault();
-    if (!validPercent(gPercent) || !validNote(gNote)) return;
-    createM.mutate({ scope: 'global', percent: Number(gPercent), note: gNote.trim() });
-  };
-
-  const submitOperation = (e: FormEvent) => {
-    e.preventDefault();
-    if (!opName || !validPercent(opPercent) || !validNote(opNote)) return;
-    createM.mutate({ scope: 'operation', operation: opName, percent: Number(opPercent), note: opNote.trim() });
-  };
-
   const adjColumns: Column<StandardAdjustment>[] = [
     { key: 'operation', header: 'Operation', render: (a) => a.operation ?? '—', value: (a) => a.operation ?? '' },
-    { key: 'percent', header: 'Adjustment', align: 'right', render: (a) => percentText(a.percent), value: (a) => a.percent },
-    { key: 'note', header: 'Note', render: (a) => a.note ?? <span className="muted">—</span>, value: (a) => a.note ?? '' },
+    {
+      key: 'percent',
+      header: 'Adjustment',
+      align: 'right',
+      width: 120,
+      render: (a) => <span className={`chip ${a.percent >= 0 ? 'chip-blue' : 'chip-amber'}`}>{percentText(a.percent)}</span>,
+      value: (a) => a.percent,
+    },
+    { key: 'note', header: 'Note', render: (a) => a.note ?? <span className="dim">—</span>, value: (a) => a.note ?? '' },
     { key: 'by', header: 'By', render: (a) => a.created_by ?? '—', value: (a) => a.created_by ?? '' },
     { key: 'at', header: 'Created', render: (a) => formatDateTime(a.created_at, tz), value: (a) => a.created_at },
     {
       key: 'actions',
       header: '',
+      align: 'right',
       sortable: false,
       render: (a) => (
-        <Button size="sm" variant="danger" onClick={() => setDeleting(a)}>
-          Delete
+        <Button size="sm" variant="ghost" className="btn-danger-text" onClick={() => setDeleting(a)}>
+          Remove
         </Button>
       ),
     },
@@ -136,25 +150,40 @@ export function StandardsPage() {
     {
       key: 'product',
       header: 'Product',
-      render: (o) => <Link to={`/products/${encodeURIComponent(o.product_number)}`}>{o.product_number}</Link>,
+      render: (o) => (
+        <Link className="link" to={`/products/${encodeURIComponent(o.product_number)}`}>
+          {o.product_number}
+        </Link>
+      ),
       value: (o) => o.product_number,
     },
-    { key: 'operation', header: 'Operation', render: (o) => o.operation ?? <span className="muted">all</span>, value: (o) => o.operation ?? '' },
-    { key: 'std', header: 'StdHr', align: 'right', render: (o) => formatNum(o.std_hr, 2), value: (o) => o.std_hr },
-    { key: 'note', header: 'Note', render: (o) => o.note ?? <span className="muted">—</span>, value: (o) => o.note ?? '' },
+    {
+      key: 'operation',
+      header: 'Operation',
+      render: (o) => o.operation ?? <span className="dim">all operations</span>,
+      value: (o) => o.operation ?? '',
+    },
+    { key: 'std', header: 'StdHr', align: 'right', width: 100, render: (o) => formatNum(o.std_hr, 2), value: (o) => o.std_hr },
+    { key: 'note', header: 'Note', render: (o) => o.note ?? <span className="dim">—</span>, value: (o) => o.note ?? '' },
     { key: 'by', header: 'By', render: (o) => o.created_by ?? '—', value: (o) => o.created_by ?? '' },
     { key: 'at', header: 'Created', render: (o) => formatDateTime(o.created_at, tz), value: (o) => o.created_at },
-    { key: 'active', header: 'Active', render: (o) => (o.active ? 'Yes' : 'No'), value: (o) => (o.active ? 1 : 0) },
   ];
+
+  const openGlobal = () => {
+    setGPercent(globalAdj ? String(globalAdj.percent) : '0');
+    setGNote('');
+    createM.reset();
+    setGlobalOpen(true);
+  };
 
   return (
     <>
       <PageHeader
         title="Standards"
-        subtitle="Plant-wide adjustments and how computed standards are derived."
+        subtitle={`${adjustments.length} active adjustment${adjustments.length === 1 ? '' : 's'} · ${overrides.length} override${overrides.length === 1 ? '' : 's'} · Last recompute ${lastRecompute ? relativeMinutes(lastRecompute, Date.now()) : 'never'}`}
         actions={
           <Button variant="primary" onClick={() => setConfirmRecompute(true)}>
-            Recompute all standards now
+            Recompute all standards
           </Button>
         }
       />
@@ -163,116 +192,90 @@ export function StandardsPage() {
       {adminQ.isError && <ApiError error={adminQ.error} />}
       {adminQ.isLoading && <Spinner />}
 
-      <Panel
+      <SectionCard
         title="Global adjustment"
+        subtitle="Applied on top of every computed standard, below any product override."
+        badges={globalAdj ? <span className="chip chip-blue">{percentText(globalAdj.percent)}</span> : undefined}
         actions={
-          <Button
-            onClick={() => {
-              setGPercent(globalAdj ? String(globalAdj.percent) : '0');
-              setGNote('');
-              createM.reset();
-              setGlobalOpen(true);
-            }}
-          >
-            {globalAdj ? 'Change global adjustment' : 'Set global adjustment'}
-          </Button>
+          globalAdj ? (
+            <>
+              <Button size="sm" variant="ghost" className="btn-danger-text" onClick={() => setDeleting(globalAdj)}>
+                Remove
+              </Button>
+              <Button size="sm" onClick={openGlobal}>
+                Change
+              </Button>
+            </>
+          ) : undefined
         }
       >
         {globalAdj ? (
-          <div className="row">
-            <span className="stat-value">{percentText(globalAdj.percent)}</span>
-            <span className="muted">
-              {globalAdj.note ?? 'no note'} · {globalAdj.created_by ?? 'unknown'} ·{' '}
-              {formatDateTime(globalAdj.created_at, tz)}
-            </span>
-            <Button size="sm" variant="danger" onClick={() => setDeleting(globalAdj)}>
-              Remove
-            </Button>
-          </div>
+          <p className="muted">
+            {globalAdj.note ?? 'No note'} · set by {globalAdj.created_by ?? 'unknown'} ·{' '}
+            {formatDateTime(globalAdj.created_at, tz)}
+          </p>
         ) : (
-          <p className="muted">No global adjustment. Every standard is used as computed.</p>
+          <EmptyState
+            title="No global adjustment"
+            hint="Every standard is used exactly as computed. A positive percent raises the target units per hour everywhere; a negative percent lowers it."
+            action={
+              <Button size="sm" onClick={openGlobal}>
+                Set adjustment
+              </Button>
+            }
+          />
         )}
-        <p className="hint-line mt">
-          A positive percent raises the target units per hour for every product and operation; a negative percent lowers
-          it. Adjustments apply on top of the computed base and below any product override.
-        </p>
-      </Panel>
+      </SectionCard>
 
-      <Panel title="Per-operation adjustments">
-        <form className="inline-form mb" onSubmit={submitOperation}>
-          <Field label="Operation">
-            <Select value={opName} onChange={(e) => setOpName(e.currentTarget.value)}>
-              <option value="">— pick an operation —</option>
-              {operations.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Percent" error={opPercent && !validPercent(opPercent) ? '-90 to 300' : undefined}>
-            <Input type="number" step={1} min={-90} max={300} value={opPercent} onChange={(e) => setOpPercent(e.currentTarget.value)} />
-          </Field>
-          <Field label="Note (required)">
-            <Input value={opNote} maxLength={500} onChange={(e) => setOpNote(e.currentTarget.value)} placeholder="Why?" />
-          </Field>
-          <Button
-            type="submit"
-            variant="primary"
-            loading={createM.isPending && createM.variables?.scope === 'operation'}
-            disabled={!opName || !validPercent(opPercent) || !validNote(opNote)}
-          >
-            Add
-          </Button>
-        </form>
-        {createM.isError && createM.variables?.scope === 'operation' && <ApiError error={createM.error} />}
+      <Card>
         <DataTable
+          title="Per-operation adjustments"
           columns={adjColumns}
           rows={opAdjustments}
           rowKey={(a) => a.id}
           exportName="operation-adjustments"
           emptyMessage="No per-operation adjustments."
           dense
+          toolbar={
+            <Button
+              size="sm"
+              onClick={() => {
+                createM.reset();
+                setOpOpen(true);
+              }}
+            >
+              Add adjustment
+            </Button>
+          }
         />
-      </Panel>
+      </Card>
 
-      <Panel title="Product overrides">
-        <p className="hint-line">
-          Overrides are set on the product page. They replace the computed standard entirely for that product (and
-          operation).
-        </p>
+      <Card>
         <DataTable
+          title="Active overrides"
           columns={overrideColumns}
-          rows={overrides}
+          rows={overrides.filter((o) => o.active)}
           rowKey={(o) => o.id}
           exportName="standard-overrides"
-          emptyMessage="No overrides."
+          emptyMessage="No overrides. Overrides are set on a product page and replace the computed standard entirely."
           dense
         />
-      </Panel>
+      </Card>
 
-      <Panel
-        title="Standard computation"
-        actions={
-          <span className="muted small">
-            Last recompute: {adminQ.data ? formatDateTime(adminQ.data.last_recompute_at, tz) : '—'}
-          </span>
-        }
-      >
-        {settingsQ.isError && <ApiError error={settingsQ.error} />}
-        {settingsQ.isLoading && <Spinner />}
-        {settingsQ.data && (
-          <SettingsForm
-            settings={settingsQ.data.settings}
-            fields={STANDARD_SETTINGS}
-            onSave={(patch) => saveSettingsM.mutate(patch)}
-            saving={saveSettingsM.isPending}
-            error={saveSettingsM.error}
-          />
-        )}
-      </Panel>
+      {settingsQ.isError && <ApiError error={settingsQ.error} />}
+      {settingsQ.isLoading && <Spinner />}
+      {settingsQ.data && (
+        <SettingsForm
+          settings={settingsQ.data.settings}
+          groups={[COMPUTATION_GROUP]}
+          onSave={(patch) => saveSettingsM.mutate(patch)}
+          saving={saveSettingsM.isPending}
+          error={saveSettingsM.error}
+        />
+      )}
 
-      <Modal
+      {/* ---------------- Global adjustment drawer ---------------- */}
+      <Drawer
         open={globalOpen}
         title="Global adjustment"
         onClose={() => setGlobalOpen(false)}
@@ -288,21 +291,97 @@ export function StandardsPage() {
               loading={createM.isPending && createM.variables?.scope === 'global'}
               disabled={!validPercent(gPercent) || !validNote(gNote)}
             >
-              Save
+              Save adjustment
             </Button>
           </>
         }
       >
-        <form id="global-adj-form" onSubmit={submitGlobal}>
+        <form
+          id="global-adj-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!validPercent(gPercent) || !validNote(gNote)) return;
+            createM.mutate({ scope: 'global', percent: Number(gPercent), note: gNote.trim() });
+          }}
+        >
           {createM.isError && createM.variables?.scope === 'global' && <ApiError error={createM.error} />}
-          <Field label="Percent" hint="+20 makes every standard 20% harder; -10 makes it 10% easier." error={gPercent && !validPercent(gPercent) ? '-90 to 300' : undefined}>
-            <Input type="number" step={1} min={-90} max={300} autoFocus value={gPercent} onChange={(e) => setGPercent(e.currentTarget.value)} />
+          <Field
+            label="Percent"
+            hint="+20 makes every standard 20% harder; -10 makes it 10% easier."
+            error={gPercent && !validPercent(gPercent) ? '-90 to 300' : undefined}
+          >
+            <Input
+              type="number"
+              step={1}
+              min={-90}
+              max={300}
+              autoFocus
+              value={gPercent}
+              onChange={(e) => setGPercent(e.currentTarget.value)}
+            />
           </Field>
           <Field label="Note (required)" hint="Recorded in the audit log.">
-            <Input value={gNote} maxLength={500} onChange={(e) => setGNote(e.currentTarget.value)} />
+            <Input value={gNote} maxLength={500} onChange={(e) => setGNote(e.currentTarget.value)} placeholder="Why?" />
           </Field>
         </form>
-      </Modal>
+      </Drawer>
+
+      {/* ---------------- Per-operation adjustment drawer ---------------- */}
+      <Drawer
+        open={opOpen}
+        title="Add operation adjustment"
+        onClose={() => setOpOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              form="op-adj-form"
+              loading={createM.isPending && createM.variables?.scope === 'operation'}
+              disabled={!opName || !validPercent(opPercent) || !validNote(opNote)}
+            >
+              Add adjustment
+            </Button>
+          </>
+        }
+      >
+        <form
+          id="op-adj-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!opName || !validPercent(opPercent) || !validNote(opNote)) return;
+            createM.mutate({ scope: 'operation', operation: opName, percent: Number(opPercent), note: opNote.trim() });
+          }}
+        >
+          {createM.isError && createM.variables?.scope === 'operation' && <ApiError error={createM.error} />}
+          <Field label="Operation">
+            <Select value={opName} autoFocus onChange={(e) => setOpName(e.currentTarget.value)}>
+              <option value="">— pick an operation —</option>
+              {operations.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Percent" error={opPercent && !validPercent(opPercent) ? '-90 to 300' : undefined}>
+            <Input
+              type="number"
+              step={1}
+              min={-90}
+              max={300}
+              value={opPercent}
+              onChange={(e) => setOpPercent(e.currentTarget.value)}
+            />
+          </Field>
+          <Field label="Note (required)" hint="Recorded in the audit log.">
+            <Input value={opNote} maxLength={500} onChange={(e) => setOpNote(e.currentTarget.value)} placeholder="Why?" />
+          </Field>
+        </form>
+      </Drawer>
 
       <ConfirmModal
         open={!!deleting}
@@ -326,8 +405,8 @@ export function StandardsPage() {
         onConfirm={() => recomputeM.mutate()}
         body={
           <p>
-            Recompute the base standard for every product and operation from the last {settingsQ.data?.settings.std_lookback_days ?? '—'} days.
-            This can take a while on a large history.
+            Recompute the base standard for every product and operation from the last{' '}
+            {settingsQ.data?.settings.std_lookback_days ?? '—'} days. This can take a while on a large history.
           </p>
         }
       />

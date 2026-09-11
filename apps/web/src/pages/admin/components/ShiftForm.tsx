@@ -1,7 +1,12 @@
-/** Shift add/edit form (spec 10.2). Validation mirrors `shiftWriteSchema`. */
+/**
+ * Shift add/edit form (spec 10.2). Validation mirrors `shiftWriteSchema`.
+ *
+ * Rendered inside the 440 px drawer on `/admin/shifts` (the drawer footer submits it through
+ * `form={id}`) and inline in the first-run wizard (where it keeps its own button).
+ */
 import { useMemo, useState, type FormEvent } from 'react';
 import type { ShiftDef, ShiftWrite } from '@fld/shared';
-import { Button, DaysPicker, Field, Input } from '../../../ui';
+import { Button, DaysPicker, Field, Input, Note } from '../../../ui';
 import { formatIsoDate } from '../../../lib/format';
 import { usePlantTz } from '../../../lib/usePlantTz';
 import { ApiError, FieldBlock } from './common';
@@ -14,19 +19,23 @@ export function crossesMidnight(start: string, end: string): boolean {
 }
 
 export function ShiftForm({
+  id,
   initial,
   onSubmit,
   onCancel,
   submitting,
   error,
   submitLabel,
+  hideActions,
 }: {
+  id?: string;
   initial?: ShiftDef | null;
   onSubmit: (v: ShiftWrite) => void;
   onCancel?: () => void;
   submitting?: boolean;
   error?: unknown;
   submitLabel?: string;
+  hideActions?: boolean;
 }) {
   const tz = usePlantTz();
   const today = useMemo(() => formatIsoDate(Date.now(), tz), [tz]);
@@ -67,18 +76,16 @@ export function ShiftForm({
   };
 
   return (
-    <form onSubmit={submit}>
-      <p className="hint-line">
-        Shifts are plant-wide. Editing creates a new version from the effective-from date — past days keep the
-        definition that was in effect then.
-      </p>
+    <form id={id} onSubmit={submit}>
+      <Note tone="info" title="Editing creates a new version">
+        Days already recorded keep the definition that was in effect then, starting from the effective-from date.
+      </Note>
 
-      <div className="form-grid">
-        <div className="field-wide">
-          <Field label="Name" error={show('name')}>
-            <Input value={name} onChange={(e) => setName(e.currentTarget.value)} placeholder="Day" autoFocus />
-          </Field>
-        </div>
+      <Field label="Name" error={show('name')}>
+        <Input value={name} onChange={(e) => setName(e.currentTarget.value)} placeholder="Day" autoFocus />
+      </Field>
+
+      <div className="grid-2col">
         <Field label="Start (plant local)" error={show('start')}>
           <Input type="time" value={start} onChange={(e) => setStart(e.currentTarget.value)} />
         </Field>
@@ -89,9 +96,13 @@ export function ShiftForm({
         >
           <Input type="time" value={end} onChange={(e) => setEnd(e.currentTarget.value)} />
         </Field>
-        <FieldBlock label="Days of week" wide hint="The local day the shift starts on." error={show('days')}>
-          <DaysPicker value={days} onChange={setDays} />
-        </FieldBlock>
+      </div>
+
+      <FieldBlock label="Days of week" hint="The local day the shift starts on." error={show('days')}>
+        <DaysPicker value={days} onChange={setDays} />
+      </FieldBlock>
+
+      <div className="grid-2col">
         <Field label="Effective from" error={show('from')}>
           <Input type="date" value={from} onChange={(e) => setFrom(e.currentTarget.value)} />
         </Field>
@@ -100,18 +111,20 @@ export function ShiftForm({
         </Field>
       </div>
 
-      {error != null && <ApiError error={error} />}
+      {error != null && <ApiError error={error} title="Could not save this shift" />}
 
-      <div className="sticky-actions">
-        <Button type="submit" variant="primary" loading={submitting} disabled={touched && !valid}>
-          {submitLabel ?? (initial ? 'Save shift' : 'Add shift')}
-        </Button>
-        {onCancel && (
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
+      {!hideActions && (
+        <div className="form-actions">
+          <Button type="submit" variant="primary" loading={submitting}>
+            {submitLabel ?? (initial ? 'Save shift' : 'Add shift')}
           </Button>
-        )}
-      </div>
+          {onCancel && (
+            <Button type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      )}
     </form>
   );
 }

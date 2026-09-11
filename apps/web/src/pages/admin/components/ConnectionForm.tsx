@@ -1,12 +1,14 @@
 /**
- * FactoryLogix OData connection form (spec 10.4). Reused by the first-run wizard (10.10).
+ * FactoryLogix OData connection form (spec 10.4). Reused by the first-run wizard (10.10),
+ * where the wizard footer owns the primary button (`formId` + `hideActions`).
+ *
  * "Test connection" always uses the values currently in the form, saved or not.
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ConnectionTestResult, FlConnection } from '@fld/shared';
 import { useDataSource } from '../../../data/DataSourceContext';
-import { Banner, Button, Field, Input, Spinner } from '../../../ui';
+import { Button, Field, Input, Note, Spinner } from '../../../ui';
 import { ApiError, Flash, useFlash } from './common';
 
 function urlError(v: string): string | null {
@@ -20,7 +22,40 @@ function urlError(v: string): string | null {
   }
 }
 
-export function ConnectionForm({ onSaved }: { onSaved?: () => void }) {
+/** "Connected in 155 ms" + version + entity sets, exactly as in docs/design/setup.html. */
+export function ConnectionTestNote({ test }: { test: ConnectionTestResult }) {
+  if (!test.ok) {
+    return (
+      <Note tone="error" title="Could not connect">
+        {test.error ?? 'unknown error'}
+      </Note>
+    );
+  }
+  const sets = test.metadata?.entity_sets ?? [];
+  const names = sets.slice(0, 8).map((e) => e.name);
+  return (
+    <Note
+      tone="success"
+      title={test.latency_ms == null ? 'Connected' : `Connected in ${Math.round(test.latency_ms)} ms`}
+    >
+      FactoryLogix OData {test.metadata?.version ?? 'version unknown'} · {sets.length} entity set
+      {sets.length === 1 ? '' : 's'} found
+      {names.length > 0 ? `: ${names.join(', ')}${sets.length > names.length ? ', …' : '.'}` : '.'}
+    </Note>
+  );
+}
+
+export function ConnectionForm({
+  onSaved,
+  formId,
+  hideActions,
+}: {
+  onSaved?: () => void;
+  /** id given to the <form> so an outside footer can submit it */
+  formId?: string;
+  /** hide the built-in Save button (the wizard footer provides it) */
+  hideActions?: boolean;
+}) {
   const ds = useDataSource();
   const qc = useQueryClient();
   const flash = useFlash();
@@ -75,6 +110,7 @@ export function ConnectionForm({ onSaved }: { onSaved?: () => void }) {
 
   return (
     <form
+      id={formId}
       onSubmit={(e) => {
         e.preventDefault();
         setTouched(true);
@@ -84,64 +120,61 @@ export function ConnectionForm({ onSaved }: { onSaved?: () => void }) {
     >
       <Flash message={flash.message} />
 
-      <div className="form-grid">
-        <div className="field-wide">
-          <Field
-            label="Server URL"
-            hint="Base URL of the FactoryLogix OData service, e.g. https://fl.example.com/odata"
-            error={urlErr}
-          >
-            <Input
-              value={baseUrl}
-              placeholder="https://factorylogix.example.com/odata"
-              onChange={(e) => setBaseUrl(e.currentTarget.value)}
-              onBlur={() => setTouched(true)}
-            />
-          </Field>
-        </div>
+      <Field
+        label="Server URL"
+        hint="Usually http://<server>:6065/odata. Open /$metadata in a browser to confirm it responds."
+        error={urlErr}
+      >
+        <Input
+          // `Input` spreads props after its own className, so repeat `input` to keep the base style
+          className="input mono"
+          value={baseUrl}
+          placeholder="http://factorylogix.example.local:6065/odata"
+          onChange={(e) => setBaseUrl(e.currentTarget.value)}
+          onBlur={() => setTouched(true)}
+        />
+      </Field>
+
+      <div className="grid-2col">
         <Field label="User name" error={userErr}>
-          <Input value={username} onChange={(e) => setUsername(e.currentTarget.value)} onBlur={() => setTouched(true)} />
+          <Input
+            value={username}
+            autoComplete="username"
+            onChange={(e) => setUsername(e.currentTarget.value)}
+            onBlur={() => setTouched(true)}
+          />
         </Field>
         <Field
           label="Password"
-          hint={saved?.has_password ? 'A password is stored. Leave blank to keep it.' : 'Stored encrypted at rest.'}
+          hint={saved?.has_password ? 'A password is stored — leave blank to keep it.' : 'Stored encrypted at rest.'}
         >
           <Input
             type="password"
             autoComplete="new-password"
             value={password}
-            placeholder={saved?.has_password ? '•••••••• (unchanged)' : ''}
+            placeholder={saved?.has_password ? '•••••••••••• (unchanged)' : ''}
             onChange={(e) => setPassword(e.currentTarget.value)}
           />
         </Field>
       </div>
 
-      {saveM.isError && <ApiError error={saveM.error} />}
-      {testM.isError && <ApiError error={testM.error} />}
-
-      {test && (
-        <div className="mt mb">
-          {test.ok ? (
-            <Banner kind="success">
-              Connected. OData version {test.metadata?.version ?? 'unknown'} ·{' '}
-              {test.metadata?.entity_sets.length ?? 0} entity sets found ·{' '}
-              {test.latency_ms == null ? 'latency unknown' : `${Math.round(test.latency_ms)} ms`}
-            </Banner>
-          ) : (
-            <Banner kind="error">Connection failed: {test.error ?? 'unknown error'}</Banner>
-          )}
-        </div>
-      )}
-
-      <div className="sticky-actions">
-        <Button type="submit" variant="primary" loading={saveM.isPending} disabled={!canSubmit}>
-          Save connection
-        </Button>
+      <div className="form-actions mb">
         <Button type="button" loading={testM.isPending} disabled={!canSubmit} onClick={() => testM.mutate()}>
           Test connection
         </Button>
-        <span className="muted small">Test uses the values in this form, saved or not.</span>
+        {!hideActions && (
+          <>
+            <span className="spacer" />
+            <Button type="submit" variant="primary" loading={saveM.isPending} disabled={!canSubmit}>
+              Save
+            </Button>
+          </>
+        )}
       </div>
+
+      {saveM.isError && <ApiError error={saveM.error} />}
+      {testM.isError && <ApiError error={testM.error} title="Test failed" />}
+      {test && <ConnectionTestNote test={test} />}
     </form>
   );
 }
