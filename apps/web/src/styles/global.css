@@ -37,7 +37,7 @@ code, .mono { font-family: var(--mono); }
 
 /* Demo badge */
 .demo-badge {
-  position: fixed; top: 8px; right: 8px; z-index: 9999;
+  position: fixed; top: 6px; left: 50%; transform: translateX(-50%); z-index: 9999;
   background: #ff9f1c; color: #111; font-weight: 700; font-size: 12px;
   padding: 4px 10px; border-radius: 999px; letter-spacing: 0.02em;
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);

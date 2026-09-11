@@ -46,7 +46,7 @@ tr.row-sub td { background: rgba(255, 255, 255, 0.02); }
 .strip:last-child { border-bottom: none; }
 .strip-meta { min-width: 260px; }
 .strip-meta .t { font-weight: 600; }
-.strip-labels { display: inline-flex; gap: 2px; margin-bottom: 2px; }
+.strip-labels { display: flex; gap: 2px; margin-bottom: 2px; }
 .strip-labels .lbl { width: 34px; text-align: center; font-size: 11px; color: var(--text-muted); }
 
 /* Embedded TV dashboard (job detail) */

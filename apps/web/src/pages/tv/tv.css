@@ -190,13 +190,13 @@
 }
 
 /* operation names wrap instead of being truncated (spec 8.3) */
-.tv-op {
+.tv-table td.tv-op, .tv-table th.tv-op {
   white-space: normal;
   overflow-wrap: anywhere;
   font-size: calc(var(--tv-fs-cell) * 0.9);
 }
 
-.tv-operator {
+.tv-table td.tv-operator, .tv-table th.tv-operator {
   white-space: normal;
   overflow-wrap: anywhere;
   font-size: calc(var(--tv-fs-cell) * 0.9);
@@ -208,10 +208,10 @@
 }
 
 .tv-output-table col.c-op {
-  width: 17%;
+  width: 19%;
 }
 .tv-output-table col.c-operator {
-  width: 11%;
+  width: 12.5%;
 }
 .tv-output-table col.c-std,
 .tv-output-table col.c-prior {
@@ -253,35 +253,35 @@
   position: relative;
 }
 
-.tv-c-blank {
+.tv-table td.tv-c-blank {
   color: transparent;
 }
 
-.tv-c-neutral {
+.tv-table td.tv-c-neutral {
   color: var(--tv-on-neutral);
 }
 
-.tv-c-red {
+.tv-table td.tv-c-red {
   background: var(--tv-red);
   color: var(--tv-on-red);
 }
 
-.tv-c-yellow {
+.tv-table td.tv-c-yellow {
   background: var(--tv-yellow);
   color: var(--tv-on-yellow);
 }
 
-.tv-c-green {
+.tv-table td.tv-c-green {
   background: var(--tv-green);
   color: var(--tv-on-green);
 }
 
-.tv-c-blue {
+.tv-table td.tv-c-blue {
   background: var(--tv-blue);
   color: var(--tv-on-blue);
 }
 
-.tv-c-visitor {
+.tv-table td.tv-c-visitor {
   background: var(--tv-visitor);
   color: var(--tv-on-visitor);
 }
