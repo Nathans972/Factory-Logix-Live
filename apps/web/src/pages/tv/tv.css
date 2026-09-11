@@ -6,12 +6,14 @@
 
 .tv-root {
   /* wide sans-serif, readable from 10 m on a 1080p panel */
-  --tv-font: 'Arial Black', 'Segoe UI Black', 'Helvetica Neue', Arial, sans-serif;
-  --tv-fs-header: 3.2vh;
+  --tv-font: 'Segoe UI', Verdana, 'Helvetica Neue', Arial, sans-serif;
+  --tv-font-head: 'Bahnschrift Light', 'Bahnschrift', 'Segoe UI Light', 'Segoe UI', Arial, sans-serif;
+  --tv-cyan: #3bb0e0;
+  --tv-fs-header: 3.4vh;
   --tv-fs-cell: 2.6vh;
   --tv-fs-defect: 2.2vh;
   --tv-fs-label: 1.5vh;
-  --tv-fs-clock: 3vh;
+  --tv-fs-clock: 2.3vh;
   --tv-pad-y: 0.25vh;
   --tv-pad-x: 0.3vw;
   --tv-outline: 0.35vh;
@@ -421,4 +423,160 @@
 .tv-compact .tv-visitor-mark {
   right: 2px;
   font-size: 7px;
+}
+
+/* ---------------------------------------------------------------- legacy dashboard look
+ * Tuned against a photo of the customer's existing floor dashboard: light white header text,
+ * white bold column headers with a cyan rule, bold yellow-green values, plain-weight dark
+ * numbers inside filled cells, a large thin white ring gauge with a red position dot, and a
+ * small white clock. Declared last so it wins over the defaults above at equal specificity.
+ */
+
+.tv-root .tv-header {
+  font-family: var(--tv-font-head);
+  font-weight: 300;
+  letter-spacing: 0.05em;
+  color: var(--tv-label);
+  padding: 0.4vh 0.4vw 0.8vh;
+}
+
+.tv-root .tv-head-job,
+.tv-root .tv-head-product {
+  color: #f2f2f2;
+  font-size: calc(var(--tv-fs-header) * 1.08);
+}
+
+.tv-root .tv-head-name {
+  color: #f2f2f2;
+  font-size: calc(var(--tv-fs-header) * 0.82);
+  letter-spacing: 0.06em;
+  padding-bottom: 0.3vh;
+}
+
+.tv-root .tv-qty-value {
+  color: #f2f2f2;
+  font-size: calc(var(--tv-fs-header) * 0.8);
+}
+
+.tv-root .tv-qty-label {
+  color: #8a8a8a;
+  font-family: var(--tv-font);
+  font-weight: 400;
+  font-size: calc(var(--tv-fs-label) * 0.95);
+}
+
+/* column headers: white, bold, cyan rule underneath */
+.tv-table th {
+  color: #ffffff;
+  font-weight: 700;
+  font-size: calc(var(--tv-fs-cell) * 0.78);
+  letter-spacing: 0.03em;
+  border-bottom: 0.3vh solid var(--tv-cyan);
+}
+
+/* yellow-green values are bold; numbers inside hour cells are plain weight */
+.tv-table td {
+  font-weight: 700;
+}
+
+.tv-table td.tv-cell {
+  font-weight: 400;
+}
+
+.tv-table td.tv-c-red,
+.tv-table td.tv-c-yellow,
+.tv-table td.tv-c-green,
+.tv-table td.tv-c-blue {
+  font-weight: 500;
+}
+
+/* bottom strip: big ring bottom-left, defects table top-aligned beside it, clock bottom-right */
+.tv-root .tv-bottom {
+  align-items: flex-start;
+  gap: 1.5vw;
+}
+
+.tv-root .tv-bottom-left {
+  width: 30vh;
+  align-self: flex-end;
+}
+
+.tv-root .tv-bottom-mid {
+  flex: 0 1 auto;
+  width: 74%;
+  padding-top: 0.5vh;
+}
+
+.tv-root .tv-bottom-right {
+  flex: 1 1 auto;
+  align-self: flex-end;
+}
+
+.tv-root .tv-gauge {
+  width: 30vh;
+  height: 30vh;
+}
+
+.tv-root .tv-gauge-track {
+  stroke: #e8e8e8;
+  stroke-width: 1.4;
+}
+
+.tv-root .tv-gauge-arc {
+  stroke: #ffffff;
+  stroke-width: 2.4;
+  opacity: 0.9;
+}
+
+.tv-root .tv-gauge-dot {
+  fill: var(--tv-red);
+}
+
+.tv-root .tv-gauge-label {
+  color: #f2f2f2;
+  font-weight: 700;
+  font-size: calc(var(--tv-fs-cell) * 1.15);
+}
+
+.tv-root .tv-clock-time {
+  color: #f2f2f2;
+  font-weight: 700;
+  font-size: var(--tv-fs-clock);
+}
+
+.tv-root .tv-clock-updated {
+  color: #8a8a8a;
+  font-size: calc(var(--tv-fs-label) * 0.9);
+}
+
+/* compact (portal embed) keeps the same look at smaller sizes */
+.tv-root.tv-compact .tv-bottom-left {
+  width: 96px;
+}
+
+.tv-root.tv-compact .tv-gauge {
+  width: 96px;
+  height: 96px;
+}
+
+.tv-root.tv-compact .tv-bottom-mid {
+  width: auto;
+  flex: 1 1 auto;
+}
+
+.tv-root.tv-compact .tv-table th {
+  border-bottom-width: 2px;
+}
+
+.tv-root .tv-bottom-mid {
+  width: 70%;
+}
+
+.tv-root .tv-bottom-right {
+  min-width: 14vw;
+  white-space: nowrap;
+}
+
+.tv-root .tv-gauge-track {
+  stroke: #8c8c8c;
 }
