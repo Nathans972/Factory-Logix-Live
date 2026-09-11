@@ -1,4 +1,16 @@
-// PLACEHOLDER page — to be implemented.
+/** Mapping wizard page (spec 10.7). The wizard itself is shared with the first-run setup. */
+import { PageHeader } from '../../ui';
+import { AdminOnly } from './components/common';
+import { MappingWizard } from './components/MappingWizard';
+
 export function MappingPage() {
-  return <div className="main"><h1>Mapping wizard</h1><p className="muted">Not implemented yet.</p></div>;
+  return (
+    <AdminOnly title="Mapping">
+      <PageHeader
+        title="Mapping"
+        subtitle="Tell the collector which FactoryLogix entity sets and fields hold jobs, unit events and defects."
+      />
+      <MappingWizard />
+    </AdminOnly>
+  );
 }
