@@ -9,7 +9,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { TvDashboard, TvRow } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
-import { IS_MOCK } from '../../data';
+import { tvDemoHref } from '../../lib/demo';
 import { useLiveRefetch } from '../../lib/useLive';
 import { usePlantTz } from '../../lib/usePlantTz';
 import { downloadCsv } from '../../lib/csv';
@@ -44,12 +44,6 @@ const TABS: { value: JobTab; label: string }[] = [
 ];
 
 const CLOSED_RE = /clos|complet|cancel/i;
-
-/** `/tv` with the mock demo token so reviewers land on a claimed display. */
-function tvHref(): string {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
-  return base + '/tv' + (IS_MOCK ? '?demo=1' : '');
-}
 
 function exportDashboard(job: string, dash: TvDashboard): void {
   downloadCsv(
@@ -213,7 +207,7 @@ export function JobPage() {
                   actions={
                     <>
                       <span className="card-sub">Current hour outlined</span>
-                      <a className="btn btn-ghost btn-sm" href={tvHref()} target="_blank" rel="noreferrer">
+                      <a className="btn btn-ghost btn-sm" href={tvDemoHref()} target="_blank" rel="noreferrer">
                         Open TV view
                       </a>
                     </>
