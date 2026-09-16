@@ -39,7 +39,7 @@ dashboards plus a manager portal with shift views, drill-downs, and admin screen
 ## Live demo
 
 A public demo runs entirely on **simulated data** (a fictional company, fictional products and
-operators — never real customer data): **`https://<github-user>.github.io/<repo-name>/`**
+operators — never real customer data): **`https://nathans972.github.io/Factory-Logix-Live/`**
 
 `.github/workflows/pages.yml` builds the web app with `VITE_DATA_SOURCE=mock` on every push to
 `main` and deploys `apps/web/dist` to GitHub Pages. In mock mode the app runs an in-browser
@@ -68,8 +68,8 @@ See `docs/INSTALL.md` for how to verify these before you start.
 ## Quick start
 
 ```bash
-git clone <this-repo-url>
-cd <repo-directory>
+git clone https://github.com/Nathans972/Factory-Logix-Live.git
+cd Factory-Logix-Live
 cp .env.example .env
 ```
 

@@ -3,7 +3,7 @@
  * a plausible world, standards that match the seeded rates, a TV dashboard with
  * 12 columns and legal colours, working portal views, and in-memory admin CRUD.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CellColor } from '@fld/shared';
 import { expandBreaks } from '@fld/engine';
 import { MockDataSource } from './MockDataSource';
@@ -514,7 +514,13 @@ describe('admin (in memory)', () => {
 });
 
 describe('live simulation', () => {
+  afterEach(() => vi.useRealTimers());
+
   it('appends steps when advanced, faster at higher speed', () => {
+    // Pin the clock to a Tuesday 10:00 plant time (America/New_York). The scripted cast
+    // pauses for breaks (09:30, 12:00, ... and the night-shift set), so a real-clock run
+    // inside a break window would legitimately produce zero units and fail here.
+    vi.useFakeTimers({ now: Date.UTC(2026, 8, 15, 14, 0, 0), toFake: ['Date'] });
     const s = new MockStore();
     s.ensureWorld();
     const before = s.cells.cellsInRange(Date.now() - 3_600_000, Date.now() + 3_600_000).length;

@@ -62,8 +62,8 @@ docker compose version
 ## 4. Clone the repository
 
 ```bash
-git clone <this-repo-url>
-cd <repo-directory>
+git clone https://github.com/Nathans972/Factory-Logix-Live.git
+cd Factory-Logix-Live
 ```
 
 ## 5. Configure `.env`
