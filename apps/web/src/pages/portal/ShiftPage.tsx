@@ -1,4 +1,4 @@
-/** Shift view — the portal landing page (spec 9.2, docs/DESIGN.md "Pages"). */
+/** Shift view at /shift (spec 9.2, docs/DESIGN.md "Pages"); Home links here and forwards old `/?date=…` links. */
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';

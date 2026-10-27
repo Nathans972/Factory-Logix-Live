@@ -148,6 +148,13 @@ code,
   min-height: 100vh;
   background: var(--fl-canvas);
 }
+/* menu button on desktop: hide the rail and give the page the full width */
+.app-shell.rail-collapsed {
+  grid-template-columns: 0 1fr;
+}
+.app-shell.rail-collapsed .rail {
+  display: none;
+}
 
 .app-main {
   grid-column: 2;
@@ -155,20 +162,88 @@ code,
   min-width: 0;
 }
 
+/* narrow screens: the rail slides in over the page from the menu button (AppShell NARROW) */
+.rail-scrim {
+  display: none;
+}
+@media (max-width: 900px) {
+  .app-shell,
+  .app-shell.rail-collapsed {
+    grid-template-columns: 1fr;
+  }
+  .app-main {
+    grid-column: 1;
+    padding: 18px 16px 48px;
+  }
+  .app-shell .rail,
+  .app-shell.rail-collapsed .rail {
+    display: none;
+  }
+  .app-shell.rail-open .rail {
+    display: flex;
+    position: fixed;
+    left: 0;
+    top: var(--fl-topbar-h);
+    bottom: 0;
+    width: var(--fl-rail-w);
+    height: auto;
+    z-index: 45;
+    box-shadow: var(--fl-shadow-lg);
+  }
+  .app-shell.rail-open .rail-scrim {
+    display: block;
+    position: fixed;
+    inset: var(--fl-topbar-h) 0 0 0;
+    z-index: 44;
+    background: rgba(15, 23, 42, 0.3);
+  }
+}
+
 /* --------------------------------------------------------------- 3. top bar */
 
+/* three columns so the search box sits in the middle, as in the company portal */
 .topbar {
-  grid-column: 1 / 3;
+  grid-column: 1 / -1;
   position: sticky;
   top: 0;
   z-index: 40;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 520px) minmax(0, 1fr);
   align-items: center;
   gap: 16px;
-  padding: 0 20px;
+  padding: 0 16px 0 12px;
   height: var(--fl-topbar-h);
   background: var(--fl-surface);
   border-bottom: 1px solid var(--fl-border);
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.topbar-right {
+  justify-content: flex-end;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 0;
+  border-radius: var(--fl-radius-sm);
+  background: none;
+  color: var(--fl-text-2);
+  cursor: pointer;
+}
+.icon-btn:hover,
+.icon-btn.on {
+  background: var(--fl-surface-2);
+  color: var(--fl-text);
 }
 
 .topbar-brand {
@@ -176,12 +251,20 @@ code,
   align-items: center;
   gap: 10px;
   font-weight: 700;
+  font-size: 16px;
   letter-spacing: -0.01em;
   color: var(--fl-text);
-  min-width: 212px;
+  min-width: 0;
 }
 .topbar-brand:hover {
   text-decoration: none;
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .brand-tile {
@@ -198,11 +281,9 @@ code,
 }
 
 .topbar-plant {
-  color: var(--fl-text-2);
-  font-size: 13px;
-  padding-left: 16px;
-  border-left: 1px solid var(--fl-border);
-  white-space: nowrap;
+  color: var(--fl-text-3);
+  font-size: 12px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 260px;
@@ -210,17 +291,19 @@ code,
 
 .topbar-search {
   margin: 0;
-  flex: 1;
-  max-width: 420px;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
+  height: 36px;
   padding: 0 12px;
   border: 1px solid var(--fl-border);
   border-radius: var(--fl-radius-sm);
   background: var(--fl-surface-2);
   color: var(--fl-text-3);
+}
+.topbar-search svg {
+  flex: none;
 }
 .topbar-search:focus-within {
   border-color: var(--fl-primary);
@@ -248,8 +331,20 @@ code,
   flex: none;
 }
 
-.topbar-spacer {
-  flex: 1;
+@media (max-width: 1100px) {
+  .topbar .freshness {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .topbar-search kbd,
+  .brand-text,
+  .user-name {
+    display: none;
+  }
 }
 
 /* freshness pill */
@@ -311,6 +406,31 @@ code,
 button.avatar {
   cursor: pointer;
 }
+.user-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 8px 0 4px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--fl-text-2);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.user-btn:hover {
+  background: var(--fl-surface-2);
+  color: var(--fl-text);
+}
+.user-name {
+  color: var(--fl-text);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .menu {
   position: absolute;
   top: 40px;
@@ -361,6 +481,19 @@ button.avatar {
 .menu-item:hover {
   background: var(--fl-surface-2);
   color: var(--fl-text);
+  text-decoration: none;
+}
+.menu-text {
+  padding: 4px 8px 6px;
+  font-size: 13px;
+  color: var(--fl-text-2);
+  max-width: 260px;
+}
+.menu-text kbd {
+  font: 11px/1 var(--fl-mono);
+  border: 1px solid var(--fl-border);
+  border-radius: 4px;
+  padding: 2px 4px;
 }
 .menu-item.on {
   background: var(--fl-primary-soft);
@@ -375,6 +508,8 @@ button.avatar {
 
 /* ------------------------------------------------------------------ 4. rail */
 
+/* company-portal rail: red band on top, flat rows with a left accent when active,
+   Dark mode + version pinned to the bottom */
 .rail {
   grid-column: 1;
   position: sticky;
@@ -382,59 +517,93 @@ button.avatar {
   align-self: start;
   height: calc(100vh - var(--fl-topbar-h));
   overflow-y: auto;
-  background: var(--fl-surface);
+  background: var(--fl-rail-bg);
   border-right: 1px solid var(--fl-border);
-  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-band {
+  flex: none;
+  padding: 11px 16px;
+  background: var(--fl-band);
+  color: var(--fl-band-text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.rail-links {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 10px 0;
 }
 
 .rail-group {
-  margin: 14px 10px 6px;
+  margin: 14px 16px 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--fl-text-3);
 }
-.rail-group:first-child {
-  margin-top: 6px;
-}
 
 .rail-link {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 34px;
-  padding: 0 10px;
-  border-radius: var(--fl-radius-sm);
+  height: 38px;
+  padding: 0 16px 0 13px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: none;
   color: var(--fl-text-2);
   text-decoration: none;
+  font: inherit;
   font-weight: 500;
   font-size: 13.5px;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
 }
 .rail-link:hover {
-  background: var(--fl-surface-2);
+  background: var(--fl-rail-active);
   color: var(--fl-text);
   text-decoration: none;
 }
 .rail-link.active {
-  background: var(--fl-primary-soft);
-  color: var(--fl-primary);
+  background: var(--fl-rail-active);
+  border-left-color: var(--fl-band);
+  color: var(--fl-text);
+  font-weight: 600;
 }
 .rail-link svg {
   flex: none;
-  opacity: 0.85;
+  opacity: 0.8;
 }
-.rail-link .lock {
+.rail-link.rail-sub {
+  height: 34px;
+  padding-left: 42px;
+}
+.rail-chevron {
   margin-left: auto;
-  opacity: 0.55;
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+.rail-chevron.open {
+  transform: none;
 }
 
 .rail-foot {
   margin-top: auto;
-  padding: 12px 10px 4px;
+  padding: 8px 0 12px;
+  border-top: 1px solid var(--fl-border);
+}
+.rail-version {
+  padding: 6px 16px 0;
   font-size: 12px;
   color: var(--fl-text-3);
 }

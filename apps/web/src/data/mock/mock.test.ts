@@ -498,6 +498,13 @@ describe('admin (in memory)', () => {
     expect(login.user).not.toBeNull();
     await ds.logout();
     expect((await ds.me()).user).not.toBeNull();
+
+    // Seeded users preview their role; logging out goes back to the demo admin.
+    expect((await ds.login({ username: 'kpatterson', password: 'x' })).user?.role).toBe('manager');
+    expect((await ds.me()).user?.role).toBe('manager');
+    expect((await ds.login({ username: 'FloorLead', password: 'x' })).user?.role).toBe('viewer');
+    await ds.logout();
+    expect((await ds.me()).user?.role).toBe('admin');
   });
 
   it('emits events to subscribers', async () => {

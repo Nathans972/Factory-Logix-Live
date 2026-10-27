@@ -1,7 +1,8 @@
 /**
  * Free-text job search + pick (spec 8.6 / 10.1), styled as the drawer picker in
  * docs/design/admin-displays.html: a search input above a bordered result list whose
- * selected row is highlighted. "No job" is a valid choice.
+ * selected row is highlighted. "No job" is a valid choice. Used by Settings → Displays (admin)
+ * and the manager TV displays page.
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -35,7 +36,7 @@ export function JobPicker({
   return (
     <FieldBlock
       label={label}
-      hint={value ? `This TV shows ${value}.` : 'No job assigned — the TV shows "No job assigned".'}
+      hint={value ? `After saving, the TV shows ${value}.` : 'No job: the TV shows "No job assigned".'}
     >
       <Input
         placeholder="Search jobs by number, product or name…"

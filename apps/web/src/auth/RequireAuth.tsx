@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import type { Role } from '@fld/shared';
 import { hasRole, useAuth } from './AuthContext';
 import { Spinner } from '../ui/primitives';
@@ -19,7 +19,7 @@ export function RequireAuth({ minRole, children }: { minRole: Role; children: Re
           <p className="muted">
             Your role ({user.role}) cannot open this page. Ask an administrator for {minRole} access.
           </p>
-          <a href="/">Back to the portal</a>
+          <Link to="/">Back to Home</Link>
         </div>
       </div>
     );

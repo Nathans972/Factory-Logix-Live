@@ -3,7 +3,9 @@ import { TvPage } from './pages/tv/TvPage';
 import { LoginPage } from './pages/auth/LoginPage';
 import { SetupPage } from './pages/auth/SetupPage';
 import { PortalLayout } from './pages/portal/PortalLayout';
+import { HomePage } from './pages/portal/HomePage';
 import { ShiftPage } from './pages/portal/ShiftPage';
+import { TvJobsPage } from './pages/portal/TvJobsPage';
 import { FloorPage } from './pages/portal/FloorPage';
 import { OperatorsPage } from './pages/portal/OperatorsPage';
 import { OperatorPage } from './pages/portal/OperatorPage';
@@ -11,7 +13,7 @@ import { JobsPage } from './pages/portal/JobsPage';
 import { JobPage } from './pages/portal/JobPage';
 import { ProductsPage } from './pages/portal/ProductsPage';
 import { ProductPage } from './pages/portal/ProductPage';
-import { AdminLayout } from './pages/admin/AdminLayout';
+import { AdminLayout, SettingsIndex } from './pages/admin/AdminLayout';
 import { DisplaysPage } from './pages/admin/DisplaysPage';
 import { ShiftsPage } from './pages/admin/ShiftsPage';
 import { BreaksPage } from './pages/admin/BreaksPage';
@@ -29,9 +31,11 @@ import { DemoBadge } from './ui/DemoBadge';
  * Route map (spec 8.1, 9.1, 10):
  *   /tv                     TV display (unauthenticated by design)
  *   /login, /setup          auth + first-run wizard
- *   /                       portal shift view (default landing)
+ *   /                       Home (landing); old `/?date=…` shift-view links forward to /shift
+ *   /shift                  portal shift view
  *   /floor, /operators/:id, /jobs/:job, /products/:z
- *   /admin/*                admin area (admin role; standards page allows manager)
+ *   /displays               TV displays: change the job on each TV (manager+)
+ *   /admin/*                Settings area (admin role; standards + sync health allow manager)
  */
 export function App() {
   return (
@@ -49,7 +53,8 @@ export function App() {
             </RequireAuth>
           }
         >
-          <Route index element={<ShiftPage />} />
+          <Route index element={<HomePage />} />
+          <Route path="/shift" element={<ShiftPage />} />
           <Route path="/floor" element={<FloorPage />} />
           <Route path="/operators" element={<OperatorsPage />} />
           <Route path="/operators/:id" element={<OperatorPage />} />
@@ -57,6 +62,7 @@ export function App() {
           <Route path="/jobs/:job" element={<JobPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/products/:z" element={<ProductPage />} />
+          <Route path="/displays" element={<TvJobsPage />} />
         </Route>
 
         <Route
@@ -67,7 +73,7 @@ export function App() {
             </RequireAuth>
           }
         >
-          <Route index element={<Navigate to="displays" replace />} />
+          <Route index element={<SettingsIndex />} />
           <Route path="displays" element={<DisplaysPage />} />
           <Route path="shifts" element={<ShiftsPage />} />
           <Route path="breaks" element={<BreaksPage />} />

@@ -31,6 +31,15 @@
   --fl-primary-soft: #e8effb;
   --fl-primary-text: #ffffff;
 
+  /* company-portal chrome: the red rail band, the active rail row, the Home greeting card */
+  --fl-band: #b42318;
+  --fl-band-text: #ffffff;
+  --fl-brand-soft: #fbeceb;
+  --fl-brand-ink: #9f1f16;
+  --fl-rail-bg: #f7f8fa;
+  --fl-rail-active: #e9edf3;
+  --fl-hero: linear-gradient(135deg, #eef2f8 0%, #f6f8fb 100%);
+
   /* semantic pace / status colors (same hues in both themes, tints flip) */
   --fl-red: #d92d20;
   --fl-red-soft: #fee4e2;
@@ -56,7 +65,7 @@
   --fl-cell-visitor-ink: #ffffff;
 
   /* shape + depth */
-  --fl-radius: 10px;
+  --fl-radius: 12px;
   --fl-radius-sm: 8px;
   --fl-radius-badge: 6px;
   --fl-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.08);
@@ -109,6 +118,14 @@
   --fl-primary-hover: #7aa3f5;
   --fl-primary-soft: #1b2a47;
   --fl-primary-text: #0b1220;
+
+  --fl-band: #a3271d;
+  --fl-band-text: #ffffff;
+  --fl-brand-soft: #3a1d1b;
+  --fl-brand-ink: #f8a29b;
+  --fl-rail-bg: #13171c;
+  --fl-rail-active: #222a35;
+  --fl-hero: linear-gradient(135deg, #1b222c 0%, #171b21 100%);
 
   --fl-red: #f87171;
   --fl-red-soft: #3a1b1b;
