@@ -37,6 +37,7 @@ import type {
   ProductView,
   RecomputeStandardsRequest,
   RepairDisplayRequest,
+  SetDisplayJobRequest,
   SetupAdminRequest,
   SetupStatus,
   SettingsPatch,
@@ -274,6 +275,26 @@ export class MockDataSource implements DataSource {
   async deletePin(id: number): Promise<void> {
     await tick();
     this.ensure().deletePin(id);
+  }
+
+  // -------------------------------------------------------------- tv displays
+
+  tvDisplays(): Promise<Display[]> {
+    return this.ok(() => this.ensure().displays);
+  }
+
+  /** Mirrors PUT /api/displays/:id/job: only the job changes; audited and pushed to the TV. */
+  setDisplayJob(id: number, req: SetDisplayJobRequest): Promise<Display> {
+    return this.ok(() => {
+      const store = this.ensure();
+      const display = store.displays.find((d) => d.id === id);
+      if (display === undefined) throw new Error('Display not found');
+      const before = { ...display };
+      display.job_number = req.job_number;
+      store.audit('job_changed', 'display', String(id), before, display);
+      store.emitDisplayUpdated(id);
+      return display;
+    });
   }
 
   // -------------------------------------------------------------------- admin

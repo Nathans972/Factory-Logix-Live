@@ -13,6 +13,7 @@ import { registerAdminSettingsRoutes } from './routes/admin/settings.js';
 import { registerAdminStandardsRoutes } from './routes/admin/standards.js';
 import { registerAdminUserRoutes } from './routes/admin/users.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerDisplayRoutes } from './routes/displays.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerPortalRoutes } from './routes/portal.js';
@@ -109,6 +110,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   await registerAuthRoutes(app, ctx);
   await registerTvRoutes(app, ctx);
   await registerPortalRoutes(app, ctx);
+  await registerDisplayRoutes(app, ctx);
   await registerAdminDisplayRoutes(app, ctx);
   await registerAdminScheduleRoutes(app, ctx);
   await registerAdminSettingsRoutes(app, ctx);

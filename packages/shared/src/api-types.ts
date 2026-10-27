@@ -225,6 +225,12 @@ export interface UpdateDisplayRequest {
   shift_length_hours?: number;
 }
 
+/** Manager-level job change for one TV (PUT /api/displays/:id/job). */
+export interface SetDisplayJobRequest {
+  /** `null` leaves the TV unassigned */
+  job_number: string | null;
+}
+
 export interface RepairDisplayRequest {
   /** the new pairing code shown on the TV */
   pairing_code: string;

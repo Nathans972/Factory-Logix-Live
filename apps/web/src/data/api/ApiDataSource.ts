@@ -36,6 +36,7 @@ import type {
   ProductView,
   RecomputeStandardsRequest,
   RepairDisplayRequest,
+  SetDisplayJobRequest,
   SetupAdminRequest,
   SetupStatus,
   SettingsPatch,
@@ -377,6 +378,16 @@ export class ApiDataSource implements DataSource {
 
   async deletePin(id: number): Promise<void> {
     await this.del<unknown>('/portal/pins/' + String(id));
+  }
+
+  // -------------------------------------------------------------- tv displays
+
+  tvDisplays(): Promise<Display[]> {
+    return this.get<Display[]>('/displays');
+  }
+
+  setDisplayJob(id: number, req: SetDisplayJobRequest): Promise<Display> {
+    return this.put<Display>('/displays/' + String(id) + '/job', req);
   }
 
   // -------------------------------------------------------------------- admin

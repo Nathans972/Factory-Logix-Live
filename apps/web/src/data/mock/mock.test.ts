@@ -4,7 +4,7 @@
  * 12 columns and legal colours, working portal views, and in-memory admin CRUD.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CellColor } from '@fld/shared';
+import type { CellColor, SseEvent } from '@fld/shared';
 import { expandBreaks } from '@fld/engine';
 import { MockDataSource } from './MockDataSource';
 import { AUTO_CLAIM_MS, MockStore } from './state';
@@ -510,6 +510,30 @@ describe('admin (in memory)', () => {
     expect(seen).toContain('display_updated');
     expect(seen).toContain('settings_updated');
     expect(seen).toContain('data_updated');
+  });
+
+  it('lets a manager change only the job a TV shows', async () => {
+    const tvs = await ds.tvDisplays();
+    const tv = tvs.find((d) => d.claimed_at !== null)!;
+    const other = JOBS.find((j) => j.job_number !== tv.job_number)!.job_number;
+    const auditBefore = (await ds.audit(1)).total;
+    const seen: SseEvent[] = [];
+    const off = ds.subscribe((e) => seen.push(e));
+
+    const changed = await ds.setDisplayJob(tv.id, { job_number: other });
+    expect(changed.job_number).toBe(other);
+    expect(changed.name).toBe(tv.name);
+    expect(changed.group_operators).toBe(tv.group_operators);
+    expect((await ds.tvDisplays()).find((d) => d.id === tv.id)!.job_number).toBe(other);
+    expect(seen.some((e) => e.type === 'display_updated' && e.display_id === tv.id)).toBe(true);
+    const log = await ds.audit(1);
+    expect(log.total).toBe(auditBefore + 1);
+    expect(log.entries[0]!.action).toBe('job_changed');
+
+    expect((await ds.setDisplayJob(tv.id, { job_number: null })).job_number).toBeNull();
+    await ds.setDisplayJob(tv.id, { job_number: tv.job_number });
+    off();
+    await expect(ds.setDisplayJob(99_999, { job_number: other })).rejects.toThrow();
   });
 });
 
