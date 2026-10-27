@@ -48,10 +48,15 @@ simulator and calculation engine instead of calling a real backend, and every pa
 
 - `/tv?demo=1` — TV dashboard, one operator per row
 - `/tv?demo=2` — TV dashboard, grouped by operation
-- `/` — manager portal shift view
+- `/` — Home: greeting, plant status and a tile per page
+- `/shift` — manager portal shift view
 - `/floor` — live floor overview
 - `/products/PB-2200` — a product's computed standards
-- `/admin` — admin screens (changes reset on reload)
+- `/displays` — change which job each TV shows
+- `/admin` — Settings (the gear in the top bar; changes reset on reload)
+
+The demo signs you in as an admin. Log out and sign in as `kpatterson` (manager) or `floorlead`
+(viewer), any password, to see what those roles see; a reload goes back to admin.
 
 ## Requirements
 
