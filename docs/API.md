@@ -40,6 +40,8 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | GET | `/api/portal/pins?operator_id=&job_number=` | viewer | | `PinListResponse` |
 | POST | `/api/portal/pins` | manager | `CreatePinRequest` | `Pin` |
 | DELETE | `/api/portal/pins/:id` | manager | | `OkResponse` |
+| GET | `/api/displays` | manager | | `Display[]` (same shape as the admin list; the manager TV displays page) |
+| PUT | `/api/displays/:id/job` | manager | `SetDisplayJobRequest` (`{ job_number: string \| null }`) | `Display` (changes only the job; audit `display.job_changed`; emits `display_updated` so the TV switches at once) |
 | GET | `/api/admin/displays` | admin | | `Display[]` |
 | POST | `/api/admin/displays/claim` | admin | `ClaimDisplayRequest` | `Display` |
 | PATCH | `/api/admin/displays/:id` | admin | `UpdateDisplayRequest` | `Display` |

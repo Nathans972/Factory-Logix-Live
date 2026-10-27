@@ -119,6 +119,9 @@ export const updateDisplaySchema = z.object({
   shift_length_hours: z.number().min(1).max(24).optional(),
 });
 
+/** Manager-level job change for one TV (PUT /api/displays/:id/job). Only the job can change here. */
+export const setDisplayJobSchema = z.object({ job_number: z.string().min(1).nullable() });
+
 export const repairDisplaySchema = z.object({ pairing_code: z.string().regex(/^\d{4}$/) });
 
 export const loginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) });

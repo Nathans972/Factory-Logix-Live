@@ -37,6 +37,7 @@ import type {
   ProductView,
   RecomputeStandardsRequest,
   RepairDisplayRequest,
+  SetDisplayJobRequest,
   SetupAdminRequest,
   SetupStatus,
   SettingsPatch,
@@ -88,6 +89,8 @@ export class MockDataSource implements DataSource {
   readonly store: MockStore;
   private live: DemoControl | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  /** demo session: null = the demo admin */
+  private sessionUserId: number | null = null;
 
   constructor(store?: MockStore) {
     this.store = store ?? new MockStore();
@@ -166,17 +169,31 @@ export class MockDataSource implements DataSource {
     });
   }
 
-  login(_req: LoginRequest): Promise<AuthMe> {
-    return this.ok(() => ({ user: this.ensure().adminUser() }));
+  /** Signing in as a seeded user (`kpatterson` manager, `floorlead` viewer) previews that role;
+      any other name signs in as the demo admin. Kept in memory only: a reload is admin again. */
+  login(req: LoginRequest): Promise<AuthMe> {
+    return this.ok(() => {
+      const store = this.ensure();
+      const name = req.username.trim().toLowerCase();
+      const match = store.users.find((u) => u.active && u.username.toLowerCase() === name);
+      this.sessionUserId = match?.id ?? null;
+      return { user: this.sessionUser() };
+    });
   }
 
   async logout(): Promise<void> {
-    // The demo has no real session: stay logged in so the portal keeps working.
+    // The demo has no real session: stay logged in (as admin) so the portal keeps working.
     await tick();
+    this.sessionUserId = null;
   }
 
   me(): Promise<AuthMe> {
-    return this.ok(() => ({ user: this.ensure().adminUser() }));
+    return this.ok(() => ({ user: this.sessionUser() }));
+  }
+
+  private sessionUser(): User {
+    const store = this.ensure();
+    return store.users.find((u) => u.id === this.sessionUserId) ?? store.adminUser();
   }
 
   // ----------------------------------------------------------------------- tv
@@ -274,6 +291,26 @@ export class MockDataSource implements DataSource {
   async deletePin(id: number): Promise<void> {
     await tick();
     this.ensure().deletePin(id);
+  }
+
+  // -------------------------------------------------------------- tv displays
+
+  tvDisplays(): Promise<Display[]> {
+    return this.ok(() => this.ensure().displays);
+  }
+
+  /** Mirrors PUT /api/displays/:id/job: only the job changes; audited and pushed to the TV. */
+  setDisplayJob(id: number, req: SetDisplayJobRequest): Promise<Display> {
+    return this.ok(() => {
+      const store = this.ensure();
+      const display = store.displays.find((d) => d.id === id);
+      if (display === undefined) throw new Error('Display not found');
+      const before = { ...display };
+      display.job_number = req.job_number;
+      store.audit('job_changed', 'display', String(id), before, display);
+      store.emitDisplayUpdated(id);
+      return display;
+    });
   }
 
   // -------------------------------------------------------------------- admin

@@ -39,6 +39,7 @@ import type {
   ProductView,
   RecomputeStandardsRequest,
   RepairDisplayRequest,
+  SetDisplayJobRequest,
   SetupAdminRequest,
   SetupStatus,
   Settings,
@@ -139,6 +140,10 @@ export interface DataSource {
   pins(q?: { operator_id?: string; job_number?: string }): Promise<PinListResponse>;
   createPin(req: CreatePinRequest): Promise<Pin>;
   deletePin(id: number): Promise<void>;
+
+  // TV displays (manager+): list the TVs and change only the job each one shows
+  tvDisplays(): Promise<Display[]>;
+  setDisplayJob(id: number, req: SetDisplayJobRequest): Promise<Display>;
 
   // admin
   displays(): Promise<Display[]>;

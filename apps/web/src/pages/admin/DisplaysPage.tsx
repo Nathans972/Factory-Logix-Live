@@ -95,7 +95,11 @@ function DisplaysPageInner() {
   const [repairCode, setRepairCode] = useState('');
   const [touched, setTouched] = useState(false);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['displays'] });
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['displays'] }),
+      qc.invalidateQueries({ queryKey: ['tvDisplays'] }),
+    ]);
 
   const claimM = useMutation({
     mutationFn: (req: ClaimDisplayRequest) => ds.claimDisplay(req),
@@ -337,7 +341,13 @@ function DisplaysPageInner() {
     <>
       <PageHeader
         title="Displays"
-        subtitle={`${displays.length} display${displays.length === 1 ? '' : 's'} · ${online} online · Every TV shows a 4-digit pairing code until it is claimed here.`}
+        subtitle={
+          <>
+            {displays.length} display{displays.length === 1 ? '' : 's'} · {online} online · Every TV shows a 4-digit
+            pairing code until it is claimed here. Managers change the job on a TV from{' '}
+            <Link to="/displays">TV displays</Link>.
+          </>
+        }
         actions={
           <>
             <Button onClick={exportCsv} disabled={displays.length === 0}>

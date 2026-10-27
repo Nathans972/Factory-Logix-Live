@@ -11,7 +11,8 @@ import { DataSourceError } from '../../../data/DataSource';
 import { formatDateTime } from '../../../lib/format';
 import { Button, Modal, Note, PageHeader, ProgressBar, StatusBadge, type BadgeTone } from '../../../ui';
 
-/** Wraps an admin-only page body; managers get a "Not allowed" note (spec 10 / 9 role gating). */
+/** Wraps an admin-only page body; managers who follow an old link get a "Not allowed" note
+    (spec 10 / 9 role gating). The Settings rail only lists pages the role can open. */
 export function AdminOnly({ title, children }: { title: string; children: ReactNode }) {
   const { user } = useAuth();
   if (!hasRole(user, 'admin')) {
@@ -19,8 +20,25 @@ export function AdminOnly({ title, children }: { title: string; children: ReactN
       <>
         <PageHeader title={title} subtitle="This page needs the admin role." />
         <Note tone="warn" title="Not allowed">
-          Your role is {user?.role ?? 'unknown'}. Managers can open <strong>Standards</strong> and{' '}
-          <strong>Sync health</strong>.
+          Your role is {user?.role ?? 'unknown'}. In Settings, managers can open <strong>Standards</strong> and{' '}
+          <strong>Sync health</strong>. To change which job a TV shows, use <strong>TV displays</strong> under
+          Production.
+        </Note>
+      </>
+    );
+  }
+  return <>{children}</>;
+}
+
+/** Same as AdminOnly for manager pages inside the production shell (TV displays). */
+export function ManagerOnly({ title, children }: { title: string; children: ReactNode }) {
+  const { user } = useAuth();
+  if (!hasRole(user, 'manager')) {
+    return (
+      <>
+        <PageHeader title={title} subtitle="This page needs the manager role." />
+        <Note tone="warn" title="Not allowed">
+          Your role is {user?.role ?? 'unknown'}. Ask an administrator for manager access.
         </Note>
       </>
     );

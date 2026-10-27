@@ -330,3 +330,160 @@ a.btn {
   flex-direction: column;
   gap: 3px;
 }
+
+/* Home (`/`): greeting card + page tiles, after the company portal's landing page. */
+.home {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+.home-hero {
+  background: var(--fl-hero);
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  box-shadow: var(--fl-shadow);
+  padding: 24px 28px;
+  margin-bottom: 24px;
+}
+.home-hero h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.home-status {
+  margin: 6px 0 0;
+  color: var(--fl-text-2);
+}
+.home-section {
+  background: var(--fl-surface);
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  box-shadow: var(--fl-shadow);
+  padding: 18px 20px 20px;
+}
+.home-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fl-text-2);
+}
+.home-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+.home-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  background: var(--fl-surface);
+  color: var(--fl-text);
+  font-weight: 400;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.12s ease;
+}
+.home-tile:hover {
+  text-decoration: none;
+  border-color: var(--fl-border-strong);
+  box-shadow: var(--fl-shadow-lg);
+  transform: translateY(-1px);
+}
+.home-tile-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.home-tile-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--fl-radius-sm);
+  background: var(--fl-brand-soft);
+  color: var(--fl-brand-ink);
+  flex: none;
+}
+.home-tile-chip {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--fl-brand-soft);
+  color: var(--fl-brand-ink);
+}
+.home-tile-title {
+  font-weight: 700;
+  font-size: 15px;
+}
+.home-tile-desc {
+  color: var(--fl-text-2);
+  font-size: 13px;
+}
+
+/* TV displays (`/displays`): one card per TV with its job and a Change job button. */
+.tv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.tv-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px;
+  background: var(--fl-surface);
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  box-shadow: var(--fl-shadow);
+}
+.tv-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 8px;
+}
+.tv-card-head h2 {
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tv-card-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fl-text-3);
+}
+.tv-card-job {
+  font-size: 17px;
+  font-weight: 700;
+}
+.tv-card-job small {
+  display: block;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fl-text-2);
+}
+.tv-card-job.none {
+  color: var(--fl-text-3);
+  font-weight: 500;
+}
+.tv-card-meta {
+  font-size: 12px;
+  color: var(--fl-text-3);
+  margin: 4px 0 12px;
+}
