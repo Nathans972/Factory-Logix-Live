@@ -18,6 +18,10 @@ export function crossesMidnight(start: string, end: string): boolean {
   return TIME_RE.test(start) && TIME_RE.test(end) && end <= start;
 }
 
+function inEffectOn(shift: ShiftDef, date: string): boolean {
+  return shift.effective_from <= date && (shift.effective_to === null || date <= shift.effective_to);
+}
+
 export function ShiftForm({
   id,
   initial,
@@ -39,12 +43,15 @@ export function ShiftForm({
 }) {
   const tz = usePlantTz();
   const today = useMemo(() => formatIsoDate(Date.now(), tz), [tz]);
+  // Days already recorded keep the version in effect then, so an edit of the one in effect today defaults
+  // to a new version from today (the API refuses its new times or days without a later date).
+  const current = initial && inEffectOn(initial, today) ? initial : null;
 
   const [name, setName] = useState(initial?.name ?? '');
   const [start, setStart] = useState(initial?.start_local ?? '07:00');
   const [end, setEnd] = useState(initial?.end_local ?? '19:00');
   const [days, setDays] = useState<number[]>(initial?.days_of_week ?? [0, 1, 2, 3, 4, 5, 6]);
-  const [from, setFrom] = useState(initial?.effective_from ?? today);
+  const [from, setFrom] = useState(current ? today : (initial?.effective_from ?? today));
   const [to, setTo] = useState(initial?.effective_to ?? '');
   const [touched, setTouched] = useState(false);
 
@@ -103,7 +110,11 @@ export function ShiftForm({
       </FieldBlock>
 
       <div className="grid-2col">
-        <Field label="Effective from" error={show('from')}>
+        <Field
+          label="Effective from"
+          hint={current ? `The current version started ${current.effective_from}.` : undefined}
+          error={show('from')}
+        >
           <Input type="date" value={from} onChange={(e) => setFrom(e.currentTarget.value)} />
         </Field>
         <Field label="Effective to" hint="Blank = no end date." error={show('to')}>

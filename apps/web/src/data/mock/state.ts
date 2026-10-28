@@ -79,6 +79,7 @@ import {
   pickEngineSettings,
 } from '@fld/shared';
 import {
+  addDays,
   buildFloorView,
   buildJobDetail,
   buildOperatorDetail,
@@ -96,6 +97,7 @@ import {
   hourColumns,
   hourStartUtc,
   listShiftInstances,
+  localDateString,
   rollingWindowColumns,
 } from '@fld/engine';
 import { CellCache } from './simulator/cellcache';
@@ -1407,10 +1409,37 @@ export class MockStore {
     return shift;
   }
 
+  /**
+   * As the API does it (spec 10.2): a later effective-from ends this version the day before (unless it
+   * ended earlier) and adds a new one, which the breaks scoped to this one apply to as well. Any other
+   * edit is in place, so it may not change the times or days of a version in effect before today.
+   */
   updateShift(id: number, req: ShiftWrite): ShiftDef {
     const idx = this.shiftDefs.findIndex((s) => s.id === id);
     if (idx < 0) throw new Error('Shift not found');
     const before = { ...this.shiftDefs[idx]! };
+    if (req.effective_from > before.effective_from) {
+      const dayBefore = addDays(req.effective_from, -1);
+      if (before.effective_to === null || before.effective_to > dayBefore) {
+        this.shiftDefs[idx] = { ...before, effective_to: dayBefore };
+      }
+      const version: ShiftDef = { id: this.id('shift'), ...req };
+      this.shiftDefs.push(version);
+      this.breakDefs = this.breakDefs.map((b) =>
+        b.shift_ids?.includes(id) && !b.shift_ids.includes(version.id) ? { ...b, shift_ids: [...b.shift_ids, version.id] } : b,
+      );
+      this.cells.clear();
+      this.audit('version', 'shift', String(version.id), before, version);
+      this.emitSettingsUpdated();
+      return version;
+    }
+    const days = (s: ShiftWrite) => [...new Set(s.days_of_week)].sort((a, b) => a - b).join(',');
+    const newTimes = req.start_local !== before.start_local || req.end_local !== before.end_local || days(req) !== days(before);
+    if (newTimes && before.effective_from < localDateString(this.now(), this.tz)) {
+      throw new Error(
+        `"${before.name}" has been in effect since ${before.effective_from}: new times or days need a later "Effective from", so the days already recorded keep the old ones`,
+      );
+    }
     const next: ShiftDef = { id, ...req };
     this.shiftDefs[idx] = next;
     this.cells.clear();

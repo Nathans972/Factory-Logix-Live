@@ -4,7 +4,7 @@
  * 12 columns and legal colours, working portal views, and in-memory admin CRUD.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CellColor, SseEvent } from '@fld/shared';
+import type { CellColor, ShiftWrite, SseEvent } from '@fld/shared';
 import { expandBreaks } from '@fld/engine';
 import { MockDataSource } from './MockDataSource';
 import { AUTO_CLAIM_MS, MockStore } from './state';
@@ -13,6 +13,7 @@ import { startLiveSimulation } from './simulator/live';
 import { mulberry32 } from './simulator/rng';
 import {
   BASE_RATES,
+  DAY_SHIFT_ID,
   FEATURED_JOB,
   JOBS,
   OPERATIONS,
@@ -564,6 +565,28 @@ describe('admin (in memory)', () => {
     off();
     const ids = seen.flatMap((e) => (e.type === 'display_updated' ? [e.display_id] : []));
     expect(ids).toEqual(expect.arrayContaining([existing.id, replacement.display!.id]));
+  });
+
+  it('versions a shift edit like the API, so the days already recorded keep their times', () => {
+    const s = new MockStore();
+    const day: ShiftWrite = {
+      name: 'Day',
+      start_local: '06:00',
+      end_local: '18:00',
+      days_of_week: [0, 1, 2, 3, 4, 5, 6],
+      effective_from: '2026-01-01',
+      effective_to: null,
+    };
+    // The Day shift has been in effect since 2026-01-01: new times need a later effective-from.
+    expect(() => s.updateShift(DAY_SHIFT_ID, day)).toThrow('need a later "Effective from"');
+    expect(s.shiftDefs.find((d) => d.id === DAY_SHIFT_ID)?.start_local).toBe('07:00');
+
+    const version = s.updateShift(DAY_SHIFT_ID, { ...day, effective_from: '2026-11-08' });
+    expect(s.shiftDefs.filter((d) => d.name === 'Day').map((d) => [d.id, d.start_local, d.effective_from, d.effective_to])).toEqual([
+      [DAY_SHIFT_ID, '07:00', '2026-01-01', '2026-11-07'],
+      [version.id, '06:00', '2026-11-08', null],
+    ]);
+    expect(s.breakDefs.find((b) => b.name === 'Lunch')?.shift_ids).toEqual([DAY_SHIFT_ID, version.id]);
   });
 });
 

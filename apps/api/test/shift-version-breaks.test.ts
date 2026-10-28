@@ -1,5 +1,5 @@
 import { pino } from 'pino';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { expandBreaks } from '@fld/engine';
 import type { BreakDef, ShiftDef, ShiftWrite } from '@fld/shared';
@@ -217,8 +217,9 @@ describe('PUT /api/admin/shifts/:id with a later effective-from', () => {
   });
 
   it('leaves the breaks alone when the edit keeps the effective-from and so updates the row in place', async () => {
+    // Only a version not in effect yet takes new times in place.
     const { app, cookie } = await boot(
-      [shift({ id: 1, name: 'Day', start_local: '07:00', end_local: '19:00' })],
+      [shift({ id: 1, name: 'Day', start_local: '07:00', end_local: '19:00', effective_from: '2099-01-01' })],
       [breakDef({ id: 1, name: 'Lunch', start_local: '11:00', shift_ids: [1] })],
     );
 
@@ -227,11 +228,36 @@ describe('PUT /api/admin/shifts/:id with a later effective-from', () => {
       start_local: '06:00',
       end_local: '18:00',
       days_of_week: ALL_DAYS,
-      effective_from: '2026-01-01',
+      effective_from: '2099-01-01',
       effective_to: null,
     });
     expect(updated.id).toBe(1);
     expect((await list<BreakDef>(app, cookie, 'breaks')).map((b) => b.shift_ids)).toEqual([[1]]);
+  });
+
+  it('keeps the end date of a version that had already ended', async () => {
+    const { app, cookie } = await boot(
+      [
+        shift({ id: 1, name: 'Day', start_local: '07:00', end_local: '19:00', effective_to: '2026-03-31' }),
+        shift({ id: 2, name: 'Day', start_local: '06:00', end_local: '18:00', effective_from: '2026-04-01' }),
+      ],
+      [],
+    );
+
+    await editShift(app, cookie, 1, {
+      name: 'Evening',
+      start_local: '18:00',
+      end_local: '23:00',
+      days_of_week: ALL_DAYS,
+      effective_from: '2026-11-08',
+      effective_to: null,
+    });
+    // Closing it the day before would put 07:00-19:00 back on every day from April on, next to 06:00-18:00.
+    expect((await list<ShiftDef>(app, cookie, 'shifts')).map((s) => [s.id, s.start_local, s.effective_from, s.effective_to])).toEqual([
+      [1, '07:00', '2026-01-01', '2026-03-31'],
+      [2, '06:00', '2026-04-01', null],
+      [3, '18:00', '2026-11-08', null],
+    ]);
   });
 
   it('records each break it changed in the audit log', async () => {
@@ -281,5 +307,60 @@ describe('PUT /api/admin/shifts/:id with a later effective-from', () => {
     // Not the old version closed with no new one, nor a new version that Lunch does not know about.
     expect((await list<ShiftDef>(app, cookie, 'shifts')).map((s) => [s.id, s.effective_to])).toEqual([[1, null]]);
     expect((await list<BreakDef>(app, cookie, 'breaks')).map((b) => b.shift_ids)).toEqual([[1]]);
+  });
+});
+
+/**
+ * Without a later effective-from the row is updated in place, and every day it covers is evaluated
+ * against it (spec 10.2): a version in effect before today must keep its times and days.
+ */
+describe('PUT /api/admin/shifts/:id without a later effective-from', () => {
+  const day = { name: 'Day', start_local: '07:00', end_local: '19:00', days_of_week: ALL_DAYS, effective_to: null };
+
+  beforeEach(() => {
+    // 15:00 on 4 November 2026 in New York, the default plant time zone.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.UTC(2026, 10, 4, 20));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function refused(stored: ShiftDef, body: ShiftWrite): Promise<void> {
+    const lunch = breakDef({ id: 1, name: 'Lunch', start_local: '11:00', shift_ids: [1] });
+    const { app, cookie, audit } = await boot([structuredClone(stored)], [lunch]);
+    const res = await app.inject({ method: 'PUT', url: '/api/admin/shifts/1', headers: { cookie }, payload: body });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json<{ message: string }>().message).toContain('need a later "Effective from"');
+    expect(await list<ShiftDef>(app, cookie, 'shifts')).toEqual([stored]);
+    expect((await list<BreakDef>(app, cookie, 'breaks')).map((b) => b.shift_ids)).toEqual([[1]]);
+    expect(audit).toEqual([]);
+  }
+
+  it.each([
+    ['times', { start_local: '06:00', end_local: '18:00', effective_from: '2026-01-01' }],
+    ['days', { days_of_week: [1, 2, 3, 4, 5], effective_from: '2026-01-01' }],
+    ['times from an earlier effective-from', { start_local: '06:00', end_local: '18:00', effective_from: '2025-06-01' }],
+  ])('refuses new %s for a version in effect before today and changes nothing', async (_what, change) => {
+    await refused(shift({ id: 1, ...day }), { ...day, ...change });
+  });
+
+  it('refuses new times for a version that started yesterday in the plant time zone', async () => {
+    const stored = shift({ id: 1, ...day, effective_from: '2026-11-03' });
+    await refused(stored, { ...day, start_local: '06:00', end_local: '18:00', effective_from: '2026-11-03' });
+  });
+
+  it('takes new times in place for a version that starts today in the plant time zone', async () => {
+    // 21:00 on 4 November in New York, already 5 November in UTC.
+    vi.setSystemTime(Date.UTC(2026, 10, 5, 2));
+    const { app, cookie } = await boot([shift({ id: 1, ...day, effective_from: '2026-11-04' })], []);
+    const updated = await editShift(app, cookie, 1, { ...day, start_local: '06:00', end_local: '18:00', effective_from: '2026-11-04' });
+    expect(updated).toEqual(shift({ id: 1, ...day, start_local: '06:00', end_local: '18:00', effective_from: '2026-11-04' }));
+  });
+
+  it('still renames a version in effect before today and moves its end date in place', async () => {
+    const { app, cookie } = await boot([shift({ id: 1, ...day })], []);
+    const updated = await editShift(app, cookie, 1, { ...day, name: 'Day shift', effective_from: '2026-01-01', effective_to: '2026-11-30' });
+    expect(updated).toEqual(shift({ id: 1, ...day, name: 'Day shift', effective_to: '2026-11-30' }));
   });
 });

@@ -723,6 +723,7 @@ Route `/admin`. Admin role only unless noted.
 
 - Plant-wide. Fields: name, start (local time), end (local time, may be next day), days of week, effective-from date, optional effective-to.
 - Editing creates a new version with a new effective-from; past shifts are always evaluated against the definition in effect on that day. Validation prevents overlapping shifts on the same day.
+- Editing the version in effect today starts the new version today unless another date is picked. Without a later effective-from, a version already in effect before today keeps its times and days (its name and dates can still change).
 - A break that applies to selected shifts keeps applying to a shift after it is edited: the new version is added to the break's `shift_ids`.
 
 ### 10.3 Breaks
