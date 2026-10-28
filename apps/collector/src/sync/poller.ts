@@ -257,6 +257,7 @@ export class Poller {
 
       const tracker = trackField ? new WatermarkTracker(trackKind, this.deps.timestamps, dataset, now) : null;
       const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField]);
+      this.deps.timestamps.setReadTime(now);
 
       const summary = await pullPages(
         this.source,
@@ -344,6 +345,7 @@ export class Poller {
         const result = await this.pullWindow(dataset, datasetMapping, settings, {
           from: now - settings.late_data_hours * HOUR_MS,
           to: now + 60_000,
+          now,
           logSource: `${dataset}:late`,
           touched,
         });
@@ -370,13 +372,13 @@ export class Poller {
   /**
    * Pull one time window on a data source's primary timestamp (used by the late-data re-pull
    * and by the backfill). Falls back to a whole-data-source pull for small dimension sources
-   * that carry no timestamp at all.
+   * that carry no timestamp at all. `now` is the poll time when the window reaches the present.
    */
   async pullWindow(
     dataset: DatasetName,
     mapping: DatasetMapping,
     settings: Settings,
-    opts: { from: number; to: number; logSource?: string; touched?: number[] },
+    opts: { from: number; to: number; now?: number; logSource?: string; touched?: number[] },
   ): Promise<{ rows: number; ingested: number; skipped: number; truncated: boolean }> {
     const logSource = opts.logSource ?? `${dataset}:window`;
     const logId = await startSyncLog(this.deps.pool, logSource);
@@ -403,6 +405,7 @@ export class Poller {
       }
 
       const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField]);
+      this.deps.timestamps.setReadTime(opts.now ?? null);
       const summary = await pullPages(
         this.source,
         { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages },

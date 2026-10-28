@@ -195,10 +195,12 @@ The `utc` and `offset_present` modes read and write exactly as before.
 **The fall-back-night rule (`local_no_offset` only):** on the one night per year clocks fall
 back, one local hour occurs twice and a naive timestamp in that hour is ambiguous. The
 collector resolves it by watching the order rows arrive in: if a row's naive timestamp is more
-than 30 minutes earlier than the previous row from the same source, it is treated as the
-*second* occurrence of that hour. In the normal case (no fall-back in progress) it resolves to
-the first (earlier) occurrence. This only matters for one night a year and does not require any
-action from you.
+than 30 minutes earlier than the previous row from the same source, the clock has gone back, and
+that row and the source's following rows in that hour are treated as the *second* occurrence. A
+row the collector reads again (the poll overlap and the late-data re-pull re-read recent rows)
+keeps the time it was given the first time. In the normal case (no fall-back in progress) it
+resolves to the first (earlier) occurrence. This only matters for one night a year and does not
+require any action from you.
 
 **Verify which mode applies** by checking the EDM type of the timestamp fields in `$metadata`
 (`Edm.DateTimeOffset` fields normally carry an offset; `Edm.DateTime` usually does not) and by

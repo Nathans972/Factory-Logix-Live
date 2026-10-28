@@ -60,9 +60,19 @@ export interface TimestampResolverOptions {
   onWarn?: (code: string, message: string) => void;
 }
 
+/** Where a source's rows have got to, for the `local_no_offset` fall-back rule (spec 5.5). */
+interface FallBackCursor {
+  /** The instant the previous row resolved to. */
+  at: number;
+  /** The clock has gone back: the source's rows are in the second pass through the repeated hour. */
+  secondPass: boolean;
+}
+
+const MAX_REPEATED_HOUR_ROWS = 50_000;
+
 /**
- * Parses FactoryLogix timestamps. Keeps the last naive value per source so that the
- * `local_no_offset` fall-back hour can be disambiguated by monotonic ordering (spec 5.5).
+ * Parses FactoryLogix timestamps. Keeps a cursor per source so that the `local_no_offset`
+ * fall-back hour can be disambiguated by monotonic ordering (spec 5.5).
  */
 export class TimestampResolver {
   mode: FlTimestampMode;
@@ -70,10 +80,15 @@ export class TimestampResolver {
   private readonly localToUtc: LocalToUtcFn;
   private readonly onWarn?: (code: string, message: string) => void;
   private readonly warned = new Set<string>();
-  private readonly lastNaive = new Map<string, number>();
+  private readonly cursors = new Map<string, FallBackCursor>();
+  /** Rows read in a repeated hour (source, natural key, naive value) -> read as the second pass. */
+  private readonly repeatedHourRows = new Map<string, boolean>();
+  private readTime: number | null = null;
 
   /** More backwards movement than this means we crossed into the repeated hour. */
   static readonly MONOTONIC_TOLERANCE_MS = 30 * 60 * 1000;
+  /** Allowance on the read time for clock differences with FactoryLogix and rows written while a pull runs. */
+  static readonly READ_TIME_SLACK_MS = 10 * 60 * 1000;
 
   constructor(opts: TimestampResolverOptions) {
     this.mode = opts.mode;
@@ -86,13 +101,23 @@ export class TimestampResolver {
     if (mode !== this.mode || timezone !== this.timezone) {
       this.mode = mode;
       this.timezone = timezone;
-      this.lastNaive.clear();
+      this.cursors.clear();
+      this.repeatedHourRows.clear();
     }
   }
 
   /** Forget the monotonic cursor (used between backfill chunks / datasets). */
   resetSource(sourceKey: string): void {
-    this.lastNaive.delete(sourceKey);
+    this.cursors.delete(sourceKey);
+  }
+
+  /**
+   * When the rows about to be parsed were fetched from FactoryLogix (null = unknown). Nothing it
+   * returns happened after that, so on the fall-back night a value whose second-pass reading is
+   * later than that is still the first pass, whatever order it arrives in.
+   */
+  setReadTime(ms: number | null): void {
+    this.readTime = ms;
   }
 
   private warn(code: string, message: string): void {
@@ -101,18 +126,45 @@ export class TimestampResolver {
     this.onWarn?.(code, message);
   }
 
-  private resolveNaive(parts: NaiveParts, sourceKey: string): number {
+  /**
+   * Spec 5.5 fall-back rule. A naive value in the hour that repeats when the clocks go back has a
+   * first-pass and a second-pass reading. A source's rows arrive in time order, so a row more than
+   * 30 minutes before the previous one means the clock has gone back: it and the source's next rows
+   * in that hour are the second pass, until a row outside the hour. Rows are compared as instants,
+   * so a row read just after the hour (02:05, then 01:55) is the second pass too. A row read again
+   * (overlap, late-data re-pull) keeps the reading it got the first time.
+   */
+  private resolveNaive(parts: NaiveParts, sourceKey: string, rowKey?: string): number {
     const naiveMs = naiveToUtcMs(parts);
     if (this.mode === 'local_no_offset') {
-      const previous = this.lastNaive.get(sourceKey);
-      const ambiguous: 'earlier' | 'later' =
-        previous !== undefined && naiveMs < previous - TimestampResolver.MONOTONIC_TOLERANCE_MS ? 'later' : 'earlier';
-      this.lastNaive.set(sourceKey, naiveMs);
-      const utc = this.localToUtc(
-        this.timezone,
-        { year: parts.year, month: parts.month, day: parts.day, hour: parts.hour, minute: parts.minute, second: parts.second },
-        { ambiguous },
-      );
+      const local = { year: parts.year, month: parts.month, day: parts.day, hour: parts.hour, minute: parts.minute, second: parts.second };
+      const earlier = this.localToUtc(this.timezone, local, { ambiguous: 'earlier' });
+      const later = this.localToUtc(this.timezone, local, { ambiguous: 'later' });
+      const cursor = this.cursors.get(sourceKey);
+      let second = false;
+      let secondPass = false;
+      if (later !== earlier) {
+        // A key whose fields were all empty identifies nothing.
+        const rowId = rowKey && /[^|]/.test(rowKey) ? `${sourceKey}\n${rowKey}\n${naiveMs}` : null;
+        const known = rowId === null ? undefined : this.repeatedHourRows.get(rowId);
+        if (known !== undefined) {
+          second = known;
+          secondPass = known;
+        } else if (this.readTime !== null && later > this.readTime + TimestampResolver.READ_TIME_SLACK_MS) {
+          // Fetched before the clock went back: the first pass. A straggler does not end the second pass.
+          secondPass = cursor?.secondPass ?? false;
+        } else {
+          second =
+            cursor !== undefined && (cursor.secondPass || earlier < cursor.at - TimestampResolver.MONOTONIC_TOLERANCE_MS);
+          secondPass = second;
+        }
+        if (rowId !== null && known === undefined) {
+          if (this.repeatedHourRows.size >= MAX_REPEATED_HOUR_ROWS) this.repeatedHourRows.clear();
+          this.repeatedHourRows.set(rowId, second);
+        }
+      }
+      const utc = second ? later : earlier;
+      this.cursors.set(sourceKey, { at: utc, secondPass });
       return utc + parts.millisecond;
     }
     if (this.mode === 'offset_present') {
@@ -124,7 +176,8 @@ export class TimestampResolver {
     return naiveMs;
   }
 
-  parse(value: unknown, sourceKey = 'default'): number | null {
+  /** `rowKey` (the row's natural key) lets a row read again resolve the same way on the fall-back night. */
+  parse(value: unknown, sourceKey = 'default', rowKey?: string): number | null {
     if (value === null || value === undefined) return null;
     if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.getTime();
     if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -153,6 +206,7 @@ export class TimestampResolver {
             millisecond: d.getUTCMilliseconds(),
           },
           sourceKey,
+          rowKey,
         );
       }
       return ms;
@@ -164,7 +218,7 @@ export class TimestampResolver {
     }
 
     const parts = parseNaiveParts(text);
-    if (parts) return this.resolveNaive(parts, sourceKey);
+    if (parts) return this.resolveNaive(parts, sourceKey, rowKey);
 
     const fallback = Date.parse(text);
     if (!Number.isNaN(fallback)) return fallback;
@@ -286,6 +340,7 @@ export function extractRecord(
 ): ExtractedRecord {
   const types = fieldTypesFor(dataset);
   const sourceKey = opts.sourceKey ?? dataset;
+  const naturalKey = buildNaturalKey(row, mapping.key);
   const values: Record<string, FieldValue> = {};
 
   for (const [target, type] of Object.entries(types)) {
@@ -306,14 +361,14 @@ export function extractRecord(
         values[target] = toBooleanValue(raw);
         break;
       case 'timestamp':
-        values[target] = opts.timestamps.parse(raw, `${sourceKey}:${target}`);
+        values[target] = opts.timestamps.parse(raw, `${sourceKey}:${target}`, naturalKey);
         break;
       default:
         values[target] = null;
     }
   }
 
-  return { natural_key: buildNaturalKey(row, mapping.key), values, raw: row };
+  return { natural_key: naturalKey, values, raw: row };
 }
 
 export function str(values: Record<string, FieldValue>, key: string): string | null {
