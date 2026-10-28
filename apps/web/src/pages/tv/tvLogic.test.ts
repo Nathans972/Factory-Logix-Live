@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TV_CELL_TEXT, TV_COLORS } from '@fld/shared';
+import { TV_CELL_TEXT, TV_COLORS, tvRegisterSchema } from '@fld/shared';
 import {
   DEVICE_TOKEN_KEY,
   cellClass,
@@ -10,6 +10,7 @@ import {
   deviceCookieString,
   formatProgressPct,
   formatStd,
+  getDeviceToken,
   operatorLabel,
   rowOperatorLabel,
   msUntilNextHour,
@@ -93,6 +94,7 @@ describe('nextDashboard', () => {
 
 describe('resolveDeviceToken', () => {
   const generate = () => 'generated-uuid';
+  const STORED = '6f1c2b0e-3d4a-4b5c-8d6e-7f8091a2b3c4';
 
   it('uses the demo shortcut only in mock mode and never persists it', () => {
     expect(resolveDeviceToken({ search: '?demo=1', stored: null, isMock: true, generate })).toEqual({
@@ -106,7 +108,7 @@ describe('resolveDeviceToken', () => {
       source: 'demo',
     });
     // outside mock mode ?demo is ignored
-    expect(resolveDeviceToken({ search: '?demo=1', stored: 'abc', isMock: false, generate }).token).toBe('abc');
+    expect(resolveDeviceToken({ search: '?demo=1', stored: STORED, isMock: false, generate }).token).toBe(STORED);
   });
 
   it('prefers ?token= over storage and persists it (spec 8.1 bookmark restore)', () => {
@@ -115,8 +117,8 @@ describe('resolveDeviceToken', () => {
   });
 
   it('falls back to the stored token, re-persisting so the cookie expiry rolls forward', () => {
-    expect(resolveDeviceToken({ search: '', stored: 'stored-one', isMock: false, generate })).toEqual({
-      token: 'stored-one',
+    expect(resolveDeviceToken({ search: '', stored: STORED, isMock: false, generate })).toEqual({
+      token: STORED,
       persist: true,
       source: 'stored',
     });
@@ -130,6 +132,26 @@ describe('resolveDeviceToken', () => {
     });
     // blank values are treated as absent
     expect(resolveDeviceToken({ search: '?token=%20', stored: '  ', isMock: false, generate }).source).toBe('generated');
+  });
+
+  it('replaces a stored token the API can never register (a `tv-…` token from a plain-HTTP page)', () => {
+    expect(resolveDeviceToken({ search: '', stored: 'tv-eutgqgrumzomvrxc2pr', isMock: false, generate })).toEqual({
+      token: 'generated-uuid',
+      persist: true,
+      source: 'generated',
+    });
+    // the mock DataSource accepts any token
+    expect(resolveDeviceToken({ search: '', stored: 'tv-eutgqgrumzomvrxc2pr', isMock: true, generate }).source).toBe('stored');
+  });
+});
+
+describe('getDeviceToken', () => {
+  it('generates a fresh v4 UUID the API accepts', () => {
+    const a = getDeviceToken(false);
+    const b = getDeviceToken(false);
+    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(tvRegisterSchema.safeParse({ device_token: a }).success).toBe(true);
+    expect(b).not.toBe(a);
   });
 });
 

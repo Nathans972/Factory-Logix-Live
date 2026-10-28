@@ -95,8 +95,9 @@ describe('scenario 15: pairing', () => {
     const ds = new MockDataSource();
 
     // First boot: no stored token, so the TV generates one and persists it.
-    const first = resolveDeviceToken({ search: '', stored: null, isMock: false, generate: () => 'tv-0f3a9c2e' });
-    expect(first).toEqual({ token: 'tv-0f3a9c2e', persist: true, source: 'generated' });
+    const generated = '0f3a9c2e-5b1d-4e7a-9c2f-3a8b6d4e1f07';
+    const first = resolveDeviceToken({ search: '', stored: null, isMock: false, generate: () => generated });
+    expect(first).toEqual({ token: generated, persist: true, source: 'generated' });
     const token = first.token;
 
     let state = await ds.tvRegister(token);

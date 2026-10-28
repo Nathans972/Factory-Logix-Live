@@ -129,6 +129,9 @@ export function nextHourBoundary(now: number, tz: string): number {
 
 export type TokenSource = 'demo' | 'query' | 'stored' | 'generated';
 
+/** Mirrors `tvRegisterSchema`: the API only registers a UUID (`displays.device_token` is a uuid column). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface TokenResolution {
   token: string;
   /** whether the token should be written to localStorage + cookie */
@@ -150,6 +153,8 @@ export interface ResolveTokenInput {
  * Identity resolution (spec 8.1):
  *   `?demo=N` in mock mode (never persisted) → `?token=<uuid>` (persisted) →
  *   stored token (re-persisted so the cookie expiry rolls forward) → a fresh UUID.
+ * Outside mock mode a stored token that is not a UUID can never register, so it is replaced: older
+ * builds stored a `tv-…` token on TVs that loaded the page over plain HTTP.
  */
 export function resolveDeviceToken(input: ResolveTokenInput): TokenResolution {
   const params = new URLSearchParams(input.search.startsWith('?') ? input.search.slice(1) : input.search);
@@ -163,7 +168,7 @@ export function resolveDeviceToken(input: ResolveTokenInput): TokenResolution {
   if (fromQuery) return { token: fromQuery, persist: true, source: 'query' };
 
   const stored = (input.stored ?? '').trim();
-  if (stored) return { token: stored, persist: true, source: 'stored' };
+  if (stored && (input.isMock || UUID_RE.test(stored))) return { token: stored, persist: true, source: 'stored' };
 
   return { token: input.generate(), persist: true, source: 'generated' };
 }
@@ -226,13 +231,18 @@ export function persistDeviceToken(token: string): void {
   }
 }
 
+/**
+ * A random v4 UUID. Built from `crypto.getRandomValues()` because `crypto.randomUUID()` only exists
+ * in secure contexts (HTTPS or localhost) and TVs load the page over plain HTTP; one path everywhere,
+ * so development exercises what the TVs run. No Math.random fallback: the token is the TV's only
+ * credential.
+ */
 function randomToken(): string {
-  try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  } catch {
-    /* fall through */
-  }
-  return `tv-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** Resolve (and persist) this device's token. Safe to call outside a browser. */
