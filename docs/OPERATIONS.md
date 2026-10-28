@@ -6,7 +6,7 @@ backfill, standards recompute, disk sizing, and troubleshooting.
 ## Backups
 
 Everything the application knows lives in one PostgreSQL database (the `db` service, backed by
-the named volume `fld-db-data`). Back it up on a schedule.
+the Compose volume `fld-db-data`). Back it up on a schedule.
 
 ### Logical backup (`pg_dump`) — recommended for routine backups
 
@@ -42,17 +42,32 @@ failed nights never delete the dumps you still have.
 ### Volume backup — for full disaster-recovery snapshots
 
 Stop the stack (or at least `db`) before copying the volume so files are not mid-write, then
-back up the Docker volume:
+back up the Docker volume. Run this in the project directory:
 
 ```bash
 docker compose stop
-docker run --rm -v fld-db-data:/data -v "$(pwd)/backups":/backup alpine \
-  tar czf /backup/fld-db-data-$(date +%Y%m%d).tgz -C /data .
+docker compose run --rm -v "$(pwd)/backups":/backup db \
+  tar czf /backup/fld-db-data-$(date +%Y%m%d).tgz -C /var/lib/postgresql/data .
 docker compose start
 ```
 
-(The volume name may be prefixed with your Compose project name — check with
-`docker volume ls`.)
+`docker compose run` starts a one-off `db` container on the volume the database really uses,
+whatever Docker named it. That isn't `fld-db-data`: Compose puts the project name in front
+(`factory-logix-live_fld-db-data` for the clone in `docs/INSTALL.md`). Don't replace it with a
+`docker run` or `docker volume` command that names the volume: given a name that doesn't exist,
+Docker quietly makes a new, empty volume by that name and backs up or restores that one
+instead. The project name comes from the project directory's name, so don't rename that
+directory either: Compose would start the database on a new, empty volume.
+
+Then check that the archive holds the database. This lists its `PG_VERSION` files, and prints
+nothing for an empty archive:
+
+```bash
+tar tzf backups/fld-db-data-YYYYMMDD.tgz | grep PG_VERSION
+```
+
+Archives made with this section's earlier commands, which used the bare name `fld-db-data`,
+can be empty: check those too.
 
 ## Restore
 
@@ -68,15 +83,21 @@ docker compose up -d
 Keep the single quotes: inside them the `db` container fills in `POSTGRES_USER` and
 `POSTGRES_DB` from your `.env`. Your own shell doesn't have them, and would pass empty values.
 
-**From a volume tarball:** stop the stack, remove the existing volume, recreate it and extract
-the tarball into it, then start the stack again:
+**From a volume tarball:** in the project directory, first check that the archive holds a
+database:
 
 ```bash
-docker compose down
-docker volume rm fld-db-data
-docker volume create fld-db-data
-docker run --rm -v fld-db-data:/data -v "$(pwd)/backups":/backup alpine \
-  tar xzf /backup/fld-db-data-YYYYMMDD.tgz -C /data
+tar tzf backups/fld-db-data-YYYYMMDD.tgz | grep PG_VERSION
+```
+
+If that prints nothing, stop here: the commands below delete the database you have now, and an
+empty archive puts nothing back. Otherwise stop the stack and remove its volume, extract the
+tarball into a new one, then start the stack again:
+
+```bash
+docker compose down --volumes
+docker compose run --rm -v "$(pwd)/backups":/backup db \
+  tar xzf /backup/fld-db-data-YYYYMMDD.tgz -C /var/lib/postgresql/data
 docker compose up -d
 ```
 
