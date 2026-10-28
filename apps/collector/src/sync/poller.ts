@@ -129,6 +129,23 @@ export class Poller {
   }
 
   /**
+   * The persisted timestamp watermark to poll from. Values after the poll time never count (see
+   * `WatermarkTracker`), so a watermark ahead of the poll time was stored before that rule (a row
+   * stamped in the future) or the clock went back. Polling from it would skip every new row, and
+   * since a watermark never moves backwards it would stay; the start of the first-run lookback
+   * replaces it.
+   */
+  private usableStoredMs(dataset: DatasetName, storedMs: number | null, now: number): number | null {
+    if (storedMs === null || storedMs <= now) return storedMs;
+    const restart = now - FIRST_RUN_LOOKBACK_MS;
+    this.deps.log.warn(
+      { dataset, watermark: new Date(storedMs).toISOString(), restart_from: new Date(restart).toISOString() },
+      'stored watermark is ahead of the poll time; polling again from the first-run lookback',
+    );
+    return restart;
+  }
+
+  /**
    * One full pass over every mapped data source, in order. A data source that fails is recorded
    * in its own sync_state / sync_log row and the pass goes on with the next one, unless
    * FactoryLogix itself is down.
@@ -198,6 +215,8 @@ export class Poller {
       const stored = parseStoredWatermark(state?.watermark ?? null, plan.watermarkKind);
       /** The timestamp the persisted watermark represents, whichever mode produced it. */
       let storedMs: number | null = null;
+      /** The persisted watermark was ahead of the poll time and `storedMs` replaces it. */
+      let replaceStored = false;
       const useWatermark =
         plan.watermarkField !== null && (plan.watermarkKind !== 'number' || stored.numeric !== null || plan.timestampField === null);
 
@@ -205,8 +224,9 @@ export class Poller {
         trackField = plan.watermarkField;
         orderBy = `${plan.watermarkField} asc`;
         if (plan.watermarkKind === 'timestamp') {
-          storedMs = stored.ms;
-          const since = (stored.ms ?? now - FIRST_RUN_LOOKBACK_MS) - overlapMs;
+          storedMs = this.usableStoredMs(dataset, stored.ms, now);
+          replaceStored = storedMs !== stored.ms;
+          const since = (storedMs ?? now - FIRST_RUN_LOOKBACK_MS) - overlapMs;
           filter = cmp(plan.watermarkField, 'ge', this.source.literal(mapping.entity_set, plan.watermarkField, { kind: 'timestamp', ms: since }));
         } else if (plan.watermarkKind === 'number' && stored.numeric !== null) {
           filter = cmp(
@@ -222,7 +242,9 @@ export class Poller {
         trackKind = 'timestamp';
         orderBy = `${plan.timestampField} asc`;
         // Window mode always persists an ISO timestamp, even when the mapped watermark is an id.
-        storedMs = parseStoredWatermark(state?.watermark ?? null, 'timestamp').ms;
+        const persistedMs = parseStoredWatermark(state?.watermark ?? null, 'timestamp').ms;
+        storedMs = this.usableStoredMs(dataset, persistedMs, now);
+        replaceStored = storedMs !== persistedMs;
         const since = (storedMs ?? now - FIRST_RUN_LOOKBACK_MS) - overlapMs;
         filter = cmp(plan.timestampField, 'ge', this.source.literal(mapping.entity_set, plan.timestampField, { kind: 'timestamp', ms: since }));
       } else {
@@ -233,7 +255,7 @@ export class Poller {
         this.deps.log.warn({ dataset, entity_set: mapping.entity_set }, 'no watermark or timestamp mapped; pulling the whole data source');
       }
 
-      const tracker = trackField ? new WatermarkTracker(trackKind, this.deps.timestamps, dataset) : null;
+      const tracker = trackField ? new WatermarkTracker(trackKind, this.deps.timestamps, dataset, now) : null;
       const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField]);
 
       const summary = await pullPages(
@@ -263,6 +285,8 @@ export class Poller {
       if (watermark !== null && trackKind === 'timestamp' && storedMs !== null && tracker && tracker.maxMs !== null && tracker.maxMs < storedMs) {
         watermark = null;
       }
+      // A watermark that was ahead of the poll time is replaced even when nothing newer came in.
+      if (watermark === null && replaceStored && storedMs !== null) watermark = new Date(storedMs).toISOString();
       await recordSyncSuccess(this.deps.pool, dataset, {
         watermark,
         rows: out.rows,

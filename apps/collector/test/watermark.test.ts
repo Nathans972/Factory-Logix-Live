@@ -79,6 +79,18 @@ describe('WatermarkTracker', () => {
     expect(tracker.serialize()).toBe('2025-01-01T00:00:00.000Z');
   });
 
+  it('ignores timestamps after the poll time, so one future-dated row cannot carry the watermark past it', () => {
+    const now = Date.UTC(2026, 5, 2, 12, 0, 0);
+    const tracker = new WatermarkTracker('timestamp', utcResolver(), 'unit_steps', now);
+    tracker.observe('2026-06-03T11:59:00Z'); // a handheld whose clock is a day ahead
+    tracker.observe('9999-12-31T00:00:00Z'); // a placeholder date
+    expect(tracker.serialize()).toBeNull();
+    tracker.observe('2026-06-02T11:58:00Z');
+    expect(tracker.serialize()).toBe('2026-06-02T11:58:00.000Z');
+    tracker.observe('2026-06-02T12:00:00Z'); // the poll time itself still counts
+    expect(tracker.maxMs).toBe(now);
+  });
+
   it('compares numeric ids as numbers, not text, and skips non-numeric values', () => {
     const tracker = new WatermarkTracker('number', utcResolver(), 'defects');
     tracker.observe('9');

@@ -117,9 +117,11 @@ history on every poll (spec 4.5):
 - **Watermark mode** (preferred): you pick a `watermark_field` — a timestamp or
   monotonically-increasing ID field, e.g. `ModifiedDate`. Each poll asks FactoryLogix for rows
   with `watermark_field >= last_watermark - overlap`, in ascending order. After a successful
-  pull the watermark advances to the maximum value seen. The overlap (`poll_overlap_minutes`,
-  default 10) re-fetches a few extra minutes each time so nothing is lost to clock skew; upserts
-  by natural key make the re-fetched rows harmless.
+  pull the watermark advances to the maximum value seen. Timestamps after the time of the poll
+  don't count, so one row stamped in the future (a station clock that is wrong, a 9999-12-31
+  placeholder) is still ingested but can't make later polls skip new rows. The overlap
+  (`poll_overlap_minutes`, default 10) re-fetches a few extra minutes each time so nothing is
+  lost to clock skew; upserts by natural key make the re-fetched rows harmless.
 - **Time-window mode**: choose "none" for the watermark field in step 3 of the wizard. The
   collector instead filters on that dataset's primary timestamp (`complete_ts`/`start_ts` for
   unit steps, `found_ts` for defects, `modified_at`/`created_at` for work orders) using the

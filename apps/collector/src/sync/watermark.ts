@@ -24,7 +24,12 @@ export function watermarkKindFromValue(value: unknown): WatermarkKind {
   return 'string';
 }
 
-/** Tracks the maximum watermark value seen during a pull. */
+/**
+ * Tracks the maximum watermark value seen during a pull. A timestamp after `notAfterMs` (the
+ * poll time) does not count: one row stamped in the future (a station with a wrong clock, a
+ * 9999-12-31 placeholder) would carry the watermark past rows that have not happened yet, and
+ * every later poll would filter them out. The row itself is still ingested.
+ */
 export class WatermarkTracker {
   private maxNumeric: number | null = null;
   private maxString: string | null = null;
@@ -33,13 +38,15 @@ export class WatermarkTracker {
     public kind: WatermarkKind,
     private readonly timestamps: TimestampResolver,
     private readonly sourceKey: string,
+    private readonly notAfterMs: number | null = null,
   ) {}
 
   observe(raw: unknown): void {
     if (raw === null || raw === undefined) return;
     if (this.kind === 'timestamp') {
       const ms = this.timestamps.parse(raw, `${this.sourceKey}:watermark`);
-      if (ms !== null && (this.maxNumeric === null || ms > this.maxNumeric)) this.maxNumeric = ms;
+      if (ms === null || (this.notAfterMs !== null && ms > this.notAfterMs)) return;
+      if (this.maxNumeric === null || ms > this.maxNumeric) this.maxNumeric = ms;
       return;
     }
     if (this.kind === 'number') {

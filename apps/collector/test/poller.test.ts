@@ -160,6 +160,51 @@ describe('sync_log row counts', () => {
   });
 });
 
+describe('a watermark ahead of the poll time', () => {
+  const t0 = Date.parse('2025-03-04T12:00:00Z');
+  const quiet = { ...settings, late_data_hours: 0 };
+
+  it('is never stored, for a watermark field (work_orders) or a time window (unit_steps); the row is still ingested', async () => {
+    const { poller, db } = harness({
+      WorkOrders: [
+        { Job: 'J-1', Product: 'P-1', Qty: 10, Modified: '2025-03-04T11:58:00Z' },
+        { Job: 'J-2', Product: 'P-1', Qty: 5, Modified: '9999-12-31T00:00:00Z' },
+      ],
+      UnitSteps: [
+        { Id: 'S-1', Unit: 'U-1', Job: 'J-1', Op: 'Weld', User: 'ann', Start: '2025-03-04T11:50:00Z', Done: '2025-03-04T11:55:00Z' },
+        { Id: 'S-2', Unit: 'U-2', Job: 'J-1', Op: 'Weld', User: 'ann', Start: '2025-03-05T11:50:00Z', Done: '2025-03-05T11:59:00Z' },
+      ],
+    });
+    expect((await poller.pollOnce(mapping, quiet, t0)).ok).toBe(true);
+    expect(db.state.get('work_orders')?.watermark).toBe('2025-03-04T11:58:00.000Z');
+    expect(db.state.get('unit_steps')?.watermark).toBe('2025-03-04T11:55:00.000Z');
+    expect(db.log.find((e) => e.source === 'work_orders')).toMatchObject({ status: 'ok', rows: 2, ingested: 2 });
+  });
+
+  it('already stored (a 9999-12-31 placeholder) is replaced, polling again from the first-run lookback', async () => {
+    const { poller, db, src } = harness({ WorkOrders: [{ Job: 'J-1', Product: 'P-1', Qty: 10, Modified: '2025-03-04T11:58:00Z' }] });
+    for (const source of ['work_orders', 'unit_steps']) {
+      db.state.set(source, {
+        source,
+        watermark: '9999-12-31T00:00:00.000Z',
+        last_success_at: null,
+        last_error: null,
+        consecutive_failures: 0,
+        rows_last_poll: null,
+        duration_ms_last_poll: null,
+        backfill_progress: null,
+      });
+    }
+    expect((await poller.pollOnce(mapping, quiet, t0)).ok).toBe(true);
+
+    const since = new Date(t0 - 2 * HOUR - 10 * 60_000).toISOString();
+    expect(src.requests.map((r) => r.filter)).toEqual([`Modified ge ${since}`, `Done ge ${since}`]);
+    // work_orders moves to the row it saw; unit_steps saw nothing and keeps the lookback start.
+    expect(db.state.get('work_orders')?.watermark).toBe('2025-03-04T11:58:00.000Z');
+    expect(db.state.get('unit_steps')?.watermark).toBe(new Date(t0 - 2 * HOUR).toISOString());
+  });
+});
+
 describe('late-data re-pull backoff', () => {
   it('waits an hour, then doubles after each further failure up to 6 hours', () => {
     expect(latePullWaitMs(0)).toBe(HOUR);

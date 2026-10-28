@@ -228,11 +228,13 @@ on each poll:
     store raw payload in raw_events                // only when new or changed (raw_event_hashes)
     if rows.length < page_size: break
     offset += page_size
-  watermark[S] = max watermark value seen (only after the whole pull succeeds)
+  watermark[S] = max watermark value seen, not counting timestamps after the poll time
+                 (only after the whole pull succeeds)
   record poll stats (rows, ingested, skipped, duration, status) in sync_log
 ```
 
 Rules:
+- A row stamped in the future (a station with a wrong clock, a 9999-12-31 placeholder) is ingested but does not move a timestamp watermark: a watermark ahead of real time would make every later poll skip new rows. A stored watermark found ahead of the poll time is replaced; that poll reads from the first-run lookback (2 h).
 - If a data source has no usable watermark field, use a time window on the primary timestamp with the same overlap, and additionally re-pull the last `settings.late_data_hours` (default 24) once per hour to catch late updates (defect closed later, unit reworked).
 - Page size and overlap are settings. Keep pages small (500) so no single query is heavy.
 - Poll data sources sequentially, not in parallel, to keep FactoryLogix load flat.
