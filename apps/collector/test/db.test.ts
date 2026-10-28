@@ -36,6 +36,46 @@ describe('bulkUpsert', () => {
     expect(calls[0]!.params).toEqual(['jdoe', null, 'asmith', 'A Smith']);
   });
 
+  it('onlyIfChanged skips the update when no update column changed', async () => {
+    const { db, calls } = fakeDb();
+    await bulkUpsert(db, {
+      table: 'defects',
+      columns: ['natural_key', 'found_ts', 'status', 'fl_modified_at'],
+      rows: [['d1', 1, 'open', 2]],
+      conflict: ['natural_key', 'found_ts'],
+      update: ['status', 'fl_modified_at'],
+      extraSet: ['updated_at = now()'],
+      onlyIfChanged: true,
+    });
+    expect(calls[0]!.sql).toBe(
+      'INSERT INTO defects (natural_key, found_ts, status, fl_modified_at) VALUES ($1, $2, $3, $4)' +
+        ' ON CONFLICT (natural_key, found_ts) DO UPDATE SET status = EXCLUDED.status, fl_modified_at = EXCLUDED.fl_modified_at, updated_at = now()' +
+        ' WHERE (defects.status, defects.fl_modified_at) IS DISTINCT FROM (EXCLUDED.status, EXCLUDED.fl_modified_at)',
+    );
+  });
+
+  it('onlyIfChanged is ANDed with an explicit where and ignored for DO NOTHING', async () => {
+    const { db, calls } = fakeDb();
+    await bulkUpsert(db, {
+      table: 't',
+      columns: ['a', 'b'],
+      rows: [[1, 2]],
+      conflict: ['a'],
+      update: ['b'],
+      where: 't.b < EXCLUDED.b',
+      onlyIfChanged: true,
+    });
+    expect(calls[0]!.sql).toContain(' DO UPDATE SET b = EXCLUDED.b WHERE (t.b < EXCLUDED.b) AND ((t.b) IS DISTINCT FROM (EXCLUDED.b))');
+    await bulkUpsert(db, { table: 't', columns: ['a'], rows: [[1]], conflict: ['a'], update: [], onlyIfChanged: true });
+    expect(calls[1]!.sql).toMatch(/ON CONFLICT \(a\) DO NOTHING$/);
+  });
+
+  it('leaves the DO UPDATE unconditional without onlyIfChanged', async () => {
+    const { db, calls } = fakeDb();
+    await bulkUpsert(db, { table: 't', columns: ['a', 'b'], rows: [[1, 2]], conflict: ['a'], update: ['b'] });
+    expect(calls[0]!.sql).toMatch(/DO UPDATE SET b = EXCLUDED\.b$/);
+  });
+
   it('falls back to DO NOTHING when nothing is updated', async () => {
     const { db, calls } = fakeDb();
     await bulkUpsert(db, { table: 't', columns: ['a'], rows: [[1]], conflict: ['a'], update: [] });

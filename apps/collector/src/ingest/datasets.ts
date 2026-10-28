@@ -145,6 +145,9 @@ export class Ingestor {
           'fl_modified_at',
         ],
         extraSet: ['updated_at = now()'],
+        // Re-reads (overlap, late data, backfill) return mostly unchanged rows; leaving them alone
+        // keeps updated_at meaning "last changed", which the nightly standards job relies on.
+        onlyIfChanged: true,
       });
       await insertRawEvents(client, raw);
     });
@@ -293,6 +296,7 @@ export class Ingestor {
           ...(withSeq ? ['operation_seq'] : []),
         ],
         extraSet: ['updated_at = now()'],
+        onlyIfChanged: true,
       });
       if (!routesMapped) await upsertRoutesDerived(client, routes);
       await insertRawEvents(client, raw);
@@ -394,6 +398,7 @@ export class Ingestor {
         conflict: ['natural_key', 'found_ts'],
         update: ['unit_id', 'job_number', 'operation_id', 'operator_id', 'defect_code', 'description', 'status', 'fl_modified_at'],
         extraSet: ['updated_at = now()'],
+        onlyIfChanged: true,
       });
       await insertRawEvents(client, raw);
     });
