@@ -1333,7 +1333,9 @@ export class MockStore {
       if (rec.display_id === temp.id) this.devices.set(token, { ...rec, display_id: id });
     }
     this.audit('repair', 'display', String(id), before, display);
+    // Both, like the API: until it refetches, the TV knows itself as the temporary display.
     this.emitDisplayUpdated(id);
+    this.emitDisplayUpdated(temp.id);
     return display;
   }
 

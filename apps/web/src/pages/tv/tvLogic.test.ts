@@ -20,6 +20,7 @@ import {
   resolveDeviceToken,
   TV_STYLE_VARS,
   nextDashboard,
+  shouldRefetch,
   tvScreen,
 } from './tvLogic';
 import type { Display, TvDashboard, TvState } from '@fld/shared';
@@ -89,6 +90,20 @@ describe('nextDashboard', () => {
     expect(nextDashboard(dash('J-100'), tvStateWith({ job_status: 'error' }, { job_number: 'J-200' }))).toBeNull();
     expect(nextDashboard(dash('J-100'), tvStateWith({ job_status: 'not_found' }))).toBeNull();
     expect(nextDashboard(dash('J-100'), tvStateWith({ status: 'unassigned', job_status: null }, { job_number: null }))).toBeNull();
+  });
+});
+
+describe('shouldRefetch', () => {
+  it('acts on new data and sync health, and on display changes only for its own display', () => {
+    expect(shouldRefetch({ type: 'data_updated', at: 1, hours: [] }, 7)).toBe(true);
+    expect(shouldRefetch({ type: 'sync_health', at: 1, status: 'ok', delayed: false }, 7)).toBe(true);
+    expect(shouldRefetch({ type: 'display_updated', at: 1, display_id: 7 }, 7)).toBe(true);
+    // Another TV registering (anyone may) or being edited is not news to this one.
+    expect(shouldRefetch({ type: 'display_updated', at: 1, display_id: 8 }, 7)).toBe(false);
+    // Before its first response the TV cannot tell, so any display change counts.
+    expect(shouldRefetch({ type: 'display_updated', at: 1, display_id: 8 }, null)).toBe(true);
+    expect(shouldRefetch({ type: 'settings_updated', at: 1 }, 7)).toBe(false);
+    expect(shouldRefetch({ type: 'heartbeat', at: 1 }, 7)).toBe(false);
   });
 });
 

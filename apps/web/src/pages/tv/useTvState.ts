@@ -2,8 +2,8 @@
  * TV lifecycle hook (spec 8.1, 8.2, 8.4).
  *
  * - resolves the device identity once and registers with the backend on mount
- * - refetches `tvState` every 60 s and on `data_updated` / `display_updated` / `sync_health`, and
- *   registers the same token again when the server does not know it (404)
+ * - refetches `tvState` every 60 s, on `data_updated` / `sync_health` and on a `display_updated`
+ *   for its own display, and registers the same token again when the server does not know it (404)
  * - re-renders at the top of every plant-local hour so the rolling window rolls without data
  * - keeps the last good dashboard while refetching (no flicker) and tracks the offline/delayed
  *   banner timestamps
@@ -12,16 +12,14 @@
  * TV has no dependency on it.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SseEvent, TvDashboard, TvState } from '@fld/shared';
+import type { TvDashboard, TvState } from '@fld/shared';
 import { IS_MOCK } from '../../data';
 import { DataSourceError } from '../../data/DataSource';
 import { useDataSource } from '../../data/DataSourceContext';
-import { getDeviceToken, msUntilNextHour, nextDashboard, tvDelay } from './tvLogic';
+import { getDeviceToken, msUntilNextHour, nextDashboard, shouldRefetch, tvDelay } from './tvLogic';
 
 /** Fallback poll interval (spec 8.4: 60 s when SSE is unavailable). */
 const POLL_MS = 60_000;
-
-const REFETCH_ON: SseEvent['type'][] = ['data_updated', 'display_updated', 'sync_health'];
 
 export interface TvViewState {
   token: string;
@@ -65,9 +63,12 @@ export function useTvState(): TvViewState {
   const aliveRef = useRef(true);
   const inFlightRef = useRef(false);
   const offlineRef = useRef<number | null>(null);
+  /** this TV's display, from the last successful response; null until there is one */
+  const displayIdRef = useRef<number | null>(null);
 
   const apply = useCallback((next: TvState) => {
     if (!aliveRef.current) return;
+    displayIdRef.current = next.display?.id ?? null;
     setState(next);
     // Only a successful response changes the dashboard, so an outage leaves the last one on
     // screen (spec 8.2) while an admin job change swaps it on the next fetch.
@@ -122,7 +123,7 @@ export function useTvState(): TvViewState {
 
     const timer = window.setInterval(() => void refresh(), POLL_MS);
     const unsubscribe = ds.subscribe((e) => {
-      if (REFETCH_ON.includes(e.type)) void refresh();
+      if (shouldRefetch(e, displayIdRef.current)) void refresh();
     });
 
     return () => {

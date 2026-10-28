@@ -154,7 +154,8 @@ export interface TvState {
 
 /**
  * `/api/events` needs no login, so an event must never carry a TV's `device_token`: it is the only
- * credential the TV endpoints check. A TV refetches its own state on any `display_updated`.
+ * credential the TV endpoints check. A TV refetches its state on a `display_updated` for its own
+ * `display_id` only: one is sent for every display, each new TV that registers included.
  */
 export type SseEvent =
   | { type: 'data_updated'; at: UtcMs; hours: UtcMs[] }

@@ -552,6 +552,19 @@ describe('admin (in memory)', () => {
     off();
     await expect(ds.setDisplayJob(99_999, { job_number: other })).rejects.toThrow();
   });
+
+  it('announces both displays on a re-pair, like the API, so the TV on the temporary one refetches', async () => {
+    const token = () => 'repair-' + Math.random().toString(36).slice(2);
+    const first = await ds.tvRegister(token());
+    const existing = await ds.claimDisplay({ pairing_code: first.pairing_code, name: 'Re-pair test' });
+    const replacement = await ds.tvRegister(token());
+    const seen: SseEvent[] = [];
+    const off = ds.subscribe((e) => seen.push(e));
+    await ds.repairDisplay(existing.id, { pairing_code: replacement.pairing_code });
+    off();
+    const ids = seen.flatMap((e) => (e.type === 'display_updated' ? [e.display_id] : []));
+    expect(ids).toEqual(expect.arrayContaining([existing.id, replacement.display!.id]));
+  });
 });
 
 describe('live simulation', () => {
