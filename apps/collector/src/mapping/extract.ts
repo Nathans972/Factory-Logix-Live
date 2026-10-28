@@ -254,10 +254,23 @@ export function getField(row: Record<string, unknown>, field: string): unknown {
   return undefined;
 }
 
+/** Half of a UTF-16 surrogate pair without the other half. */
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * Text as PostgreSQL can store it. It refuses NUL (U+0000) in text and jsonb, and jsonb refuses
+ * half of a surrogate pair; FactoryLogix stores both (NUL padding from fixed-width columns and
+ * scanners, an emoji cut in two by a column's length). One such value would fail its whole page
+ * on every poll. NUL is dropped and half a pair becomes U+FFFD.
+ */
+export function storableText(value: string): string {
+  return value.replaceAll('\u0000', '').replace(LONE_SURROGATE_RE, '\u{FFFD}');
+}
+
 export function toStringValue(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string') {
-    const trimmed = value.trim();
+    const trimmed = storableText(value).trim();
     return trimmed === '' ? null : trimmed;
   }
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null;
@@ -303,7 +316,7 @@ export function buildNaturalKey(row: Record<string, unknown>, keyFields: string[
       if (value === null || value === undefined) return '';
       if (value instanceof Date) return value.toISOString();
       if (typeof value === 'object') return JSON.stringify(value);
-      return String(value).trim();
+      return storableText(String(value)).trim();
     })
     .join('|');
 }

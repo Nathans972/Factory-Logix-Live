@@ -6,8 +6,10 @@ import {
   extractRecord,
   getField,
   selectFieldsFor,
+  storableText,
   toBooleanValue,
   toNumberValue,
+  toStringValue,
 } from '../src/mapping/extract.js';
 
 const utcResolver = () => new TimestampResolver({ mode: 'utc', timezone: 'America/New_York' });
@@ -60,6 +62,15 @@ describe('field extraction', () => {
     expect(toNumberValue('12.5')).toBe(12.5);
     expect(toNumberValue('abc')).toBeNull();
   });
+
+  it('drops NUL and turns half of a surrogate pair into U+FFFD, which PostgreSQL can store', () => {
+    expect(storableText('Bracket\u0000\u0000')).toBe('Bracket');
+    expect(storableText('Scratch \ud83d')).toBe('Scratch \u{FFFD}');
+    expect(storableText('\ude2c Scratch')).toBe('\u{FFFD} Scratch');
+    expect(storableText('Scratch 😬')).toBe('Scratch 😬');
+    expect(toStringValue(' Bracket \u0000')).toBe('Bracket');
+    expect(toStringValue('\u0000\u0000')).toBeNull();
+  });
 });
 
 describe('natural keys', () => {
@@ -70,6 +81,10 @@ describe('natural keys', () => {
 
   it('uses an empty segment for missing key values', () => {
     expect(buildNaturalKey({ A: 'x' }, ['A', 'B'])).toBe('x|');
+  });
+
+  it('keeps only text PostgreSQL can store', () => {
+    expect(buildNaturalKey({ A: 'J-1 \u0000', B: 'Solder \ud83d' }, ['A', 'B'])).toBe('J-1|Solder \u{FFFD}');
   });
 
   it('collects select fields from mapped + key + watermark fields', () => {

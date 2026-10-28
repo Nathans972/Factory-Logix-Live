@@ -172,6 +172,12 @@ A row that arrives without one of its required target fields (or whose product o
 cannot be resolved) is skipped rather than stored half-filled. Admin > Sync shows the skipped
 count per pull; if it stays above zero, check the mapping of the required fields.
 
+Text values are trimmed. FactoryLogix can hold characters PostgreSQL cannot store: NUL padding
+from fixed-width columns or scanners, and half of an emoji where a column cut a value to length.
+The collector drops NUL characters and stores half an emoji as `�` (U+FFFD), in the mapped
+fields, the natural key and the raw payload, so `Bracket` followed by NUL padding is stored as
+`Bracket`.
+
 ## Timestamp modes
 
 FactoryLogix may return timestamps in different shapes depending on version and configuration.

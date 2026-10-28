@@ -1,6 +1,6 @@
 /** Watermark handling for the incremental poll (spec 4.5). Stored as text in sync_state. */
 import { edmTypeToKind } from '@fld/shared';
-import type { TimestampResolver } from '../mapping/extract.js';
+import { storableText, type TimestampResolver } from '../mapping/extract.js';
 
 export type WatermarkKind = 'timestamp' | 'number' | 'string';
 
@@ -54,7 +54,8 @@ export class WatermarkTracker {
       if (Number.isFinite(n) && (this.maxNumeric === null || n > this.maxNumeric)) this.maxNumeric = n;
       return;
     }
-    const s = String(raw);
+    // Stored in sync_state: a NUL there would fail every poll's success write.
+    const s = storableText(String(raw));
     if (this.maxString === null || s > this.maxString) this.maxString = s;
   }
 
