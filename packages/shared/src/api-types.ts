@@ -35,11 +35,18 @@ export interface SourceSyncState {
 }
 
 export interface BackfillProgress {
-  status: 'idle' | 'scheduled' | 'running' | 'paused' | 'done' | 'error';
+  /** `recoloring`: the download finished; standards are recomputed and hour cells re-colored day by day. */
+  status: 'idle' | 'scheduled' | 'running' | 'paused' | 'recoloring' | 'done' | 'error';
   requested_now: boolean;
   days_total: number;
   days_done: number;
   current_day: string | null;
+  /** First plant-local day (YYYY-MM-DD) of the range, fixed when the backfill starts. Absent in older saved progress. */
+  first_day?: string | null;
+  /** Standards were recomputed after the download (recoloring phase). */
+  standards_done?: boolean;
+  /** Days whose hour cells were recomputed with standards (recoloring phase). */
+  recolor_days_done?: number;
   started_at: UtcMs | null;
   finished_at: UtcMs | null;
   error: string | null;

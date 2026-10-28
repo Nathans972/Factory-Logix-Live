@@ -275,7 +275,11 @@ class Collector {
     }
 
     if (!this.backfill) {
-      this.backfill = new Backfill(this.pool, this.log, this.poller, this.recomputer);
+      this.backfill = new Backfill(this.pool, this.log, this.poller, this.recomputer, async (settings, mapping, now) => {
+        const result = await this.standards.run({ settings, mapping, now, productNumber: null, since: null });
+        await this.health.setLastStandardsRecompute(Date.now());
+        this.log.info(result, 'standards recomputed after backfill');
+      });
     }
     await this.backfill.ensureScheduled(config.settings);
 
@@ -409,15 +413,10 @@ class Collector {
         await this.backfill.load();
         if (this.backfill.isActive()) {
           if (this.backfill.shouldRun(settings, now) && until - now > 5_000) {
-            const { finished } = await this.backfill.tick(mapping, settings, Date.now()).catch((err) => {
+            // One chunk per pass: a downloaded day, the standards recompute, or a re-colored day.
+            await this.backfill.tick(mapping, settings, Date.now()).catch((err) => {
               this.log.error({ err: errorMessage(err) }, 'backfill chunk failed');
-              return { worked: false, finished: false };
             });
-            if (finished) {
-              const result = await this.standards.run({ settings, mapping, now: Date.now(), productNumber: null, since: null });
-              await this.health.setLastStandardsRecompute(Date.now());
-              this.log.info(result, 'standards recomputed after backfill');
-            }
             await this.delay(Math.min(settings.backfill_pause_seconds * 1_000, Math.max(0, until - Date.now())));
             continue;
           }
