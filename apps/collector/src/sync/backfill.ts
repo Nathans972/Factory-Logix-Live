@@ -173,9 +173,12 @@ export class Backfill {
     const touched: number[] = [];
     try {
       if (progress.days_done === 0) {
+        // Every job changed since the first day. Open at the end: a job that changes while this
+        // runs comes back at the end of the pull instead of leaving the window, so the poller
+        // sees that it moved and reads again from where it was (`Poller.pullOrdered`).
         await this.poller.pullWindow('work_orders', mapping.work_orders, settings, {
           from,
-          to: now,
+          to: null,
           logSource: 'work_orders:backfill',
           touched,
         });

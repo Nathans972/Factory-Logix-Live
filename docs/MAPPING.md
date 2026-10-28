@@ -121,7 +121,11 @@ history on every poll (spec 4.5):
   don't count, so one row stamped in the future (a station clock that is wrong, a 9999-12-31
   placeholder) is still ingested but can't make later polls skip new rows. The overlap
   (`poll_overlap_minutes`, default 10) re-fetches a few extra minutes each time so nothing is
-  lost to clock skew; upserts by natural key make the re-fetched rows harmless.
+  lost to clock skew; upserts by natural key make the re-fetched rows harmless. A row that
+  changes while a pull pages through it moves to the end of the order, and every row behind its
+  old place moves up one, so the next page would start one row late. The collector sees the row
+  come back (by natural key) and reads again from where it was, so no row is stepped over
+  (spec 4.5).
 - **Time-window mode**: choose "none" for the watermark field in step 3 of the wizard. The
   collector instead filters on that dataset's primary timestamp (`complete_ts`/`start_ts` for
   unit steps, `found_ts` for defects, `modified_at`/`created_at` for work orders) using the

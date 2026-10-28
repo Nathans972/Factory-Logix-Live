@@ -6,12 +6,12 @@
 import type { DatasetMapping, DatasetName, MappingConfig, Settings } from '@fld/shared';
 import type { Pool } from '../db.js';
 import type { Logger } from '../logger.js';
-import { selectFieldsFor, type TimestampResolver } from '../mapping/extract.js';
+import { buildNaturalKey, selectFieldsFor, type TimestampResolver } from '../mapping/extract.js';
 import type { Ingestor } from '../ingest/datasets.js';
 import type { Source } from '../sources/Source.js';
 import { ODataError } from '../odata/client.js';
-import { andAll, cmp } from '../odata/literals.js';
-import { pullPages } from './paging.js';
+import { andAll, cmp, type LiteralValue } from '../odata/literals.js';
+import { pullPages, type PullRequest, type PullSummary } from './paging.js';
 import { finishSyncLog, loadSyncState, recordSyncFailure, recordSyncSuccess, startSyncLog } from './state.js';
 import { WatermarkTracker, parseStoredWatermark, watermarkKindFromEdm, type WatermarkKind } from './watermark.js';
 
@@ -93,6 +93,19 @@ interface FieldPlan {
   watermarkKind: WatermarkKind;
   /** Primary timestamp field (source name) used for window mode. */
   timestampField: string | null;
+}
+
+/** The field a pull is filtered and ordered on, for `Poller.pullOrdered`. */
+interface PullOrder {
+  /** Source field name and how its values compare. */
+  field: string;
+  kind: WatermarkKind;
+  /** Timestamps after this do not count (see `WatermarkTracker`); null: no limit. */
+  notAfter: number | null;
+  /** The pull's sync source (`work_orders`, `unit_steps:late`, ...), for the logs and the timestamp cursor. */
+  source: string;
+  /** `$filter` for the rows from a watermark value on, as `WatermarkTracker.serialize` writes it. */
+  filterFrom: (watermark: string) => string | null;
 }
 
 export class Poller {
@@ -278,24 +291,41 @@ export class Poller {
         );
       }
 
-      const tracker = trackField ? new WatermarkTracker(trackKind, this.deps.timestamps, dataset, now) : null;
       const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField]);
       this.deps.timestamps.setReadTime(now);
 
-      const summary = await pullPages(
-        this.source,
-        { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages, startSkip: fullPullSkip ?? 0 },
-        async (rows) => {
-          if (rows.length === 0) return;
-          if (tracker && trackField) {
-            for (const row of rows) tracker.observe(row[trackField]);
-          }
-          const ingested = await this.deps.ingestor.ingest(dataset, rows);
-          out.ingested += ingested.ingested;
-          out.skipped += ingested.skipped;
-          touched.push(...ingested.touched);
-        },
-      );
+      const pull: PullRequest = {
+        entitySet: mapping.entity_set,
+        filter,
+        orderBy,
+        select,
+        pageSize: settings.poll_page_size,
+        maxPages,
+        startSkip: fullPullSkip ?? 0,
+      };
+      const ingest = async (rows: Record<string, unknown>[]) => {
+        if (rows.length === 0) return;
+        const ingested = await this.deps.ingestor.ingest(dataset, rows);
+        out.ingested += ingested.ingested;
+        out.skipped += ingested.skipped;
+        touched.push(...ingested.touched);
+      };
+      const field = trackField;
+      const kind = trackKind;
+      const summary = field
+        ? await this.pullOrdered(
+            mapping.key,
+            pull,
+            {
+              field,
+              kind,
+              notAfter: now,
+              source: dataset,
+              filterFrom: (value) => this.watermarkFilter(mapping.entity_set, field, kind, value),
+            },
+            ingest,
+          )
+        : { ...(await pullPages(this.source, pull, ingest)), watermark: null };
 
       out.rows = summary.rows;
       out.truncated = summary.truncated;
@@ -308,10 +338,9 @@ export class Poller {
 
       out.durationMs = Date.now() - started;
       // The overlap re-pull can return only old rows; never let the watermark move backwards.
-      let watermark = tracker?.serialize() ?? null;
-      if (watermark !== null && trackKind === 'timestamp' && storedMs !== null && tracker && tracker.maxMs !== null && tracker.maxMs < storedMs) {
-        watermark = null;
-      }
+      let watermark = summary.watermark;
+      const watermarkMs = trackKind === 'timestamp' ? parseStoredWatermark(watermark, 'timestamp').ms : null;
+      if (watermarkMs !== null && storedMs !== null && watermarkMs < storedMs) watermark = null;
       // A watermark that was ahead of the poll time is replaced even when nothing newer came in.
       if (watermark === null && replaceStored && storedMs !== null) watermark = new Date(storedMs).toISOString();
       await recordSyncSuccess(this.deps.pool, dataset, {
@@ -335,6 +364,76 @@ export class Poller {
       this.deps.log.error({ dataset, err: out.error }, 'poll failed');
     }
     return out;
+  }
+
+  /**
+   * `pullPages` in the order of one field, read again where rows moved. FactoryLogix answers each
+   * page request from the table as it is at that moment. A row read on one page that changes
+   * before the next page is requested moves to the end of the order, every row behind its old
+   * place moves up one, and the next `$skip` steps over a row. That row is behind the watermark
+   * the pull ends with, so no later poll reads it. The changed row comes back on a later page of
+   * the same pull (same natural key, another `field` value; a row inserted ahead instead brings
+   * the last one read back unchanged, and nothing is lost); when one does, the pull reads again
+   * from the watermark at the end of the page it was first read on, with no overlap, until a pass
+   * gets through with nothing moving. The watermark is that pass's. If rows are still moving when
+   * the page cap is reached, or the place to read again from has not moved on, the watermark stops
+   * there and the next poll reads on from it.
+   */
+  private async pullOrdered(
+    keyFields: string[],
+    req: PullRequest,
+    order: PullOrder,
+    onRows: (rows: Record<string, unknown>[]) => Promise<void>,
+  ): Promise<PullSummary & { watermark: string | null }> {
+    let filter = req.filter ?? null;
+    let rows = 0;
+    let pages = 0;
+    /** The watermark this pass reads from; null for the first pass. */
+    let from: string | null = null;
+    for (;;) {
+      const tracker = new WatermarkTracker(order.kind, this.deps.timestamps, order.source, order.notAfter);
+      /** Where each row was first read in this pass (page and `field` value), by natural key. */
+      const firstRead = new Map<string, { page: number; value: string }>();
+      /** The watermark at the end of each page of this pass. */
+      const pageEnds: (string | null)[] = [];
+      /** The earliest page a row that came back changed on a later page was first read on. */
+      let movedFrom = Number.POSITIVE_INFINITY;
+      const summary = await pullPages(this.source, { ...req, filter, maxPages: req.maxPages - pages }, async (batch, page) => {
+        for (const row of batch) {
+          tracker.observe(row[order.field]);
+          const key = buildNaturalKey(row, keyFields);
+          // A key whose fields are all empty identifies nothing.
+          if (!/[^|]/.test(key)) continue;
+          const value = String(row[order.field]);
+          const first = firstRead.get(key);
+          if (first === undefined) firstRead.set(key, { page, value });
+          else if (first.page < page && first.value !== value) movedFrom = Math.min(movedFrom, first.page);
+        }
+        pageEnds[page] = tracker.serialize();
+        await onRows(batch);
+      });
+      rows += summary.rows;
+      pages += summary.pages;
+
+      const again = pageEnds[movedFrom] ?? null;
+      if (again === null) return { ...summary, rows, pages, watermark: tracker.serialize() };
+      if (again === from || pages >= req.maxPages) {
+        this.deps.log.warn({ source: order.source, from: again }, 'rows kept moving during the pull; the next poll reads again from where they were');
+        return { ...summary, rows, pages, watermark: again };
+      }
+      this.deps.log.info({ source: order.source, from: again }, 'rows moved during the pull; reading again from where they were');
+      from = again;
+      filter = order.filterFrom(again);
+    }
+  }
+
+  /** `field ge <value>` for a watermark value as `WatermarkTracker.serialize` writes it. */
+  private watermarkFilter(entitySet: string, field: string, kind: WatermarkKind, value: string): string {
+    const parsed = parseStoredWatermark(value, kind);
+    let literal: LiteralValue = { kind: 'string', value };
+    if (parsed.ms !== null) literal = { kind: 'timestamp', ms: parsed.ms, lowerBound: true };
+    else if (parsed.numeric !== null) literal = { kind: 'number', value: parsed.numeric };
+    return cmp(field, 'ge', this.source.literal(entitySet, field, literal));
   }
 
   /**
@@ -399,13 +498,14 @@ export class Poller {
    * Pull one time window on a data source's primary timestamp (used by the late-data re-pull
    * and by the backfill). A data source that carries no timestamp at all is pulled whole, under
    * the same page cap as a window: unlike a poll's full pull, no later pull goes on from where it
-   * stopped. `now` is the poll time when the window reaches the present.
+   * stopped. `to: null` leaves the window open at the end. `now` is the poll time when the window
+   * reaches the present.
    */
   async pullWindow(
     dataset: DatasetName,
     mapping: DatasetMapping,
     settings: Settings,
-    opts: { from: number; to: number; now?: number; logSource?: string; touched?: number[] },
+    opts: { from: number; to: number | null; now?: number; logSource?: string; touched?: number[] },
   ): Promise<{ rows: number; ingested: number; skipped: number; truncated: boolean }> {
     const logSource = opts.logSource ?? `${dataset}:window`;
     const logId = await startSyncLog(this.deps.pool, logSource);
@@ -416,31 +516,38 @@ export class Poller {
     try {
       let filter: string | null = null;
       let orderBy: string | null = null;
+      let order: PullOrder | null = null;
 
       if (plan.timestampField) {
         const field = plan.timestampField;
+        const upTo = opts.to === null ? null : cmp(field, 'lt', this.source.literal(mapping.entity_set, field, { kind: 'timestamp', ms: opts.to }));
         filter = andAll([
           cmp(field, 'ge', this.source.literal(mapping.entity_set, field, { kind: 'timestamp', ms: opts.from, lowerBound: true })),
-          cmp(field, 'lt', this.source.literal(mapping.entity_set, field, { kind: 'timestamp', ms: opts.to })),
+          upTo,
         ]);
         orderBy = `${field} asc`;
+        order = {
+          field,
+          kind: 'timestamp',
+          notAfter: opts.now ?? null,
+          source: logSource,
+          filterFrom: (value) => andAll([this.watermarkFilter(mapping.entity_set, field, 'timestamp', value), upTo]),
+        };
       } else if (!FULL_PULL_ALLOWED.has(dataset)) {
         throw new Error(`${dataset} has no primary timestamp; cannot pull a time window`);
       }
 
       const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField]);
       this.deps.timestamps.setReadTime(opts.now ?? null);
-      const summary = await pullPages(
-        this.source,
-        { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages: MAX_PAGES_WINDOW },
-        async (rows) => {
-          if (rows.length === 0) return;
-          const ingested = await this.deps.ingestor.ingest(dataset, rows);
-          out.ingested += ingested.ingested;
-          out.skipped += ingested.skipped;
-          if (opts.touched) opts.touched.push(...ingested.touched);
-        },
-      );
+      const pull: PullRequest = { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages: MAX_PAGES_WINDOW };
+      const ingest = async (rows: Record<string, unknown>[]) => {
+        if (rows.length === 0) return;
+        const ingested = await this.deps.ingestor.ingest(dataset, rows);
+        out.ingested += ingested.ingested;
+        out.skipped += ingested.skipped;
+        if (opts.touched) opts.touched.push(...ingested.touched);
+      };
+      const summary = order ? await this.pullOrdered(mapping.key, pull, order, ingest) : await pullPages(this.source, pull, ingest);
       out.rows = summary.rows;
       out.truncated = summary.truncated;
       await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows, ingested: out.ingested, skipped: out.skipped });
