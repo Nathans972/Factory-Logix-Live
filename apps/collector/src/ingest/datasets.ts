@@ -101,6 +101,21 @@ export class Ingestor {
     for (const row of rows) this.jobProducts.set(row.job_number, row.product_number);
   }
 
+  /**
+   * tx() for the routines that resolve operation names on its client. A name seen for the first
+   * time is inserted by that transaction and its id cached at once; if the transaction rolls back
+   * the row is gone but the id stays cached, and every later write using it fails the operation_id
+   * foreign key. Clear the cache then, as the restart command does, so the retry inserts it again.
+   */
+  private async txWithOperations(fn: (client: PoolClient) => Promise<void>): Promise<void> {
+    try {
+      await tx(this.deps.pool, fn);
+    } catch (err) {
+      this.deps.operations.clear();
+      throw err;
+    }
+  }
+
   private async workOrders(rows: Record<string, unknown>[]): Promise<IngestOutcome> {
     const mapping = this.mapping.work_orders;
     const { timestamps } = this.deps;
@@ -215,7 +230,7 @@ export class Ingestor {
       });
     }
 
-    await tx(this.deps.pool, async (client) => {
+    await this.txWithOperations(async (client) => {
       await this.lookupJobProducts(
         client,
         staged.filter((s) => !s.product_number).map((s) => s.job_number),
@@ -361,7 +376,7 @@ export class Ingestor {
       });
     }
 
-    await tx(this.deps.pool, async (client) => {
+    await this.txWithOperations(async (client) => {
       const operationIds = await this.deps.operations.resolveMany(
         staged.map((s) => s.operation),
         client,
@@ -469,7 +484,7 @@ export class Ingestor {
       out.ingested += 1;
     }
 
-    await tx(this.deps.pool, async (client) => {
+    await this.txWithOperations(async (client) => {
       const operationIds = await this.deps.operations.resolveMany(
         staged.map((s) => s.operation),
         client,
@@ -511,7 +526,7 @@ export class Ingestor {
       out.ingested += 1;
     }
 
-    await tx(this.deps.pool, async (client) => {
+    await this.txWithOperations(async (client) => {
       const operationIds = await this.deps.operations.resolveMany(
         staged.map((s) => s.operation),
         client,
