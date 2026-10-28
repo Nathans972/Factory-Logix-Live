@@ -15,7 +15,7 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | GET | `/api/health/sync` | none | | `SyncHealth` |
 | GET | `/api/events` | none | SSE stream | `SseEvent` per message (event name = `type`) |
 | GET | `/api/setup/status` | none | | `SetupStatus` |
-| POST | `/api/setup/admin` | none (only while no users exist) | `SetupAdminRequest` | `AuthMe` (logs in) |
+| POST | `/api/setup/admin` | none (only while no users exist) | `SetupAdminRequest` | `AuthMe` (logs in; `409` once a user exists; at most 10 a minute per client address, then `429`) |
 | POST | `/api/auth/login` | none | `LoginRequest` | `AuthMe` |
 | POST | `/api/auth/logout` | any | | `OkResponse` |
 | GET | `/api/auth/me` | none | | `AuthMe` (`user:null` when not logged in) |
