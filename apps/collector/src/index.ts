@@ -257,6 +257,7 @@ class Collector {
     } else {
       this.source.setTimeoutSeconds(config.settings.odata_timeout_seconds);
     }
+    this.source.setTimestampMode(config.settings.fl_timestamp_mode, config.settings.plant_timezone);
 
     if (!this.ingestor) {
       this.ingestor = new Ingestor(

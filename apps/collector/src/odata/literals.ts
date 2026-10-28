@@ -5,6 +5,8 @@
  * v2/v3:        `Edm.DateTime` uses `datetime'2025-01-01T00:00:00'`,
  *               `Edm.DateTimeOffset` uses `datetimeoffset'2025-01-01T00:00:00Z'`.
  */
+import { getTzOffsetMs } from '@fld/engine';
+import type { FlTimestampMode } from '@fld/shared';
 
 export type LiteralValue =
   | { kind: 'timestamp'; ms: number }
@@ -39,11 +41,33 @@ export function isoNaive(ms: number): string {
   return new Date(ms).toISOString().replace(/\.\d{3}Z$/, '');
 }
 
-export function formatTimestampLiteral(ms: number, edmType: string | null, version: ODataVersion): string {
+/** Plant wall-clock time of an instant, `YYYY-MM-DDTHH:MM:SS` with no offset. */
+export function isoLocalNaive(ms: number, timezone: string): string {
+  return isoNaive(ms + getTzOffsetMs(timezone, ms));
+}
+
+/**
+ * How FactoryLogix writes timestamps (`fl_timestamp_mode`). In `local_no_offset` mode the naive
+ * `datetime'...'` literal (v2/v3 Edm.DateTime, or an untyped field) carries plant wall-clock time,
+ * the same form the service returns. Literals with an explicit offset (v4, Edm.DateTimeOffset)
+ * stay UTC: they say which instant they mean either way.
+ */
+export interface TimestampLiteralOptions {
+  mode?: FlTimestampMode;
+  timezone?: string;
+}
+
+export function formatTimestampLiteral(
+  ms: number,
+  edmType: string | null,
+  version: ODataVersion,
+  opts: TimestampLiteralOptions = {},
+): string {
   const type = (edmType ?? '').replace(/^Edm\./, '');
   if (type === 'Date') return new Date(ms).toISOString().slice(0, 10);
   if (isLegacyVersion(version)) {
     if (type === 'DateTimeOffset') return `datetimeoffset'${isoNoMillis(ms)}'`;
+    if (opts.mode === 'local_no_offset' && opts.timezone) return `datetime'${isoLocalNaive(ms, opts.timezone)}'`;
     // v2 default (and Edm.DateTime): naive UTC inside a datetime literal.
     return `datetime'${isoNaive(ms)}'`;
   }
@@ -59,10 +83,15 @@ export function formatNumberLiteral(value: number, edmType: string | null, versi
   return String(value);
 }
 
-export function formatLiteral(value: LiteralValue, edmType: string | null, version: ODataVersion): string {
+export function formatLiteral(
+  value: LiteralValue,
+  edmType: string | null,
+  version: ODataVersion,
+  opts: TimestampLiteralOptions = {},
+): string {
   switch (value.kind) {
     case 'timestamp':
-      return formatTimestampLiteral(value.ms, edmType, version);
+      return formatTimestampLiteral(value.ms, edmType, version, opts);
     case 'string':
       return quoteString(value.value);
     case 'number':
