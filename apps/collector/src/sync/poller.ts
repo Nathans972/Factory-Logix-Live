@@ -201,7 +201,7 @@ export class Poller {
     for (const dataset of DATASET_ORDER) {
       const datasetMapping = mapping[dataset];
       if (!datasetMapping) continue;
-      if (dataset === 'unit_steps' && !succeeded.has('work_orders')) {
+      if (dataset === 'unit_steps' && mapping.work_orders && !succeeded.has('work_orders')) {
         // unit_steps finds products through the work orders: without this cycle's, the steps of
         // new jobs would be skipped while its watermark moves past them. It catches up from its
         // watermark once work_orders is back.

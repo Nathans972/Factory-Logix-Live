@@ -198,7 +198,12 @@ describe('a watermark ahead of the poll time', () => {
     expect((await poller.pollOnce(mapping, quiet, t0)).ok).toBe(true);
 
     const since = new Date(t0 - 2 * HOUR - 10 * 60_000).toISOString();
-    expect(src.requests.map((r) => r.filter)).toEqual([`Modified ge ${since}`, `Done ge ${since}`]);
+    // work_orders' one row is a short answer, so one more request asks past it.
+    expect(src.requests.map((r) => [r.filter, r.skip ?? 0])).toEqual([
+      [`Modified ge ${since}`, 0],
+      [`Modified ge ${since}`, 1],
+      [`Done ge ${since}`, 0],
+    ]);
     // work_orders moves to the row it saw; unit_steps saw nothing and keeps the lookback start.
     expect(db.state.get('work_orders')?.watermark).toBe('2025-03-04T11:58:00.000Z');
     expect(db.state.get('unit_steps')?.watermark).toBe(new Date(t0 - 2 * HOUR).toISOString());

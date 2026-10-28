@@ -74,6 +74,7 @@ describe('paged pull', () => {
   it('follows @odata.nextLink instead of $skip when the service returns one', async () => {
     const { source, urls } = sourceWith((url) => {
       if (url.includes('$skiptoken=page2')) return json({ value: makeRows(1, 100) });
+      if (url.includes('$skip=')) return json({ value: [] });
       return json({ value: makeRows(2, 0), '@odata.nextLink': 'UnitProcessHistory?$skiptoken=page2' });
     });
 
@@ -84,8 +85,41 @@ describe('paged pull', () => {
     );
 
     expect(summary.rows).toBe(3);
-    expect(summary.pages).toBe(2);
+    // The answer and its link came back short, and no request had come back full: one more asks past it.
+    expect(summary.pages).toBe(3);
     expect(urls[1]).toBe(`${BASE}/UnitProcessHistory?$skiptoken=page2`);
+    expect(urls[2]).toContain('$skip=3');
+  });
+
+  it('reads on past short answers from a service with a result limit below $top, up to an empty one', async () => {
+    // At most 100 rows an answer, whatever $top asks for, and no nextLink.
+    const all = makeRows(250, 0);
+    const { source, urls } = sourceWith((url) => {
+      const skip = Number(/\$skip=(\d+)/.exec(url)?.[1] ?? '0');
+      return json({ value: all.slice(skip, skip + 100) });
+    });
+    const collected: unknown[] = [];
+
+    const summary = await pullPages(source, { entitySet: 'UnitProcessHistory', pageSize: 500, maxPages: 50 }, (rows) => {
+      collected.push(...rows.map((r) => r.UnitSerial));
+    });
+
+    expect(collected).toEqual(all.map((r) => r.UnitSerial));
+    expect(summary).toMatchObject({ rows: 250, pages: 4, truncated: false });
+    expect(urls[3]).toContain('$skip=250');
+
+    // Stopped at the page cap, it says where to go on from.
+    const capped = await pullPages(source, { entitySet: 'UnitProcessHistory', pageSize: 500, maxPages: 2 }, () => undefined);
+    expect(capped).toMatchObject({ rows: 200, truncated: true, nextSkip: 200 });
+  });
+
+  it('stops when the request past a short answer brings that answer back (a service that ignores $skip)', async () => {
+    const { source, urls } = sourceWith(() => json({ value: makeRows(37, 0) }));
+
+    const summary = await pullPages(source, { entitySet: 'UnitProcessHistory', pageSize: 500, maxPages: 200 }, () => undefined);
+
+    expect(summary).toMatchObject({ rows: 37, pages: 2, truncated: false });
+    expect(urls[1]).toContain('$skip=37');
   });
 
   it('reads every row once when the nextLinks ignore $top, with one request past the end', async () => {
