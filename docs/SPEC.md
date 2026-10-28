@@ -859,7 +859,7 @@ The simulator advances in real time (with a hidden speed control for reviewers) 
   db/
     migrations/                 SQL migrations (node-pg-migrate or equivalent)
   .github/workflows/
-    ci.yml                      lint, typecheck, engine tests
+    ci.yml                      install, build the shared packages, typecheck, lint, every test suite, build the demo
     pages.yml                   build mock and deploy to GitHub Pages
 ```
 
