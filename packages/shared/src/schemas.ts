@@ -1,8 +1,20 @@
 import { z } from 'zod';
 import { DATASET_SPECS } from './mapping.js';
 
+/** Whether a 'YYYY-MM-DD' string names a day that exists, as Postgres reads a date: no 2026-02-29, 2026-04-31 or year 0. */
+function isCalendarDay(date: string): boolean {
+  const [year, month, day] = date.split('-').map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= monthDays[month - 1];
+}
+
 export const localTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM');
-export const localDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+/** The calendar check runs only once the shape is right (a pipe), so a malformed date reports one issue. */
+export const localDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+  .pipe(z.string().refine(isCalendarDay, 'not a day on the calendar'));
 export const daysOfWeekSchema = z.array(z.number().int().min(0).max(6)).min(1);
 
 export const ianaTimeZoneSchema = z.string().min(1).refine(
