@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SseEvent, TvDashboard, TvState } from '@fld/shared';
 import { IS_MOCK } from '../../data';
 import { useDataSource } from '../../data/DataSourceContext';
-import { getDeviceToken, msUntilNextHour, nextDashboard } from './tvLogic';
+import { getDeviceToken, msUntilNextHour, nextDashboard, tvDelay } from './tvLogic';
 
 /** Fallback poll interval (spec 8.4: 60 s when SSE is unavailable). */
 const POLL_MS = 60_000;
@@ -147,8 +147,7 @@ export function useTvState(): TvViewState {
     tz,
     updatedAt,
     offlineSince,
-    delayedSince: state?.sync.delayed ? (state.sync.delayed_since ?? state.sync.last_success_at ?? null) : null,
-    delayed: Boolean(state?.sync.delayed),
+    ...tvDelay(state),
     loading,
     hourTick,
   };

@@ -890,7 +890,7 @@ The simulator advances in real time (with a hidden speed control for reviewers) 
 
 ## 15. Acceptance Scenarios
 
-Each scenario should be encoded as an engine test and be demonstrable in the demo.
+Each scenario is encoded as a test and is demonstrable in the demo. Scenarios 1 to 13 are engine tests (`packages/engine/test/acceptance.test.ts`); scenarios 14 and 15 are web tests that play the TV against the mock data source (`apps/web/src/pages/tv/scenarios.test.ts`).
 
 1. **Partial first hour.** Operator starts at 15:20, completes 4 units by 16:00 with StdHr 30. Charged minutes = 40, target = 20, pace = 0.20, red. Same operator with 18 units: pace 0.90, green.
 2. **Current hour prorating.** At 09:10, continuing operator has 5 units, StdHr 30, no breaks. Charged = 10, target = 5, pace = 1.00, green. At 09:03 with 0 units: charged 3 < 5, neutral.

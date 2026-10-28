@@ -270,6 +270,12 @@ export function rowOperatorLabel(row: Pick<TvRow, 'operator_id' | 'operator_name
 
 // ---------------------------------------------------------------- screen selection (spec 8.2)
 
+/** The "Data delayed since …" banner input: shown while the collector is behind, with the last success time. */
+export function tvDelay(state: TvState | null): { delayed: boolean; delayedSince: number | null } {
+  if (!state?.sync.delayed) return { delayed: false, delayedSince: null };
+  return { delayed: true, delayedSince: state.sync.delayed_since ?? state.sync.last_success_at ?? null };
+}
+
 /**
  * The dashboard to keep after a successful response. A transient build error on the same job
  * keeps the last one on screen; anything else (new job, unassigned, not found) follows the server.

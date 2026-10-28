@@ -1,6 +1,6 @@
 /**
  * Spec section 15 acceptance scenarios 1-13, with the exact numbers from the spec.
- * (14 and 15 are collector/pairing scenarios and are outside the pure engine.)
+ * (14 and 15 are TV scenarios; they are web tests in apps/web/src/pages/tv/scenarios.test.ts.)
  */
 import { describe, expect, it } from 'vitest';
 import type { ComputeHourCellsInput, ComputeHourCellsOutput, HourCell, UnitStep } from '@fld/shared';

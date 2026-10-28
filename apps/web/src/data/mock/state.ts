@@ -610,7 +610,8 @@ export class MockStore {
       consecutive_failures: degraded ? 2 : 0,
       breaker_open_until: null,
       delayed: degraded,
-      delayed_since: degraded ? delayed_since : null,
+      // As in the api: "delayed since" is the last successful poll.
+      delayed_since: degraded ? last_success_at : null,
       poll_interval_seconds: this.settings.poll_interval_seconds,
       sources,
       backfill: this.backfillProgress(),
