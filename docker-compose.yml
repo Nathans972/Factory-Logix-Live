@@ -38,6 +38,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
       PLANT_TIMEZONE: ${PLANT_TIMEZONE:-America/New_York}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       MIGRATIONS_DIR: /app/db/migrations
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/health"]

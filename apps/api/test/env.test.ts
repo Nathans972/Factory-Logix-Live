@@ -17,6 +17,7 @@ describe('loadEnv', () => {
     expect(env.logLevel).toBe('info');
     expect(env.plantTimezone).toBeNull();
     expect(env.migrationsDir).toBeNull();
+    expect(env.trustedProxies).toEqual([]);
   });
 
   it('reports every missing required variable at once', () => {
@@ -36,6 +37,18 @@ describe('loadEnv', () => {
     expect(() => loadEnv({ ...base, ENCRYPTION_KEY: 'too-short' })).toThrow(/64 hex/);
     expect(() => loadEnv({ ...base, PLANT_TIMEZONE: 'Mars/Olympus' })).toThrow(/IANA/);
     expect(loadEnv({ ...base, PLANT_TIMEZONE: 'America/New_York' }).plantTimezone).toBe('America/New_York');
+  });
+
+  it('reads TRUSTED_PROXIES as a list of addresses and ranges', () => {
+    expect(loadEnv({ ...base, TRUSTED_PROXIES: ' 10.1.2.3, 192.168.50.0/24 ,fd00::/8,' }).trustedProxies).toEqual([
+      '10.1.2.3',
+      '192.168.50.0/24',
+      'fd00::/8',
+    ]);
+    expect(loadEnv({ ...base, TRUSTED_PROXIES: '' }).trustedProxies).toEqual([]);
+    for (const bad of ['proxy.example.com', '10.1.2.3/33', '10.1.2.3/', '10.1.2.3/8/1', 'fd00::/129', '*']) {
+      expect(() => loadEnv({ ...base, TRUSTED_PROXIES: `10.1.2.3,${bad}` }), bad).toThrow(/TRUSTED_PROXIES/);
+    }
   });
 
   it('builds a database url from POSTGRES_* parts', () => {

@@ -160,6 +160,12 @@ The application does not terminate TLS itself. If you want HTTPS, put your own r
 (e.g. nginx, Traefik, or an existing corporate proxy) in front of port `8080` and terminate TLS
 there; point it at `http://<host>:8080`.
 
+Then set `TRUSTED_PROXIES` in `.env` to that proxy's address as the app sees it (comma-separated;
+CIDR ranges such as `10.1.0.0/16` work too) and run `docker compose up -d` again. Without it,
+the API takes your proxy for the client, so everyone who signs in through it shares one limit of
+10 sign-in attempts a minute. To find the address, fail one sign-in through the proxy: the
+`failed login` line in `docker compose logs api` shows the address the API counted.
+
 ## 11. Firewall notes
 
 - **Inbound:** only `WEB_PORT` (default `8080`) needs to be reachable, from the plant LAN

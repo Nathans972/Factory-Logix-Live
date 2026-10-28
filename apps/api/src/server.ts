@@ -6,6 +6,7 @@ import type { ErrorResponse } from '@fld/shared';
 import { registerAuth } from './auth/index.js';
 import type { AppContext } from './context.js';
 import { ApiError } from './errors.js';
+import { proxyTrust } from './proxy.js';
 import { registerAdminDisplayRoutes } from './routes/admin/displays.js';
 import { registerAdminOpsRoutes } from './routes/admin/ops.js';
 import { registerAdminScheduleRoutes } from './routes/admin/schedule.js';
@@ -44,7 +45,8 @@ function codeForStatus(status: number): string {
 export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   const app = Fastify({
     loggerInstance: ctx.log as FastifyBaseLogger,
-    trustProxy: true,
+    // Not `true`: that makes req.ip the leftmost X-Forwarded-For entry, which the client writes.
+    trustProxy: proxyTrust(ctx.env.trustedProxies),
     bodyLimit: 4 * 1024 * 1024,
   });
 

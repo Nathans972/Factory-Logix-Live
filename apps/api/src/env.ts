@@ -1,6 +1,7 @@
 /**
  * Environment loading. Fails fast with one clear message listing everything that is missing.
  */
+import { isAddressOrRange } from './proxy.js';
 
 export interface AppEnv {
   nodeEnv: string;
@@ -15,6 +16,8 @@ export interface AppEnv {
   logLevel: string;
   migrationsDir: string | null;
   appVersion: string;
+  /** Addresses or CIDR ranges of the site's own reverse proxies in front of the bundled nginx. */
+  trustedProxies: string[];
 }
 
 export class EnvError extends Error {
@@ -78,6 +81,15 @@ export function loadEnv(src: NodeJS.ProcessEnv = process.env): AppEnv {
     }
   }
 
+  const trustedProxies = (str(src, 'TRUSTED_PROXIES') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const badProxies = trustedProxies.filter((p) => !isAddressOrRange(p));
+  if (badProxies.length > 0) {
+    problems.push(`TRUSTED_PROXIES must be IP addresses or CIDR ranges, comma-separated: ${badProxies.join(', ')}`);
+  }
+
   if (problems.length > 0) throw new EnvError(problems);
 
   return {
@@ -91,5 +103,6 @@ export function loadEnv(src: NodeJS.ProcessEnv = process.env): AppEnv {
     logLevel: str(src, 'LOG_LEVEL') ?? 'info',
     migrationsDir: str(src, 'MIGRATIONS_DIR'),
     appVersion: str(src, 'APP_VERSION') ?? '',
+    trustedProxies,
   };
 }
