@@ -22,9 +22,15 @@ export async function buildJobDetailForJob(db: Db, jobNumber: string, now: UtcMs
     listShifts(db),
   ]);
 
-  const hours = allCells.map((c) => c.hour_start_utc);
-  const fromUtc = hours.length > 0 ? Math.min(...hours) : now - 12 * HOUR_MS;
-  const toUtc = hours.length > 0 ? Math.max(...hours) + HOUR_MS : now;
+  // A loop, not Math.min/max over a spread: a long-running job has more cells than fit on the call stack as arguments.
+  let firstHour = Infinity;
+  let lastHour = -Infinity;
+  for (const c of allCells) {
+    if (c.hour_start_utc < firstHour) firstHour = c.hour_start_utc;
+    if (c.hour_start_utc > lastHour) lastHour = c.hour_start_utc;
+  }
+  const fromUtc = allCells.length > 0 ? firstHour : now - 12 * HOUR_MS;
+  const toUtc = allCells.length > 0 ? lastHour + HOUR_MS : now;
   const shiftInstances = shifts.length > 0 ? listShiftInstances(shifts, fromUtc, toUtc, settings.plant_timezone) : [];
 
   const operatorNames = await getOperatorNames(db, allCells.map((c) => c.operator_id));
