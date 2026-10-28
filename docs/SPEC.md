@@ -237,6 +237,7 @@ Rules:
 - A row stamped in the future (a station with a wrong clock, a 9999-12-31 placeholder) is ingested but does not move a timestamp watermark: a watermark ahead of real time would make every later poll skip new rows. A stored watermark found ahead of the poll time is replaced; that poll reads from the first-run lookback (2 h).
 - If a data source has no usable watermark field, use a time window on the primary timestamp with the same overlap, and additionally re-pull the last `settings.late_data_hours` (default 24) once per hour to catch late updates (defect closed later, unit reworked).
 - Page size and overlap are settings. Keep pages small (500) so no single query is heavy.
+- A service that pages on its own side answers with `@odata.nextLink`. Follow the links: `rows` above is what the request and its links returned together. `$top` still caps that total, so a full answer is not the end; the next request skips past it.
 - Poll data sources sequentially, not in parallel, to keep FactoryLogix load flat.
 - Every query has a hard timeout. A timed-out query counts as a failure for the circuit breaker.
 

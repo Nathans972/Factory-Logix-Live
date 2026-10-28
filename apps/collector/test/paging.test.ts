@@ -88,6 +88,42 @@ describe('paged pull', () => {
     expect(urls[1]).toBe(`${BASE}/UnitProcessHistory?$skiptoken=page2`);
   });
 
+  it('reads every row once when the nextLinks ignore $top, with one request past the end', async () => {
+    const all = makeRows(1200, 0);
+    const { source, urls } = sourceWith((url) => {
+      const token = /\$skiptoken=(\d+)/.exec(url)?.[1];
+      const from = Number(token ?? /\$skip=(\d+)/.exec(url)?.[1] ?? '0');
+      const body: Record<string, unknown> = { value: all.slice(from, from + 100) };
+      if (from + 100 < all.length) body['@odata.nextLink'] = `UnitProcessHistory?$skiptoken=${from + 100}`;
+      return json(body);
+    });
+    const collected: Record<string, unknown>[] = [];
+
+    const summary = await pullPages(
+      source,
+      { entitySet: 'UnitProcessHistory', filter: null, orderBy: 'CompletedDate asc', select: null, pageSize: 500, maxPages: 50 },
+      (rows) => {
+        collected.push(...rows);
+      },
+    );
+
+    expect(summary.rows).toBe(1200);
+    expect(new Set(collected.map((r) => r.UnitSerial)).size).toBe(1200);
+    expect(urls).toHaveLength(13);
+    expect(urls[12]).toContain('$skip=1200');
+  });
+
+  it('skips past every row of a page that ignored $top', async () => {
+    const all = makeRows(600, 0);
+    const { source, urls } = sourceWith((url) => json({ value: all.slice(Number(/\$skip=(\d+)/.exec(url)?.[1] ?? '0')) }));
+
+    const summary = await pullPages(source, { entitySet: 'UnitProcessHistory', pageSize: 500, maxPages: 10 }, () => undefined);
+
+    expect(summary.rows).toBe(600);
+    expect(urls).toHaveLength(2);
+    expect(urls[1]).toContain('$skip=600');
+  });
+
   it('stops at the page cap and reports truncation', async () => {
     const { source } = sourceWith(() => json({ value: makeRows(500, 0) }));
     const summary = await pullPages(

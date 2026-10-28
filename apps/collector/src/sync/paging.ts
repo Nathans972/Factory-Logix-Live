@@ -1,7 +1,9 @@
 /**
- * Paged pull loop (spec 4.5): `$top`/`$skip` client-driven paging, or `@odata.nextLink`
- * server-driven paging when the service returns one. Pages are handed to `onRows` as they
- * arrive so memory stays flat.
+ * Paged pull loop (spec 4.5): `$top`/`$skip` client-driven paging, following `@odata.nextLink`
+ * when the service also pages on its side. `$top` still caps a server-paged answer: the links
+ * stop once `$top` rows are out, even when more rows match. So only a request that came back
+ * short, its links included, is the last one. Pages are handed to `onRows` as they arrive so
+ * memory stays flat.
  */
 import type { Source, SourcePage } from '../sources/Source.js';
 
@@ -31,6 +33,8 @@ export async function pullPages(
   let skip = 0;
   let pages = 0;
   let rows = 0;
+  /** Rows the current `$top`/`$skip` request returned, the pages of its nextLinks included. */
+  let requestRows = 0;
   let nextLink: string | null = null;
   let truncated = false;
 
@@ -52,15 +56,18 @@ export async function pullPages(
 
     pages += 1;
     rows += page.rows.length;
+    requestRows += page.rows.length;
     await onRows(page.rows, pages - 1);
 
     if (page.nextLink) {
       nextLink = page.nextLink;
       continue;
     }
-    if (nextLink) break; // server-driven paging finished
-    if (page.rows.length < pageSize) break; // last client-driven page
-    skip += pageSize;
+    if (requestRows < pageSize) break; // the data source ran out
+    // A full answer. A service that ignores `$top` sent more: skip past all of it.
+    skip += requestRows;
+    requestRows = 0;
+    nextLink = null;
   }
 
   return { rows, pages, truncated };
