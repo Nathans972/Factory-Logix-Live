@@ -127,8 +127,11 @@ history on every poll (spec 4.5):
   unit steps, `found_ts` for defects, `modified_at`/`created_at` for work orders) using the
   same overlap. Use this when the entity set has no reliable last-modified field.
 - Small dimension datasets with **no timestamp at all** (`operators`, `routes`, `standards`,
-  and `work_orders` if nothing else is available) are pulled in full each time, capped at a
-  small number of pages — acceptable because these lists are short.
+  and `work_orders` if nothing else is available) are pulled in full, at most 20 pages per poll
+  (10,000 rows at the default page size). A longer list is read over several polls: each poll
+  goes on where the last one stopped and starts over at the top once it has reached the end
+  (after a collector restart, the pass starts again from the top). The backfill pulls such a
+  `work_orders` whole in one go.
 - `unit_steps` and `defects` **must** have either a watermark field or a primary timestamp
   field mapped; the collector refuses to run an unbounded pull against a high-volume table.
 

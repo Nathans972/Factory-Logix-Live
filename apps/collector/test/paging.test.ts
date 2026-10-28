@@ -135,6 +135,34 @@ describe('paged pull', () => {
     expect(summary.truncated).toBe(true);
   });
 
+  it('starts at startSkip and, stopped at the cap inside a server-paged answer, goes on after the rows read', async () => {
+    // Pages at 200 on its side; `$top` limits the whole answer across its links.
+    const all = makeRows(5000, 0);
+    const { source, urls } = sourceWith((url) => {
+      const skip = Number(/\$skip=(\d+)/.exec(url)?.[1] ?? '0');
+      const top = Number(/\$top=(\d+)/.exec(url)?.[1]);
+      const body: Record<string, unknown> = { value: all.slice(skip, skip + Math.min(top, 200)) };
+      if (top > 200 && skip + 200 < all.length) body['@odata.nextLink'] = `Things?$top=${top - 200}&$skip=${skip + 200}`;
+      return json(body);
+    });
+    const collected: unknown[] = [];
+    const pull = (startSkip: number) =>
+      pullPages(source, { entitySet: 'Things', pageSize: 500, maxPages: 4, startSkip }, (rows) => {
+        collected.push(...rows.map((r) => r.UnitSerial));
+      });
+
+    // $skip=300 answers 200 + 200 + 100 rows; $skip=800 is cut off after its first 200.
+    const first = await pull(300);
+    expect(urls[0]).toContain('$skip=300');
+    expect(first.truncated).toBe(true);
+    expect(first.nextSkip).toBe(1000);
+
+    let next = first.nextSkip;
+    for (let i = 0; next !== null && i < 20; i += 1) next = (await pull(next)).nextSkip;
+    expect(next).toBeNull();
+    expect(collected).toEqual(all.slice(300).map((r) => r.UnitSerial));
+  });
+
   it('surfaces HTTP failures as errors', async () => {
     const source = new ODataSource({
       baseUrl: BASE,

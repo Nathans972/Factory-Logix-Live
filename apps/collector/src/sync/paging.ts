@@ -15,6 +15,8 @@ export interface PullRequest {
   pageSize: number;
   /** Hard cap so one poll can never run away. */
   maxPages: number;
+  /** `$skip` of the first request, to go on where an earlier pull stopped at the cap. */
+  startSkip?: number;
 }
 
 export interface PullSummary {
@@ -22,6 +24,8 @@ export interface PullSummary {
   pages: number;
   /** true when the page cap stopped us before the server ran out of rows. */
   truncated: boolean;
+  /** When truncated: the `$skip` that goes on right after the last row read. */
+  nextSkip: number | null;
 }
 
 export async function pullPages(
@@ -30,7 +34,7 @@ export async function pullPages(
   onRows: (rows: Record<string, unknown>[], pageIndex: number) => Promise<void> | void,
 ): Promise<PullSummary> {
   const pageSize = Math.max(1, req.pageSize);
-  let skip = 0;
+  let skip = Math.max(0, req.startSkip ?? 0);
   let pages = 0;
   let rows = 0;
   /** Rows the current `$top`/`$skip` request returned, the pages of its nextLinks included. */
@@ -70,5 +74,6 @@ export async function pullPages(
     nextLink = null;
   }
 
-  return { rows, pages, truncated };
+  // A cap reached between the nextLinks of one answer goes on after the rows of it already read.
+  return { rows, pages, truncated, nextSkip: truncated ? skip + requestRows : null };
 }

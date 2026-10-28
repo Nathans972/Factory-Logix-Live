@@ -97,6 +97,13 @@ interface FieldPlan {
 
 export class Poller {
   private source: Source;
+  /**
+   * Where the full pull of a data source with no watermark or timestamp stopped at the page cap.
+   * The next poll goes on from there and starts over at the top once it has reached the end, so
+   * a data source longer than the cap is read across successive polls instead of its first rows
+   * over and over. In memory only: after a restart the pass starts again from the top.
+   */
+  private readonly fullPullCursors = new Map<DatasetName, { entitySet: string; skip: number }>();
 
   constructor(
     private readonly deps: PollerDeps,
@@ -106,6 +113,7 @@ export class Poller {
   }
 
   setSource(source: Source): void {
+    if (source !== this.source) this.fullPullCursors.clear();
     this.source = source;
   }
 
@@ -211,6 +219,8 @@ export class Poller {
       let maxPages = MAX_PAGES_INCREMENTAL;
       let trackField: string | null = null;
       let trackKind: WatermarkKind = plan.watermarkKind;
+      /** Full pull only: the `$skip` this poll starts from (see `fullPullCursors`). */
+      let fullPullSkip: number | null = null;
 
       const stored = parseStoredWatermark(state?.watermark ?? null, plan.watermarkKind);
       /** The timestamp the persisted watermark represents, whichever mode produced it. */
@@ -252,7 +262,12 @@ export class Poller {
           throw new Error(`${dataset} has neither a watermark field nor a primary timestamp; refusing an unbounded pull`);
         }
         maxPages = MAX_PAGES_FULL;
-        this.deps.log.warn({ dataset, entity_set: mapping.entity_set }, 'no watermark or timestamp mapped; pulling the whole data source');
+        const cursor = this.fullPullCursors.get(dataset);
+        fullPullSkip = cursor && cursor.entitySet === mapping.entity_set ? cursor.skip : 0;
+        this.deps.log.warn(
+          { dataset, entity_set: mapping.entity_set, from_row: fullPullSkip },
+          'no watermark or timestamp mapped; pulling the whole data source',
+        );
       }
 
       const tracker = trackField ? new WatermarkTracker(trackKind, this.deps.timestamps, dataset, now) : null;
@@ -261,7 +276,7 @@ export class Poller {
 
       const summary = await pullPages(
         this.source,
-        { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages },
+        { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages, startSkip: fullPullSkip ?? 0 },
         async (rows) => {
           if (rows.length === 0) return;
           if (tracker && trackField) {
@@ -276,6 +291,9 @@ export class Poller {
 
       out.rows = summary.rows;
       out.truncated = summary.truncated;
+      // No watermark moves a full pull on: the next poll goes on where this one stopped.
+      if (fullPullSkip === null || summary.nextSkip === null) this.fullPullCursors.delete(dataset);
+      else this.fullPullCursors.set(dataset, { entitySet: mapping.entity_set, skip: summary.nextSkip });
       if (summary.truncated) {
         this.deps.log.warn({ dataset, pages: summary.pages }, 'page cap reached; the rest arrives on the next poll');
       }
@@ -371,8 +389,9 @@ export class Poller {
 
   /**
    * Pull one time window on a data source's primary timestamp (used by the late-data re-pull
-   * and by the backfill). Falls back to a whole-data-source pull for small dimension sources
-   * that carry no timestamp at all. `now` is the poll time when the window reaches the present.
+   * and by the backfill). A data source that carries no timestamp at all is pulled whole, under
+   * the same page cap as a window: unlike a poll's full pull, no later pull goes on from where it
+   * stopped. `now` is the poll time when the window reaches the present.
    */
   async pullWindow(
     dataset: DatasetName,
@@ -389,7 +408,6 @@ export class Poller {
     try {
       let filter: string | null = null;
       let orderBy: string | null = null;
-      let maxPages = MAX_PAGES_WINDOW;
 
       if (plan.timestampField) {
         const field = plan.timestampField;
@@ -398,9 +416,7 @@ export class Poller {
           cmp(field, 'lt', this.source.literal(mapping.entity_set, field, { kind: 'timestamp', ms: opts.to })),
         ]);
         orderBy = `${field} asc`;
-      } else if (FULL_PULL_ALLOWED.has(dataset)) {
-        maxPages = MAX_PAGES_FULL;
-      } else {
+      } else if (!FULL_PULL_ALLOWED.has(dataset)) {
         throw new Error(`${dataset} has no primary timestamp; cannot pull a time window`);
       }
 
@@ -408,7 +424,7 @@ export class Poller {
       this.deps.timestamps.setReadTime(opts.now ?? null);
       const summary = await pullPages(
         this.source,
-        { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages },
+        { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages: MAX_PAGES_WINDOW },
         async (rows) => {
           if (rows.length === 0) return;
           const ingested = await this.deps.ingestor.ingest(dataset, rows);

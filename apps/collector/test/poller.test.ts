@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, type MappingConfig, type Settings } from '@fld/shared';
+import { DEFAULT_SETTINGS, type DatasetMapping, type MappingConfig, type Settings } from '@fld/shared';
 import type { Pool } from '../src/db.js';
 import type { Logger } from '../src/logger.js';
 import { Ingestor } from '../src/ingest/datasets.js';
@@ -308,5 +308,74 @@ describe('a failing data source', () => {
     expect(src.latePulls()).toBe(1);
     expect(src.requests.filter((r) => r.entitySet === 'Defects')).toHaveLength(1);
     expect(db.state.get('late_data')).toMatchObject({ last_error: null, consecutive_failures: 0 });
+  });
+});
+
+describe('a data source with no watermark or timestamp', () => {
+  /** Honours $top/$skip over fixed rows, with no paging of its own. */
+  function tableSource(tables: Record<string, Record<string, unknown>[]>) {
+    const requests: SourceRequest[] = [];
+    const source: Source = {
+      kind: 'odata',
+      init: async () => undefined,
+      getMetadata: () => null,
+      version: () => '4.0',
+      edmType: () => null,
+      literal: () => {
+        throw new Error('a whole-data-source pull has no filter');
+      },
+      describe: () => '',
+      fetchPage: async (req) => {
+        requests.push(req);
+        const skip = req.skip ?? 0;
+        return { rows: (tables[req.entitySet] ?? []).slice(skip, skip + (req.top ?? Infinity)), nextLink: null };
+      },
+      close: async () => undefined,
+    };
+    return { source, requests };
+  }
+  const table = (count: number) => Array.from({ length: count }, (_, i) => ({ Part: `Z-${i}`, Op: 'SMT', Rate: 40, Job: `J-${i}` }));
+  const ingestor = { ingest: async (_dataset: string, rows: unknown[]) => ({ received: rows.length, ingested: rows.length, skipped: 0, touched: [] }) };
+
+  function pollerFor(source: Source) {
+    const timestamps = new TimestampResolver({ mode: 'offset_present', timezone: 'UTC' });
+    return new Poller({ pool: fakePool().pool, log, ingestor: ingestor as unknown as Ingestor, timestamps }, source);
+  }
+
+  it('goes on where the last poll stopped at the page cap and starts over at the top once it reached the end', async () => {
+    const { source, requests } = tableSource({ StdA: table(12_000), StdB: table(12_000) });
+    const poller = pollerFor(source);
+    const standards = (entitySet: string) =>
+      ({
+        ...mapping,
+        work_orders: null,
+        unit_steps: null,
+        standards: { entity_set: entitySet, watermark_field: null, key: ['Part', 'Op'], fields: { product_number: 'Part', operation: 'Op', std_hr: 'Rate' } },
+      }) as unknown as MappingConfig;
+
+    const polls: { from: number; rows: number }[] = [];
+    for (const entitySet of ['StdA', 'StdA', 'StdA', 'StdB']) {
+      const first = requests.length;
+      const outcome = await poller.pollOnce(standards(entitySet), settings, Date.parse('2025-03-04T12:00:00Z'));
+      expect(outcome.ok).toBe(true);
+      polls.push({ from: requests[first]?.skip ?? 0, rows: outcome.rows });
+    }
+    // 20 pages of 500, the other 2,000 rows, the top again; another entity set starts at its top.
+    expect(polls).toEqual([
+      { from: 0, rows: 10_000 },
+      { from: 10_000, rows: 2_000 },
+      { from: 0, rows: 10_000 },
+      { from: 0, rows: 10_000 },
+    ]);
+  });
+
+  it('a backfill pulls the whole of work_orders, not the first 20 pages', async () => {
+    const { source } = tableSource({ Jobs: table(12_000) });
+    const workOrders: DatasetMapping = { entity_set: 'Jobs', watermark_field: null, key: ['Job'], fields: { job_number: 'Job', product_number: 'Part' } };
+    const from = Date.parse('2025-03-01T00:00:00Z');
+
+    const result = await pollerFor(source).pullWindow('work_orders', workOrders, settings, { from, to: from + 3 * 86_400_000, logSource: 'work_orders:backfill' });
+
+    expect(result).toMatchObject({ rows: 12_000, truncated: false });
   });
 });
