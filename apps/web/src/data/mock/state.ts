@@ -558,13 +558,30 @@ export class MockStore {
         status: 'done',
         requested_now: false,
         days_done: total,
+        standards_done: true,
+        recolor_days_done: total,
         current_day: null,
         finished_at: started + BACKFILL_MS,
       };
     }
-    const done = Math.min(total, Math.floor((elapsed / BACKFILL_MS) * total));
-    const day = new Date(this.now() - (total - done) * DAY).toISOString().slice(0, 10);
-    return { ...this.backfill, status: 'running', days_done: done, current_day: day };
+    const firstDay = new Date(started - total * DAY).toISOString().slice(0, 10);
+    const dayAt = (i: number) => new Date(started - (total - i) * DAY).toISOString().slice(0, 10);
+    // Download for the first 70% of the run, then the recoloring phase (standards, then re-colored days).
+    const downloadMs = BACKFILL_MS * 0.7;
+    if (elapsed < downloadMs) {
+      const done = Math.min(total, Math.floor((elapsed / downloadMs) * total));
+      return { ...this.backfill, status: 'running', first_day: firstDay, days_done: done, current_day: dayAt(done) };
+    }
+    const recolored = Math.min(total, Math.floor(((elapsed - downloadMs) / (BACKFILL_MS - downloadMs)) * total));
+    return {
+      ...this.backfill,
+      status: 'recoloring',
+      first_day: firstDay,
+      days_done: total,
+      standards_done: true,
+      recolor_days_done: recolored,
+      current_day: dayAt(recolored),
+    };
   }
 
   syncHealth(): SyncHealth {
