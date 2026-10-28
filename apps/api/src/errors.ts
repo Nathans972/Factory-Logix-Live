@@ -18,5 +18,6 @@ export const unauthorized = (message = 'authentication required'): ApiError =>
 export const forbidden = (message = 'insufficient role'): ApiError => new ApiError(403, 'forbidden', message);
 export const notFound = (message = 'not found'): ApiError => new ApiError(404, 'not_found', message);
 export const conflict = (message: string): ApiError => new ApiError(409, 'conflict', message);
+export const tooManyRequests = (message: string): ApiError => new ApiError(429, 'too_many_requests', message);
 export const unavailable = (message = 'service unavailable'): ApiError =>
   new ApiError(503, 'unavailable', message);

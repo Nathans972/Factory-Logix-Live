@@ -244,6 +244,7 @@ that volume, plus OS, images, and backups.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | TV shows a pairing code again after working fine | Browser storage was cleared, or the TV's `localStorage`/cookie was reset (new device, factory reset, private browsing) | In Admin > Displays, use "Re-pair": enter the new code and attach it to the existing display record to keep its name and settings |
+| Admin > Displays finds no display for the code an unclaimed TV shows | Its code was freed for new TVs (it was offline for more than a day, or more than 1,000 other unclaimed TVs checked in after it), and the page still shows the old one | Reload the page on the TV: it shows a new code to claim |
 | "Dashboard offline since HH:MM" banner on a TV | The TV's browser cannot reach the `web`/`api` containers at all (network issue, host down, container crashed) | Check `docker compose ps` and `docker compose logs api web`; check network connectivity between the TV and the server |
 | "Data delayed since HH:MM" banner | The collector cannot reach FactoryLogix, or its last successful poll is older than 3x the poll interval | Check Admin > Sync for the last error; confirm the FactoryLogix server and the Report Scheduler Service are up and reachable on port 6065 |
 | Sync status stuck at `never` | FactoryLogix connection and/or field mapping have not been completed yet | Finish Admin > Connection and Admin > Mapping (or the first-run wizard) |

@@ -19,7 +19,7 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | POST | `/api/auth/login` | none | `LoginRequest` | `AuthMe` |
 | POST | `/api/auth/logout` | any | | `OkResponse` |
 | GET | `/api/auth/me` | none | | `AuthMe` (`user:null` when not logged in) |
-| POST | `/api/tv/register` | none | `TvRegisterRequest` | `TvState` (creates display row w/ pairing code if new) |
+| POST | `/api/tv/register` | none | `TvRegisterRequest` | `TvState` (creates display row w/ pairing code if new: at most 10 new a minute per client address, then `429`; first deletes unclaimed displays not seen for a day, and all but the 1,000 most recently seen) |
 | GET | `/api/tv/:token/state` | none | | `TvState` (also records heartbeat `last_seen_at`) |
 | GET | `/api/portal/shifts` | viewer | | `ShiftPickerResponse` |
 | GET | `/api/portal/shifts/instances?from=&to=` | viewer | UTC ms range | `ShiftInstanceListItem[]` |
