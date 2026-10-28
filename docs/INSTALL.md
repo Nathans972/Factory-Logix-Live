@@ -170,6 +170,12 @@ the API takes your proxy for the client, so everyone who signs in through it sha
 10 sign-in attempts a minute. To find the address, fail one sign-in through the proxy: the
 `failed login` line in `docker compose logs api` shows the address the API counted.
 
+List only your proxy. The API believes whatever client address a listed address passes on, so a
+range that also covers the computers people sign in from lets anyone at one of them name a new
+address on every attempt and never reach the limit. Afterwards, fail one more sign-in from a
+workstation: the `failed login` line should now show that workstation's own address, and
+`TRUSTED_PROXIES` must not cover it.
+
 ## 11. Firewall notes
 
 - **Inbound:** only `WEB_PORT` (default `8080`) needs to be reachable, from the plant LAN
