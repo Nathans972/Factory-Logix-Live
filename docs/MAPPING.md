@@ -125,7 +125,10 @@ history on every poll (spec 4.5):
   changes while a pull pages through it moves to the end of the order, and every row behind its
   old place moves up one, so the next page would start one row late. The collector sees the row
   come back (by natural key) and reads again from where it was, so no row is stepped over
-  (spec 4.5).
+  (spec 4.5). A poll reads at most 200 pages. When more rows than that fall inside the overlap
+  (a bulk update that gives thousands of rows one ModifiedDate), the next poll goes on where the
+  last one stopped instead of starting again from the watermark, so the collector gets past them
+  over a few polls.
 - **Time-window mode**: choose "none" for the watermark field in step 3 of the wizard. The
   collector instead filters on that dataset's primary timestamp (`complete_ts`/`start_ts` for
   unit steps, `found_ts` for defects, `modified_at`/`created_at` for work orders) using the

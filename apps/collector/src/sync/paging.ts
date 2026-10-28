@@ -3,7 +3,7 @@
  * when the service also pages on its side. `$top` still caps a server-paged answer: the links
  * stop once `$top` rows are out, even when more rows match. So only a request that came back
  * short, its links included, is the last one. Pages are handed to `onRows` as they arrive so
- * memory stays flat.
+ * memory stays flat; `onRows` returning false ends the pull there.
  */
 import type { Source, SourcePage } from '../sources/Source.js';
 
@@ -31,7 +31,7 @@ export interface PullSummary {
 export async function pullPages(
   source: Source,
   req: PullRequest,
-  onRows: (rows: Record<string, unknown>[], pageIndex: number) => Promise<void> | void,
+  onRows: (rows: Record<string, unknown>[], pageIndex: number) => Promise<boolean | void> | boolean | void,
 ): Promise<PullSummary> {
   const pageSize = Math.max(1, req.pageSize);
   let skip = Math.max(0, req.startSkip ?? 0);
@@ -61,7 +61,7 @@ export async function pullPages(
     pages += 1;
     rows += page.rows.length;
     requestRows += page.rows.length;
-    await onRows(page.rows, pages - 1);
+    if ((await onRows(page.rows, pages - 1)) === false) break;
 
     if (page.nextLink) {
       nextLink = page.nextLink;

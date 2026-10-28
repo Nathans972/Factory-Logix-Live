@@ -108,6 +108,17 @@ interface PullOrder {
   filterFrom: (watermark: string) => string | null;
 }
 
+/** Where an ordered pull stopped at the page cap, for the next poll to go on from (see `Poller.pullOrdered`). */
+interface ResumePoint {
+  /** The `$filter` of the pass that stopped: the next poll asks for the same rows. */
+  filter: string | null;
+  /** `$skip` to go on from: a page before where the pass stopped. */
+  skip: number;
+  /** The last row the pass read (natural key and raw `field` value), to be found again. */
+  key: string;
+  value: string;
+}
+
 export class Poller {
   private source: Source;
   /**
@@ -117,6 +128,14 @@ export class Poller {
    * over and over. In memory only: after a restart the pass starts again from the top.
    */
   private readonly fullPullCursors = new Map<DatasetName, { entitySet: string; skip: number }>();
+  /**
+   * Where the ordered pull of a data source stopped at the page cap. The next poll goes on from
+   * there instead of from its watermark, as long as that watermark is still the one stored after
+   * that pull: when more rows than the cap holds fall inside the overlap (a bulk update giving
+   * every row one ModifiedDate), polling from the watermark would read the same rows every time
+   * and never get past them. In memory only: after a restart the poll reads from its watermark.
+   */
+  private readonly resumePoints = new Map<DatasetName, { entitySet: string; field: string; watermark: string | null; point: ResumePoint }>();
 
   constructor(
     private readonly deps: PollerDeps,
@@ -126,7 +145,10 @@ export class Poller {
   }
 
   setSource(source: Source): void {
-    if (source !== this.source) this.fullPullCursors.clear();
+    if (source !== this.source) {
+      this.fullPullCursors.clear();
+      this.resumePoints.clear();
+    }
     this.source = source;
   }
 
@@ -312,6 +334,14 @@ export class Poller {
       };
       const field = trackField;
       const kind = trackKind;
+      // Where the last poll stopped at the page cap, while the watermark it stored is still there.
+      const saved = this.resumePoints.get(dataset);
+      this.resumePoints.delete(dataset);
+      const resume =
+        saved && saved.entitySet === mapping.entity_set && saved.field === field && saved.watermark === (state?.watermark ?? null)
+          ? saved.point
+          : null;
+      if (resume) this.deps.log.info({ dataset, from_row: resume.skip }, 'going on where the last poll stopped at the page cap');
       const summary = field
         ? await this.pullOrdered(
             mapping.key,
@@ -324,8 +354,9 @@ export class Poller {
               filterFrom: (value) => this.watermarkFilter(mapping.entity_set, field, kind, value),
             },
             ingest,
+            resume,
           )
-        : { ...(await pullPages(this.source, pull, ingest)), watermark: null };
+        : { ...(await pullPages(this.source, pull, ingest)), watermark: null, resume: null };
 
       out.rows = summary.rows;
       out.truncated = summary.truncated;
@@ -348,6 +379,9 @@ export class Poller {
         rows: out.rows,
         durationMs: out.durationMs,
       });
+      if (field && summary.resume) {
+        this.resumePoints.set(dataset, { entitySet: mapping.entity_set, field, watermark: watermark ?? state?.watermark ?? null, point: summary.resume });
+      }
       await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows, ingested: out.ingested, skipped: out.skipped });
     } catch (err) {
       out.durationMs = Date.now() - started;
@@ -378,14 +412,25 @@ export class Poller {
    * gets through with nothing moving. The watermark is that pass's. If rows are still moving when
    * the page cap is reached, or the place to read again from has not moved on, the watermark stops
    * there and the next poll reads on from it.
+   *
+   * A pass that reaches the page cap with nothing moving says where it stopped (`resume`), and the
+   * next poll goes on from there: the same `$filter`, from a page before that `$skip`. Rows read
+   * before that point that changed since have moved to the end, and the rows behind them have
+   * moved up, so the resumed pull first looks for the last row the pass read. Found unchanged
+   * within the first two pages, nothing behind it is stepped over; otherwise (more than a page of
+   * rows ahead of it changed, or that row did) the pull reads again from the start of `req`.
    */
   private async pullOrdered(
     keyFields: string[],
     req: PullRequest,
     order: PullOrder,
     onRows: (rows: Record<string, unknown>[]) => Promise<void>,
-  ): Promise<PullSummary & { watermark: string | null }> {
-    let filter = req.filter ?? null;
+    resume: ResumePoint | null = null,
+  ): Promise<PullSummary & { watermark: string | null; resume: ResumePoint | null }> {
+    let filter = resume ? resume.filter : (req.filter ?? null);
+    let skip = resume?.skip ?? 0;
+    /** The row a resumed pull must find again before it reads on; null once found. */
+    let anchor: { key: string; value: string } | null = resume;
     let rows = 0;
     let pages = 0;
     /** The watermark this pass reads from; null for the first pass. */
@@ -398,32 +443,56 @@ export class Poller {
       const pageEnds: (string | null)[] = [];
       /** The earliest page a row that came back changed on a later page was first read on. */
       let movedFrom = Number.POSITIVE_INFINITY;
-      const summary = await pullPages(this.source, { ...req, filter, maxPages: req.maxPages - pages }, async (batch, page) => {
+      /** Rows read while looking for `anchor`. */
+      let searched = 0;
+      /** The last row this pass read, for the next poll to find again. */
+      let last = null as { key: string; value: string } | null;
+      const summary = await pullPages(this.source, { ...req, filter, startSkip: skip, maxPages: req.maxPages - pages }, async (batch, page) => {
         for (const row of batch) {
           tracker.observe(row[order.field]);
           const key = buildNaturalKey(row, keyFields);
+          const value = String(row[order.field]);
+          if (anchor) {
+            if (key === anchor.key && value === anchor.value) anchor = null;
+            else searched += 1;
+          }
           // A key whose fields are all empty identifies nothing.
           if (!/[^|]/.test(key)) continue;
-          const value = String(row[order.field]);
+          last = { key, value };
           const first = firstRead.get(key);
           if (first === undefined) firstRead.set(key, { page, value });
           else if (first.page < page && first.value !== value) movedFrom = Math.min(movedFrom, first.page);
         }
+        if (anchor && searched >= 2 * req.pageSize) return false;
         pageEnds[page] = tracker.serialize();
         await onRows(batch);
       });
       rows += summary.rows;
       pages += summary.pages;
 
+      if (anchor) {
+        this.deps.log.warn({ source: order.source }, 'rows moved since the last poll stopped at the page cap; reading again from the watermark');
+        anchor = null;
+        filter = req.filter ?? null;
+        skip = 0;
+        continue;
+      }
       const again = pageEnds[movedFrom] ?? null;
-      if (again === null) return { ...summary, rows, pages, watermark: tracker.serialize() };
+      if (again === null) {
+        const stopped =
+          summary.truncated && summary.nextSkip !== null && last
+            ? { filter, skip: Math.max(0, summary.nextSkip - req.pageSize), ...last }
+            : null;
+        return { ...summary, rows, pages, watermark: tracker.serialize(), resume: stopped };
+      }
       if (again === from || pages >= req.maxPages) {
         this.deps.log.warn({ source: order.source, from: again }, 'rows kept moving during the pull; the next poll reads again from where they were');
-        return { ...summary, rows, pages, watermark: again };
+        return { ...summary, rows, pages, watermark: again, resume: null };
       }
       this.deps.log.info({ source: order.source, from: again }, 'rows moved during the pull; reading again from where they were');
       from = again;
       filter = order.filterFrom(again);
+      skip = 0;
     }
   }
 
