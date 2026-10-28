@@ -795,20 +795,25 @@ export class MockStore {
       admin_url: this.adminUrl(),
     };
     if (display === null) {
-      return { ...base, status: 'unclaimed', display: null, dashboard: null };
+      return { ...base, status: 'unclaimed', display: null, dashboard: null, job_status: null };
     }
     display.last_seen_at = now;
     display.online = true;
     if (display.claimed_at === null) {
-      return { ...base, status: 'unclaimed', display, dashboard: null };
+      return { ...base, status: 'unclaimed', display, dashboard: null, job_status: null };
     }
     if (display.job_number === null) {
-      return { ...base, status: 'unassigned', display, dashboard: null };
+      return { ...base, status: 'unassigned', display, dashboard: null, job_status: null };
+    }
+    // Same as the api: a job the collector has not ingested yet has no dashboard.
+    if (this.workOrder(display.job_number) === null) {
+      return { ...base, status: 'assigned', display, dashboard: null, job_status: 'not_found' };
     }
     return {
       ...base,
       status: 'assigned',
       display,
+      job_status: 'ok',
       dashboard: this.dashboard(display.job_number, {
         grouped: display.group_operators,
         shift_length_hours: display.shift_length_hours,

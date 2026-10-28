@@ -269,6 +269,18 @@ describe('tv', () => {
     );
   });
 
+  it('reports job_status: ok for an assigned job, not_found for a job with no data, null when unassigned', async () => {
+    expect((await ds.tvState('demo-1')).job_status).toBe('ok');
+    const token = 'waiting-' + Math.random().toString(36).slice(2);
+    const registered = await ds.tvRegister(token);
+    const claimed = await ds.claimDisplay({ pairing_code: registered.pairing_code, name: 'New line', job_number: null });
+    expect((await ds.tvState(token)).job_status).toBeNull();
+    await ds.updateDisplay(claimed.id, { job_number: 'J09999999-0000' });
+    const waiting = await ds.tvState(token);
+    expect(waiting).toMatchObject({ status: 'assigned', job_status: 'not_found', dashboard: null });
+    await ds.deleteDisplay(claimed.id);
+  });
+
   it('has two displays on the featured job, one separate and one grouped', async () => {
     const displays = await ds.displays();
     const featured = displays.filter((d) => d.job_number === FEATURED_JOB);

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SseEvent, TvDashboard, TvState } from '@fld/shared';
 import { IS_MOCK } from '../../data';
 import { useDataSource } from '../../data/DataSourceContext';
-import { getDeviceToken, msUntilNextHour } from './tvLogic';
+import { getDeviceToken, msUntilNextHour, nextDashboard } from './tvLogic';
 
 /** Fallback poll interval (spec 8.4: 60 s when SSE is unavailable). */
 const POLL_MS = 60_000;
@@ -69,7 +69,7 @@ export function useTvState(): TvViewState {
     setState(next);
     // Only a successful response changes the dashboard, so an outage leaves the last one on
     // screen (spec 8.2) while an admin job change swaps it on the next fetch.
-    setDashboard(next.dashboard ?? null);
+    setDashboard((prev) => nextDashboard(prev, next));
     setUpdatedAt(next.server_time || Date.now());
     offlineRef.current = null;
     setOfflineSince(null);

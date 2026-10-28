@@ -126,6 +126,8 @@ export interface SetupAdminRequest {
 
 export type TvStatus = 'unclaimed' | 'unassigned' | 'assigned';
 
+export type TvJobStatus = 'ok' | 'not_found' | 'error';
+
 export interface TvRegisterRequest {
   device_token: string;
 }
@@ -136,6 +138,12 @@ export interface TvState {
   pairing_code: string;
   display: Display | null;
   dashboard: TvDashboard | null;
+  /**
+   * Why `dashboard` is null for an assigned display: `not_found` = the job is not ingested yet
+   * (the TV says "Waiting for data for job …"), `error` = the dashboard could not be built.
+   * `ok` when the dashboard was built; null when no job is assigned.
+   */
+  job_status: TvJobStatus | null;
   sync: Pick<SyncHealth, 'status' | 'delayed' | 'delayed_since' | 'last_success_at'>;
   server_time: UtcMs;
   plant_timezone: string;

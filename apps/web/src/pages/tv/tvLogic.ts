@@ -5,7 +5,7 @@
  * three thin wrappers at the bottom that touch `window` / `localStorage` / `document.cookie`.
  * Those guard every browser access so the module can also be imported in a node test environment.
  */
-import { TV_CELL_TEXT, TV_COLORS, type CellColor, type TvRow } from '@fld/shared';
+import { TV_CELL_TEXT, TV_COLORS, type CellColor, type TvDashboard, type TvRow, type TvState } from '@fld/shared';
 
 export const DEVICE_TOKEN_KEY = 'fld_device_token';
 /** 10 years, in seconds (spec 8.1: the token survives reboots and normal cache behavior). */
@@ -266,4 +266,63 @@ export function rowOperatorLabel(row: Pick<TvRow, 'operator_id' | 'operator_name
   if (row.operators.length > 1) return MULTIPLE_OPERATORS;
   const id = row.operator_id ?? row.operators[0] ?? null;
   return operatorLabel(id, row.operator_name);
+}
+
+// ---------------------------------------------------------------- screen selection (spec 8.2)
+
+/**
+ * The dashboard to keep after a successful response. A transient build error on the same job
+ * keeps the last one on screen; anything else (new job, unassigned, not found) follows the server.
+ */
+export function nextDashboard(prev: TvDashboard | null, next: TvState): TvDashboard | null {
+  if (next.dashboard) return next.dashboard;
+  if (next.job_status === 'error' && prev && prev.job.job_number === next.display?.job_number) return prev;
+  return null;
+}
+
+export type TvMessageLine = { text: string; kind: 'title' | 'sub' | 'code' };
+
+export type TvScreen = { kind: 'dashboard'; dashboard: TvDashboard } | { kind: 'message'; lines: TvMessageLine[] };
+
+/** Which of the spec 8.2 states the TV shows, from the last good state and dashboard. */
+export function tvScreen(input: { state: TvState | null; dashboard: TvDashboard | null; loading: boolean; token: string }): TvScreen {
+  const { state, loading, token } = input;
+  const message = (...lines: TvMessageLine[]): TvScreen => ({ kind: 'message', lines });
+
+  // No response yet at all.
+  if (state == null) {
+    if (loading) return message({ text: 'Connecting…', kind: 'title' });
+    return message({ text: 'Dashboard unavailable', kind: 'title' }, { text: `Device ${token.slice(0, 8)}`, kind: 'sub' });
+  }
+
+  // Unclaimed: pairing screen (spec 8.1).
+  if (state.status === 'unclaimed') {
+    return message(
+      { text: 'This TV is', kind: 'sub' },
+      { text: state.pairing_code, kind: 'code' },
+      { text: 'Claim it in the admin portal.', kind: 'title' },
+      { text: state.admin_url, kind: 'sub' },
+    );
+  }
+
+  const name = { text: state.display?.name ?? 'Unnamed display', kind: 'sub' } as const;
+  const job = state.display?.job_number ?? null;
+
+  // Assigned: the dashboard. `input.dashboard` is the last successfully fetched one, so it
+  // survives a backend outage (the banner explains the staleness).
+  const dashboard = state.status === 'assigned' ? (input.dashboard ?? state.dashboard) : null;
+  if (dashboard) return { kind: 'dashboard', dashboard };
+
+  if (state.status === 'assigned' && job) {
+    // Assigned to a job FactoryLogix has not sent yet: it appears once the collector ingests it.
+    if (state.job_status === 'not_found') return message({ text: `Waiting for data for job ${job}`, kind: 'title' }, name);
+    if (state.job_status === 'error') return message({ text: `Dashboard unavailable for job ${job}`, kind: 'title' }, name);
+  }
+
+  // Claimed but no job assigned.
+  return message(
+    { text: 'No job assigned', kind: 'title' },
+    name,
+    { text: `Code ${state.display?.pairing_code ?? state.pairing_code}`, kind: 'sub' },
+  );
 }
