@@ -4,7 +4,9 @@
 
 services:
   db:
-    image: timescale/timescaledb:latest-pg16
+    # Pinned to an exact TimescaleDB release. To move to a newer one, follow
+    # docs/OPERATIONS.md → Upgrades → "The database image".
+    image: timescale/timescaledb:2.31.0-pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-fld}

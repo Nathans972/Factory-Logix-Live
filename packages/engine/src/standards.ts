@@ -174,13 +174,6 @@ export function computeStandard(input: ComputeStandardInput): Standard {
 // 7.2 effective standard
 // ---------------------------------------------------------------------------
 
-const ADJUSTMENT_SPECIFICITY: Record<string, number> = {
-  product_operation: 4,
-  operation: 3,
-  product: 2,
-  global: 1,
-};
-
 function pickAdjustment(
   adjustments: StandardAdjustment[],
   product_number: string,

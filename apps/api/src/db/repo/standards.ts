@@ -157,7 +157,7 @@ export async function listOverrides(
     clauses.push(`v.product_number = $${params.length}`);
   }
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-  const { rows } = await db.query<OverrideRow>(`${OVR_SQL} ${where} ORDER BY v.created_at DESC, v.id DESC`, params as any[]);
+  const { rows } = await db.query<OverrideRow>(`${OVR_SQL} ${where} ORDER BY v.created_at DESC, v.id DESC`, params);
   return rows.map(mapOverride);
 }
 
