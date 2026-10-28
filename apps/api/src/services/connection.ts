@@ -1,12 +1,14 @@
 /**
  * FactoryLogix connection settings. Stored as the `fl_connection` row of `settings`:
  * `{ base_url, username, password_enc }` where password_enc is `enc:v1:...` (see src/crypto.ts).
- * The password never leaves the server.
+ * The password never leaves the server, and the stored one is only sent to the server it was saved
+ * for (see sameServer).
  */
 import type { FlConnection } from '@fld/shared';
 import { decryptIfNeeded, encrypt } from '../crypto.js';
 import type { Db } from '../db/pool.js';
 import { getSettingValue, setSettingValue } from '../db/repo/settings.js';
+import { badRequest } from '../errors.js';
 import type { ODataCredentials } from '../odata.js';
 
 export const FL_CONNECTION_KEY = 'fl_connection';
@@ -36,6 +38,20 @@ export function toPublicConnection(stored: StoredConnection | null): FlConnectio
   };
 }
 
+/**
+ * Same scheme, host and port. A URL typed into the form for any other server (test or save) needs
+ * the password typed too: otherwise pointing the URL at a machine you control would read the stored
+ * password off the Authorization header.
+ */
+export function sameServer(a: string, b: string): boolean {
+  try {
+    const origin = new URL(a.trim()).origin;
+    return origin !== 'null' && origin === new URL(b.trim()).origin;
+  } catch {
+    return false;
+  }
+}
+
 export async function saveConnection(
   db: Db,
   input: { base_url: string; username: string; password?: string | null },
@@ -43,8 +59,14 @@ export async function saveConnection(
 ): Promise<StoredConnection> {
   const existing = await getStoredConnection(db);
   const password = typeof input.password === 'string' ? input.password : '';
+  const base_url = input.base_url.trim();
+  if (password.length === 0 && existing?.password_enc && !sameServer(base_url, existing.base_url)) {
+    throw badRequest(
+      'enter the password for the new server: the saved password is only sent to the server it was saved for',
+    );
+  }
   const next: StoredConnection = {
-    base_url: input.base_url.trim(),
+    base_url,
     username: input.username.trim(),
     password_enc: password.length > 0 ? encrypt(password) : (existing?.password_enc ?? null),
   };
@@ -52,7 +74,11 @@ export async function saveConnection(
   return next;
 }
 
-/** Decrypted credentials for outbound calls; null when nothing usable is configured. */
+/**
+ * Decrypted credentials for outbound calls; null when nothing usable is configured. An override
+ * (unsaved form values) without a password only gets the stored one while its URL is on the saved
+ * server; elsewhere the password is empty.
+ */
 export async function getCredentials(
   db: Db,
   override?: { base_url?: string; username?: string; password?: string | null } | null,
@@ -64,7 +90,7 @@ export async function getCredentials(
   let password = '';
   if (override && typeof override.password === 'string' && override.password.length > 0) {
     password = override.password;
-  } else if (stored?.password_enc) {
+  } else if (stored?.password_enc && sameServer(base_url, stored.base_url)) {
     password = decryptIfNeeded(stored.password_enc) ?? '';
   }
   return { base_url, username, password };

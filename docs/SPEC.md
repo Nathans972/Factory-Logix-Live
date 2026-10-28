@@ -725,6 +725,7 @@ Route `/admin`. Admin role only unless noted.
 ### 10.4 FactoryLogix connection
 
 - Server URL, user name, password (stored encrypted at rest), timestamp mode (5.5), plant time zone.
+- The stored password is only ever sent to the server it was saved for (same scheme, host and port). A URL on another server needs the password typed again: "Test connection" sends it no stored password, and Save is refused until the password is entered.
 - "Test connection": fetches `$metadata`, reports version/entity sets found.
 - Poll interval, page size, overlap, timeouts, breaker settings, backfill settings, "Run backfill now".
 

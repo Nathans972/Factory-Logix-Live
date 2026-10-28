@@ -58,8 +58,8 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | GET | `/api/admin/settings` | viewer | | `SettingsResponse` |
 | PATCH | `/api/admin/settings` | admin | `SettingsPatch` | `SettingsResponse` |
 | GET | `/api/admin/connection` | admin | | `ConnectionResponse` (never includes password) |
-| PUT | `/api/admin/connection` | admin | `FlConnection` (password optional = keep) | `ConnectionResponse` |
-| POST | `/api/admin/connection/test` | admin | optional `FlConnection` body to test unsaved values | `ConnectionTestResult` |
+| PUT | `/api/admin/connection` | admin | `FlConnection` (password optional = keep, only while `base_url` stays on the saved server: same scheme, host and port; 400 otherwise) | `ConnectionResponse` |
+| POST | `/api/admin/connection/test` | admin | optional `FlConnection` body to test unsaved values (without a password, the saved one is only sent when `base_url` is on the saved server) | `ConnectionTestResult` |
 | GET | `/api/admin/mapping` | admin | | `MappingResponse` |
 | PUT | `/api/admin/mapping` | admin | `MappingConfig` | `MappingResponse` (validates; notifies collector to restart) |
 | GET | `/api/admin/mapping/metadata` | admin | | `ODataMetadata` (fetches live `$metadata`) |

@@ -22,6 +22,16 @@ function urlError(v: string): string | null {
   }
 }
 
+/** Same scheme, host and port. The API only sends the stored password to the server it was saved for. */
+function sameServer(a: string, b: string): boolean {
+  try {
+    const origin = new URL(a.trim()).origin;
+    return origin !== 'null' && origin === new URL(b.trim()).origin;
+  } catch {
+    return false;
+  }
+}
+
 /** "Connected in 155 ms" + version + entity sets, exactly as in docs/design/setup.html. */
 export function ConnectionTestNote({ test }: { test: ConnectionTestResult }) {
   if (!test.ok) {
@@ -107,6 +117,12 @@ export function ConnectionForm({
   const urlErr = touched ? urlError(baseUrl) : null;
   const userErr = touched && !username.trim() ? 'Required' : null;
   const canSubmit = !urlError(baseUrl) && !!username.trim();
+  const keepsPassword = !!saved?.has_password && sameServer(baseUrl, saved.base_url);
+  const passwordHint = keepsPassword
+    ? 'A password is stored — leave blank to keep it.'
+    : saved?.has_password
+      ? 'The stored password is only sent to the saved server. Enter the password for this one.'
+      : 'Stored encrypted at rest.';
 
   return (
     <form
@@ -143,15 +159,12 @@ export function ConnectionForm({
             onBlur={() => setTouched(true)}
           />
         </Field>
-        <Field
-          label="Password"
-          hint={saved?.has_password ? 'A password is stored — leave blank to keep it.' : 'Stored encrypted at rest.'}
-        >
+        <Field label="Password" hint={passwordHint}>
           <Input
             type="password"
             autoComplete="new-password"
             value={password}
-            placeholder={saved?.has_password ? '•••••••••••• (unchanged)' : ''}
+            placeholder={keepsPassword ? '•••••••••••• (unchanged)' : ''}
             onChange={(e) => setPassword(e.currentTarget.value)}
           />
         </Field>
