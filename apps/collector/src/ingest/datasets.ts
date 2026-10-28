@@ -2,8 +2,8 @@
  * Per-dataset ingestion: mapped rows -> normalized tables (spec 4.4, 4.8, 6.1).
  * Every write is idempotent by natural key, so overlap re-pulls and backfill are harmless.
  */
-import type { DatasetName, MappingConfig } from '@fld/shared';
-import { bulkUpsert, q, q1, toMs, tx, type Pool, type PoolClient } from '../db.js';
+import type { DatasetMapping, DatasetName, MappingConfig } from '@fld/shared';
+import { bulkUpsert, q, q1, toMs, tx, type Pool, type PoolClient, type Queryable } from '../db.js';
 import type { Logger } from '../logger.js';
 import { extractRecord, num, str, bool, type TimestampResolver } from '../mapping/extract.js';
 import { upsertOperators, upsertProducts, upsertRoutesDerived, upsertRoutesMapped, type RouteEntry } from './derive.js';
@@ -35,6 +35,9 @@ export interface IngestorDeps {
   timestamps: TimestampResolver;
 }
 
+/** Fetches from FactoryLogix the work orders of `jobs` it has: raw rows of `mapping`'s entity set. */
+export type WorkOrderFetcher = (jobs: string[], mapping: DatasetMapping) => Promise<Record<string, unknown>[]>;
+
 export class Ingestor {
   private mapping: MappingConfig;
   private readonly jobProducts = new Map<string, string>();
@@ -54,14 +57,17 @@ export class Ingestor {
     this.jobProducts.clear();
   }
 
-  /** Route a page of source rows to the right ingest routine. */
-  async ingest(dataset: DatasetName, rows: Record<string, unknown>[]): Promise<IngestOutcome> {
+  /**
+   * Route a page of source rows to the right ingest routine. `fetchJobs` lets unit_steps fetch the
+   * work orders of its jobs that are not in the database yet (see `fetchMissingJobs`).
+   */
+  async ingest(dataset: DatasetName, rows: Record<string, unknown>[], fetchJobs?: WorkOrderFetcher): Promise<IngestOutcome> {
     if (rows.length === 0) return { ...EMPTY };
     switch (dataset) {
       case 'work_orders':
         return this.workOrders(rows);
       case 'unit_steps':
-        return this.unitSteps(rows);
+        return this.unitSteps(rows, fetchJobs);
       case 'defects':
         return this.defects(rows);
       case 'operators':
@@ -89,7 +95,7 @@ export class Ingestor {
     return this.operationSeqColumn;
   }
 
-  private async lookupJobProducts(db: PoolClient, jobNumbers: string[]): Promise<void> {
+  private async lookupJobProducts(db: Queryable, jobNumbers: string[]): Promise<void> {
     const missing = jobNumbers.filter((j) => j && !this.jobProducts.has(j));
     if (missing.length === 0) return;
     const rows = await q<{ job_number: string; product_number: string }>(
@@ -99,6 +105,24 @@ export class Ingestor {
     );
     if (this.jobProducts.size > 50_000) this.jobProducts.clear();
     for (const row of rows) this.jobProducts.set(row.job_number, row.product_number);
+  }
+
+  /**
+   * The work_orders poll reads the jobs changed since its watermark (on the first run, since the
+   * start of the late-data window). A job still running that FactoryLogix has not changed since
+   * then is not in the database until the backfill reaches it (never with `backfill_days` 0): it
+   * is missing from the job lists, and the steps that take their product from the work order are
+   * skipped every time they are read. Fetch the work orders of these jobs that are not in the
+   * database, before the transaction that writes the steps.
+   */
+  private async fetchMissingJobs(jobs: string[], fetchJobs: WorkOrderFetcher): Promise<void> {
+    const mapping = this.mapping.work_orders;
+    if (!mapping || jobs.length === 0) return;
+    await this.lookupJobProducts(this.deps.pool, jobs);
+    const missing = [...new Set(jobs)].filter((job) => !this.jobProducts.has(job));
+    if (missing.length === 0) return;
+    const rows = await fetchJobs(missing, mapping);
+    if (rows.length > 0) await this.workOrders(rows);
   }
 
   /**
@@ -178,7 +202,7 @@ export class Ingestor {
     return out;
   }
 
-  private async unitSteps(rows: Record<string, unknown>[]): Promise<IngestOutcome> {
+  private async unitSteps(rows: Record<string, unknown>[], fetchJobs?: WorkOrderFetcher): Promise<IngestOutcome> {
     const mapping = this.mapping.unit_steps;
     const { timestamps } = this.deps;
     const routesMapped = this.mapping.routes !== null;
@@ -229,6 +253,8 @@ export class Ingestor {
         modified_at: num(rec.values, 'modified_at'),
       });
     }
+
+    if (fetchJobs) await this.fetchMissingJobs(staged.map((s) => s.job_number), fetchJobs);
 
     await this.txWithOperations(async (client) => {
       await this.lookupJobProducts(

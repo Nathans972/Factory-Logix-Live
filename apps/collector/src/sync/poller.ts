@@ -7,7 +7,7 @@ import type { DatasetMapping, DatasetName, MappingConfig, Settings } from '@fld/
 import type { Pool } from '../db.js';
 import type { Logger } from '../logger.js';
 import { buildNaturalKey, selectFieldsFor, type TimestampResolver } from '../mapping/extract.js';
-import type { Ingestor } from '../ingest/datasets.js';
+import type { Ingestor, WorkOrderFetcher } from '../ingest/datasets.js';
 import type { Source } from '../sources/Source.js';
 import { ODataError } from '../odata/client.js';
 import { andAll, cmp, type LiteralValue } from '../odata/literals.js';
@@ -37,6 +37,8 @@ const MAX_PAGES_WINDOW = 1000;
 const FIRST_RUN_LOOKBACK_MS = 2 * 3_600_000;
 const HOUR_MS = 3_600_000;
 const LATE_PULL_MAX_WAIT_MS = 6 * HOUR_MS;
+/** Jobs per request when fetching work orders by job number: a short `$filter` and URL. */
+const JOB_LOOKUP_BATCH = 10;
 
 /** Wait between late-data re-pulls: hourly, doubling after each further failure, capped at 6 h. */
 export function latePullWaitMs(consecutiveFailures: number): number {
@@ -144,6 +146,12 @@ export class Poller {
    * and never get past them. In memory only: after a restart the poll reads from its watermark.
    */
   private readonly resumePoints = new Map<DatasetName, { entitySet: string; field: string; watermark: string | null; point: ResumePoint }>();
+  /**
+   * When `fetchWorkOrders` last asked FactoryLogix for a job (by entity set, job field and job
+   * number), so a job it does not have is asked for at most once an hour, not on every poll that
+   * reads that job's steps again.
+   */
+  private readonly jobLookups = new Map<string, number>();
 
   constructor(
     private readonly deps: PollerDeps,
@@ -156,6 +164,7 @@ export class Poller {
     if (source !== this.source) {
       this.fullPullCursors.clear();
       this.resumePoints.clear();
+      this.jobLookups.clear();
     }
     this.source = source;
   }
@@ -177,6 +186,17 @@ export class Poller {
       }
     }
     return { watermarkField, watermarkKind, timestampField };
+  }
+
+  /**
+   * Where a data source with no stored watermark starts reading. work_orders reaches back as far
+   * as the unit steps the first run reads (the late-data re-pull's `late_data_hours`), so that
+   * the jobs of those steps are in the database when they come in. A job last changed before
+   * that is fetched by job number when its steps come in (see `fetchWorkOrders`).
+   */
+  private firstRunFrom(dataset: DatasetName, settings: Settings, now: number): number {
+    if (dataset !== 'work_orders') return now - FIRST_RUN_LOOKBACK_MS;
+    return now - Math.max(FIRST_RUN_LOOKBACK_MS, settings.late_data_hours * HOUR_MS);
   }
 
   /**
@@ -282,7 +302,7 @@ export class Poller {
         if (plan.watermarkKind === 'timestamp') {
           storedMs = this.usableStoredMs(dataset, stored.ms, now);
           replaceStored = storedMs !== stored.ms;
-          const since = (storedMs ?? now - FIRST_RUN_LOOKBACK_MS) - overlapMs;
+          const since = (storedMs ?? this.firstRunFrom(dataset, settings, now)) - overlapMs;
           filter = cmp(
             plan.watermarkField,
             'ge',
@@ -305,7 +325,7 @@ export class Poller {
         const persistedMs = parseStoredWatermark(state?.watermark ?? null, 'timestamp').ms;
         storedMs = this.usableStoredMs(dataset, persistedMs, now);
         replaceStored = storedMs !== persistedMs;
-        const since = (storedMs ?? now - FIRST_RUN_LOOKBACK_MS) - overlapMs;
+        const since = (storedMs ?? this.firstRunFrom(dataset, settings, now)) - overlapMs;
         filter = cmp(
           plan.timestampField,
           'ge',
@@ -336,9 +356,10 @@ export class Poller {
         maxPages,
         startSkip: fullPullSkip ?? 0,
       };
+      const fetchJobs: WorkOrderFetcher = (jobs, jobMapping) => this.fetchWorkOrders(jobs, jobMapping, settings, now);
       const ingest = async (rows: Record<string, unknown>[]) => {
         if (rows.length === 0) return;
-        const ingested = await this.deps.ingestor.ingest(dataset, rows);
+        const ingested = await this.deps.ingestor.ingest(dataset, rows, fetchJobs);
         out.ingested += ingested.ingested;
         out.skipped += ingested.skipped;
         touched.push(...ingested.touched);
@@ -518,6 +539,59 @@ export class Poller {
   }
 
   /**
+   * The work orders of `jobs` from FactoryLogix, by job number, `JOB_LOOKUP_BATCH` jobs a request
+   * (see `Ingestor.fetchMissingJobs`). A job is asked for at most once an hour (see `jobLookups`);
+   * the hourly late-data re-pull reads its steps again. A failure is logged and leaves those steps
+   * as they were without the lookup: written without their work order, or skipped when they take
+   * their product from it.
+   */
+  private async fetchWorkOrders(jobs: string[], mapping: DatasetMapping, settings: Settings, at: number): Promise<Record<string, unknown>[]> {
+    const field = mapping.fields.job_number;
+    if (!field) return [];
+    const lookupKey = (job: string) => `${mapping.entity_set}\n${field}\n${job}`;
+    const due = jobs.filter((job) => {
+      const asked = this.jobLookups.get(lookupKey(job));
+      return asked === undefined || at - asked >= HOUR_MS;
+    });
+    if (due.length === 0) return [];
+    if (this.jobLookups.size > 50_000) this.jobLookups.clear();
+    for (const job of due) this.jobLookups.set(lookupKey(job), at);
+
+    // A numeric job field takes a number literal: OData refuses `JobId eq '1234'`.
+    const numeric = watermarkKindFromEdm(this.source.edmType(mapping.entity_set, field)) === 'number';
+    const literal = (job: string): LiteralValue =>
+      numeric && Number.isFinite(Number(job)) ? { kind: 'number', value: Number(job) } : { kind: 'string', value: job };
+    const rows: Record<string, unknown>[] = [];
+    try {
+      for (let i = 0; i < due.length; i += JOB_LOOKUP_BATCH) {
+        const filter = due
+          .slice(i, i + JOB_LOOKUP_BATCH)
+          .map((job) => cmp(field, 'eq', this.source.literal(mapping.entity_set, field, literal(job))))
+          .join(' or ');
+        const pull: PullRequest = {
+          entitySet: mapping.entity_set,
+          filter,
+          orderBy: null,
+          select: selectFieldsFor(mapping),
+          pageSize: settings.poll_page_size,
+          maxPages: MAX_PAGES_FULL,
+        };
+        await pullPages(this.source, pull, (page) => {
+          rows.push(...page);
+        });
+      }
+    } catch (err) {
+      this.deps.log.warn(
+        { jobs: due.length, err: err instanceof Error ? err.message : String(err) },
+        'could not fetch the work orders of unit steps whose job is not in the database',
+      );
+      return rows;
+    }
+    this.deps.log.info({ jobs: due.length, found: rows.length }, 'fetched the work orders of unit steps whose job is not in the database');
+    return rows;
+  }
+
+  /**
    * Once per hour re-pull the last `late_data_hours` of unit_steps and defects so that late
    * updates (defect closed later, unit reworked) are not missed (spec 4.5).
    *
@@ -621,9 +695,10 @@ export class Poller {
       const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField]);
       this.deps.timestamps.setReadTime(opts.now ?? null);
       const pull: PullRequest = { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages: MAX_PAGES_WINDOW };
+      const fetchJobs: WorkOrderFetcher = (jobs, jobMapping) => this.fetchWorkOrders(jobs, jobMapping, settings, opts.now ?? Date.now());
       const ingest = async (rows: Record<string, unknown>[]) => {
         if (rows.length === 0) return;
-        const ingested = await this.deps.ingestor.ingest(dataset, rows);
+        const ingested = await this.deps.ingestor.ingest(dataset, rows, fetchJobs);
         out.ingested += ingested.ingested;
         out.skipped += ingested.skipped;
         if (opts.touched) opts.touched.push(...ingested.touched);

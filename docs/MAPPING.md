@@ -322,6 +322,10 @@ the app from running; specific features fall back instead:
 
 - **`qty_complete` not mapped** — derived as the count of distinct units that completed the
   last operation in the product's route on that job.
+- **`unit_steps.product_number` not mapped** — each step takes the product of its work order.
+  When a step's work order is not in the database yet (on install day, a job still running that
+  FactoryLogix has not changed in the last day), the collector fetches that work order by job
+  number before writing the step. A step whose job FactoryLogix does not have is skipped.
 - **`routes` dataset not mapped** — the route (ordered operation list) for each product is
   derived from `unit_steps`: distinct operations per product, ordered by `operation_seq` when
   present, otherwise by first-seen order.
