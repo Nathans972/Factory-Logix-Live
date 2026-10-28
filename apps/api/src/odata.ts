@@ -31,6 +31,8 @@ const parser = new XMLParser({
   trimValues: true,
 });
 
+// Parsed EDMX has no fixed shape; every read below is optional-chained and checked.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type XmlNode = Record<string, any>;
 
 /** Parse an EDMX document into the entity sets + fields the mapping wizard needs. */

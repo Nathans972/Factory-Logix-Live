@@ -30,7 +30,7 @@ export interface TvDashboardProps {
 const ROOT_STYLE = TV_STYLE_VARS as unknown as CSSProperties;
 
 export function TvDashboard({ dashboard, showGauge, tz, updatedAt, compact = false }: TvDashboardProps) {
-  const { job, columns, rows, defect_rows, grouped, show_std_day } = dashboard;
+  const { job, columns, rows, defect_rows, show_std_day } = dashboard;
 
   return (
     <div className={`tv-root tv-dash${compact ? ' tv-compact' : ''}`} style={ROOT_STYLE}>

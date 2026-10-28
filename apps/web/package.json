@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "preview:mock": "cross-env VITE_DATA_SOURCE=mock vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "echo no-lint-for-web",
+    "lint": "eslint .",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {

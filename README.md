@@ -11,7 +11,7 @@ dashboards plus a manager portal with shift views, drill-downs, and admin screen
 - Built against FactoryLogix's documented OData interface.
 - Tested end to end against a simulated FactoryLogix server, not yet against a live
   installation.
-- The automated tests and the typecheck run in CI on every push and pull request.
+- The automated tests, the typecheck and ESLint run in CI on every push and pull request.
 - Field mapping, timestamp mode and licensing are verified on install day (see
   [`docs/INSTALL.md`](docs/INSTALL.md) and [`docs/MAPPING.md`](docs/MAPPING.md)).
 

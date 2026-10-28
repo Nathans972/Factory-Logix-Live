@@ -13,7 +13,7 @@ types.setTypeParser(20, (v: string | null) => (v === null ? null : Number(v)));
  * outside a transaction.
  */
 export interface Db {
-  query<R extends QueryResultRow = any>(text: string, values?: any[]): Promise<QueryResult<R>>;
+  query<R extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<R>>;
 }
 
 export interface PoolWarnLogger {
@@ -33,7 +33,6 @@ export function createPool(env: Pick<AppEnv, 'databaseUrl'>, log?: PoolWarnLogge
   // the next query opens a fresh one, so a warning is all that is needed.
   pool.on('error', (err) => {
     if (log) log.warn({ err: err.message }, 'idle database connection lost');
-    // eslint-disable-next-line no-console
     else console.warn(`idle database connection lost: ${err.message}`);
   });
   return pool;

@@ -21,7 +21,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

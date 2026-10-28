@@ -60,7 +60,7 @@ export async function getCellsForJob(db: Db, job: string, fromUtc?: UtcMs, toUtc
     sql += ` AND c.hour_start_utc < $${params.length}`;
   }
   sql += ' ORDER BY c.hour_start_utc, o.name, c.operator_id';
-  const { rows } = await db.query<CellRow>(sql, params as any[]);
+  const { rows } = await db.query<CellRow>(sql, params);
   return rows.map(mapHourCell);
 }
 
