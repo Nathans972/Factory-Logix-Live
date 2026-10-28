@@ -351,7 +351,9 @@ class Collector {
           productNumber: command.product_number ?? null,
           since: null,
         });
-        await this.health.setLastStandardsRecompute(Date.now());
+        // last_standards_recompute_at is the nightly job's cutoff: a run limited to one product must
+        // not move it, or every other product's rows since the last full run are skipped tonight.
+        if (!command.product_number) await this.health.setLastStandardsRecompute(Date.now());
         await this.recomputer.recomputeCurrentHours(settings, Date.now());
         this.log.info({ ...result, product: command.product_number ?? 'all' }, 'on-demand standards recompute finished');
         return;

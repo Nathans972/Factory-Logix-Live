@@ -209,8 +209,11 @@ On first run (and whenever run manually), the collector backfills `backfill_days
 
 Every night at `std_recompute_time` (default 02:00 plant time), the engine recomputes the
 standard (`StdHr`) for every product/operation that received new completed units since the
-last run. You can also trigger a recompute on demand from Admin > Standards ("Recompute all
-standards now") or from a product's page ("Recompute now" for just that product).
+last recompute of all products (the nightly run, "Recompute all standards now" or the one after
+a backfill; Admin > Standards shows it as "Last recompute"). You can also trigger a recompute on
+demand from Admin > Standards ("Recompute all standards now") or from a product's page
+("Recompute now" for just that product). A single product's recompute does not move that
+cutoff, so the other products' new units are still picked up that night.
 
 ## Retention
 
