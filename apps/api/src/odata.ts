@@ -35,10 +35,18 @@ const parser = new XMLParser({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type XmlNode = Record<string, any>;
 
+/** The `<edmx:Edmx>` root of a parsed document, or null when it is something else (an HTML page, an OData error, JSON). */
+function edmxRoot(doc: XmlNode): XmlNode | null {
+  const edmx: unknown = doc?.Edmx ?? doc?.['edmx:Edmx'];
+  return edmx !== null && typeof edmx === 'object' ? (edmx as XmlNode) : null;
+}
+
 /** Parse an EDMX document into the entity sets + fields the mapping wizard needs. */
 export function parseEdmx(xml: string, fetchedAt = Date.now()): ODataMetadata {
-  const doc = parser.parse(xml) as XmlNode;
-  const edmx: XmlNode = doc?.Edmx ?? doc?.['edmx:Edmx'] ?? {};
+  return readEdmx(edmxRoot(parser.parse(xml) as XmlNode) ?? {}, fetchedAt);
+}
+
+function readEdmx(edmx: XmlNode, fetchedAt: number): ODataMetadata {
   const dataServices: XmlNode = edmx?.DataServices ?? {};
   const schemas = toArray<XmlNode>(dataServices?.Schema);
 
@@ -115,6 +123,7 @@ export interface FetchResult<T> {
   status: number;
   data: T | null;
   error: string | null;
+  content_type: string | null;
   latency_ms: number;
 }
 
@@ -130,16 +139,18 @@ async function request(url: string, creds: ODataCredentials, timeoutMs: number, 
       signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
+    const contentType = res.headers.get('content-type');
     if (!res.ok) {
       return {
         ok: false,
         status: res.status,
         data: null,
         error: `HTTP ${res.status} ${res.statusText}${text ? `: ${text.slice(0, 400)}` : ''}`,
+        content_type: contentType,
         latency_ms: Date.now() - started,
       };
     }
-    return { ok: true, status: res.status, data: text, error: null, latency_ms: Date.now() - started };
+    return { ok: true, status: res.status, data: text, error: null, content_type: contentType, latency_ms: Date.now() - started };
   } catch (err) {
     const message =
       err instanceof Error
@@ -147,7 +158,7 @@ async function request(url: string, creds: ODataCredentials, timeoutMs: number, 
           ? `request timed out after ${timeoutMs} ms`
           : err.message
         : String(err);
-    return { ok: false, status: 0, data: null, error: message, latency_ms: Date.now() - started };
+    return { ok: false, status: 0, data: null, error: message, content_type: null, latency_ms: Date.now() - started };
   }
 }
 
@@ -158,7 +169,17 @@ export async function fetchMetadata(
   const res = await request(joinUrl(creds.base_url, '$metadata'), creds, timeoutMs, 'application/xml');
   if (!res.ok || !res.data) return { metadata: null, error: res.error ?? 'no response', latency_ms: res.latency_ms };
   try {
-    return { metadata: parseEdmx(res.data), error: null, latency_ms: res.latency_ms };
+    // A login page, a web server's default page or an OData error document can answer 200 too.
+    const edmx = edmxRoot(parser.parse(res.data) as XmlNode);
+    if (!edmx) {
+      const got = res.content_type?.split(';')[0].trim() || 'no Content-Type';
+      return {
+        metadata: null,
+        error: `the address answered, but not with OData $metadata (got ${got}); check that it is the OData service root`,
+        latency_ms: res.latency_ms,
+      };
+    }
+    return { metadata: readEdmx(edmx, Date.now()), error: null, latency_ms: res.latency_ms };
   } catch (err) {
     return {
       metadata: null,

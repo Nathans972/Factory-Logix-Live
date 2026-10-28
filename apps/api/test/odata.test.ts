@@ -1,9 +1,10 @@
 import { EXAMPLE_MAPPING, type DatasetMapping } from '@fld/shared';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildPreviewPath,
   computePreviewChecks,
   extractRows,
+  fetchMetadata,
   joinUrl,
   parseEdmx,
   primaryTimestampField,
@@ -95,6 +96,41 @@ describe('parseEdmx', () => {
     const meta = parseEdmx('<html><body>nope</body></html>');
     expect(meta.entity_sets).toEqual([]);
     expect(meta.version).toBeNull();
+  });
+});
+
+describe('fetchMetadata', () => {
+  const creds = { base_url: 'http://fl:6065/odata', username: 'svc', password: 'pw' };
+  const answer200 = (body: string, contentType: string): void => {
+    vi.stubGlobal('fetch', async () => new Response(body, { status: 200, headers: { 'Content-Type': contentType } }));
+  };
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('reads an EDMX answer', async () => {
+    answer200(SAMPLE_EDMX, 'application/xml');
+    const { metadata, error } = await fetchMetadata(creds);
+    expect(error).toBeNull();
+    expect(metadata?.version).toBe('4.0');
+    expect(metadata?.entity_sets.map((s) => s.name)).toEqual(['UnitProcessHistory', 'WorkOrders']);
+  });
+
+  it('refuses a 200 answer that is not EDMX, naming what came back', async () => {
+    const answers: Array<[body: string, contentType: string, got: string]> = [
+      [
+        '<?xml version="1.0" encoding="utf-8"?><m:error xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"><m:code /><m:message xml:lang="en-US">Resource not found</m:message></m:error>',
+        'application/xml',
+        'application/xml',
+      ],
+      ['{"@odata.context":"x","value":[]}', 'application/json; charset=utf-8', 'application/json'],
+    ];
+    for (const [body, contentType, got] of answers) {
+      answer200(body, contentType);
+      const { metadata, error } = await fetchMetadata(creds);
+      expect(metadata).toBeNull();
+      expect(error).toContain(`not with OData $metadata (got ${got})`);
+    }
   });
 });
 
