@@ -27,6 +27,6 @@ jobs:
       - name: Engine tests
         run: pnpm --filter @fld/engine test
       - name: Other unit tests
-        run: pnpm --filter @fld/api --filter @fld/collector --filter @fld/web test
+        run: pnpm --filter @fld/shared --filter @fld/api --filter @fld/collector --filter @fld/web test
       - name: Build web (mock)
         run: pnpm build:web:mock
