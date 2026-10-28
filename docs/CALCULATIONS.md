@@ -118,8 +118,8 @@ distinguishes:
   treated as a visitor on a job (optionally a specific operation), overriding the rule above
   until the pin is removed or expires.
 
-Slow operations are naturally safe under this rule: even a 5-units/hour operation gives an
-operator 40+ minutes of work time on a single board, comfortably clearing the 10-minute bar.
+Slow operations are naturally safe under this rule: a 5-units/hour operation gives an operator
+about 12 minutes of work time on a single board (60 ÷ 5), which still clears the 10-minute bar.
 
 ## 4. Ownership windows and charged minutes
 

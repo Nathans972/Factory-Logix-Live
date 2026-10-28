@@ -132,7 +132,9 @@ history on every poll (spec 4.5):
 
 Regardless of mode, once per hour the collector also re-pulls the last `late_data_hours`
 (default 24) of `unit_steps` and `defects` to catch rows FactoryLogix updated after the fact
-(a defect closed later, a unit marked reworked after the initial scan).
+(a defect closed later, a unit marked reworked after the initial scan). A failed re-pull is
+recorded under source `late_data` in Admin > Sync and retried after an hour, then after 2 and
+4 hours, at most every 6 hours, until one succeeds; the regular polls are not affected.
 
 ## Natural keys
 
@@ -150,6 +152,14 @@ duplicating it. Typical keys:
 Pick fields that are always present and that do not change between the initial scan and a
 later update to the same row.
 
+The natural key also de-duplicates the raw payload archive: `raw_events` gets a new row for a
+key only when the payload FactoryLogix sent differs from the last one stored for that key, so
+re-reading unchanged rows costs no disk.
+
+A row that arrives without one of its required target fields (or whose product or operation
+cannot be resolved) is skipped rather than stored half-filled. Admin > Sync shows the skipped
+count per pull; if it stays above zero, check the mapping of the required fields.
+
 ## Timestamp modes
 
 FactoryLogix may return timestamps in different shapes depending on version and configuration.
@@ -161,6 +171,24 @@ sample rows during the Test & preview step:
 | `offset_present` (default) | ISO 8601 strings include a UTC offset or `Z` (e.g. `2025-06-01T14:30:00-04:00`) and are parsed directly. If a string with no offset shows up, it is interpreted as UTC and a one-time warning is logged. |
 | `utc` | Timestamps have no offset, and the naive value should be read as UTC. |
 | `local_no_offset` | Timestamps have no offset, and the naive value should be read as **plant-local** time. |
+
+**What `local_no_offset` changes, in both directions:**
+
+- **Reading.** Naive strings (`2025-06-01T14:30:00`) and offset-less JSON dates
+  (`/Date(1748788200000)/`, the OData v2 form of `Edm.DateTime`, whose number is the wall-clock
+  time counted as if it were UTC) are read as plant-local wall-clock time. A value with an
+  explicit offset (`...-04:00`, `/Date(1748788200000+0300)/`) is still taken as the instant it
+  names.
+- **Writing.** Time filters the collector sends (`$filter=... ge datetime'...'`) use the same
+  form FactoryLogix returns: on an OData v2/v3 service, an `Edm.DateTime` (or untyped) field is
+  compared against plant-local wall-clock time, e.g. `datetime'2025-06-01T10:30:00'` for
+  14:30 UTC in New York in summer.
+- **Not changed:** OData v4 literals and `Edm.DateTimeOffset` fields always carry an offset, so
+  they stay in UTC (`2025-06-01T14:30:00Z`) and mean the same instant whatever the mode.
+  If a v4 FactoryLogix service ever returns offset-less values for a `DateTimeOffset` field,
+  check on install day whether its filters behave as UTC before relying on this mode.
+
+The `utc` and `offset_present` modes read and write exactly as before.
 
 **The fall-back-night rule (`local_no_offset` only):** on the one night per year clocks fall
 back, one local hour occurs twice and a naive timestamp in that hour is ambiguous. The
