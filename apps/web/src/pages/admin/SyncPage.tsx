@@ -91,6 +91,21 @@ export function SyncPage() {
     },
     { key: 'rows', header: 'Rows', align: 'right', render: (e) => (e.rows == null ? '—' : e.rows), value: (e) => e.rows ?? -1 },
     {
+      key: 'ingested',
+      header: 'Ingested',
+      align: 'right',
+      render: (e) => (e.ingested == null ? '—' : e.ingested),
+      value: (e) => e.ingested ?? -1,
+    },
+    {
+      key: 'skipped',
+      header: 'Skipped',
+      align: 'right',
+      render: (e) =>
+        e.skipped == null ? '—' : e.skipped > 0 ? <StatusBadge tone="warn">{e.skipped}</StatusBadge> : e.skipped,
+      value: (e) => e.skipped ?? -1,
+    },
+    {
       key: 'duration',
       header: 'Duration',
       align: 'right',
@@ -187,7 +202,7 @@ export function SyncPage() {
             rowKey={(e) => e.id}
             exportName="sync-log"
             defaultSort={{ key: 'started', dir: 'desc' }}
-            rowClassName={(e) => (e.status === 'error' ? 'row-flag' : undefined)}
+            rowClassName={(e) => (e.status === 'error' || (e.skipped ?? 0) > 0 ? 'row-flag' : undefined)}
             emptyMessage="No poll history yet."
             dense
           />

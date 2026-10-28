@@ -72,7 +72,7 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | POST | `/api/admin/users` | admin | `CreateUserRequest` | `User` |
 | PATCH | `/api/admin/users/:id` | admin | `UpdateUserRequest` | `User` |
 | GET | `/api/admin/sync` | admin | | `SyncHealth` |
-| GET | `/api/admin/sync/log?limit=` | admin | | `SyncLogEntry[]` |
+| GET | `/api/admin/sync/log?limit=` | manager | | `SyncLogEntry[]` (managers can open Sync health, so they can read the poll log; includes `ingested` / `skipped` per pull) |
 | POST | `/api/admin/backfill/run` | admin | | `OkResponse` (sets requested_now) |
 | GET | `/api/admin/audit?limit=&offset=` | admin | | `AuditListResponse` |
 

@@ -7,7 +7,7 @@ import { createPool } from './pool.js';
 async function main(): Promise<void> {
   const env = loadEnv();
   const log = createLogger(env);
-  const pool = createPool(env);
+  const pool = createPool(env, log);
   try {
     const applied = await migrate(
       pool,

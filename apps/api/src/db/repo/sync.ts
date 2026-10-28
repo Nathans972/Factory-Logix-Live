@@ -95,10 +95,12 @@ export async function listSyncLog(db: Db, limit: number): Promise<SyncLogEntry[]
     started_at: Date;
     finished_at: Date | null;
     rows: number | null;
+    ingested: number | null;
+    skipped: number | null;
     status: 'ok' | 'error' | 'running';
     error: string | null;
   }>(
-    `SELECT id, source, started_at, finished_at, rows, status, error
+    `SELECT id, source, started_at, finished_at, rows, ingested, skipped, status, error
      FROM sync_log ORDER BY started_at DESC, id DESC LIMIT $1`,
     [limit],
   );
@@ -108,19 +110,30 @@ export async function listSyncLog(db: Db, limit: number): Promise<SyncLogEntry[]
     started_at: toMsOr(r.started_at, 0),
     finished_at: toMs(r.finished_at),
     rows: toNum(r.rows),
+    ingested: toNum(r.ingested),
+    skipped: toNum(r.skipped),
     status: r.status,
     error: r.error,
   }));
 }
 
-/** Persist `backfill_progress.requested_now = true` so the request survives a collector restart. */
+/**
+ * Persist `backfill_progress.requested_now = true` so the request survives a collector restart.
+ * A finished or failed backfill starts over (same reset as the collector's `requestNow`); one in
+ * progress keeps its days and phase, which the collector derives from the counters.
+ */
 export async function requestBackfillNow(db: Db): Promise<BackfillProgress> {
   const { rows } = await db.query<{ backfill_progress: BackfillProgress }>(
     `INSERT INTO sync_state (source, backfill_progress, updated_at)
      VALUES ($1, jsonb_build_object('status','scheduled','requested_now',true,'days_total',0,'days_done',0,
-             'current_day',NULL,'started_at',NULL,'finished_at',NULL,'error',NULL), now())
+             'current_day',NULL,'started_at',NULL,'finished_at',NULL,'error',NULL,
+             'first_day',NULL,'standards_done',false,'recolor_days_done',0), now())
      ON CONFLICT (source) DO UPDATE
        SET backfill_progress = COALESCE(sync_state.backfill_progress, '{}'::jsonb)
+             || CASE WHEN sync_state.backfill_progress->>'status' IN ('done', 'error')
+                  THEN jsonb_build_object('days_done', 0, 'finished_at', NULL, 'error', NULL,
+                         'first_day', NULL, 'standards_done', false, 'recolor_days_done', 0)
+                  ELSE '{}'::jsonb END
              || jsonb_build_object('requested_now', true, 'status', 'scheduled'),
            updated_at = now()
      RETURNING backfill_progress`,

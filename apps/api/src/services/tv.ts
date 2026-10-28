@@ -4,6 +4,7 @@ import type { FastifyRequest } from 'fastify';
 import type { Db } from '../db/pool.js';
 import { mapDisplay, touchDisplay, type DisplayRow } from '../db/repo/displays.js';
 import { getSettings } from '../db/repo/settings.js';
+import { ApiError } from '../errors.js';
 import { buildDashboard } from './dashboard.js';
 import { buildSyncHealth } from './sync-health.js';
 
@@ -36,7 +37,9 @@ export async function buildTvState(
   const status: TvState['status'] = display.claimed_at === null ? 'unclaimed' : display.job_number ? 'assigned' : 'unassigned';
 
   let dashboard: TvState['dashboard'] = null;
+  let jobStatus: TvState['job_status'] = null;
   if (status === 'assigned' && display.job_number) {
+    jobStatus = 'ok';
     try {
       dashboard = await buildDashboard(
         db,
@@ -50,9 +53,14 @@ export async function buildTvState(
         settings,
       );
     } catch (err) {
-      // An assigned job that no longer exists (or an engine error) must not take the TV offline.
-      opts.log?.warn({ err, job_number: display.job_number }, 'could not build the dashboard for this display');
+      // A job that is not ingested yet (or an engine error) must not take the TV offline.
       dashboard = null;
+      if (err instanceof ApiError && err.statusCode === 404) {
+        jobStatus = 'not_found';
+      } else {
+        jobStatus = 'error';
+        opts.log?.warn({ err, job_number: display.job_number }, 'could not build the dashboard for this display');
+      }
     }
   }
 
@@ -62,6 +70,7 @@ export async function buildTvState(
     pairing_code: display.pairing_code,
     display,
     dashboard,
+    job_status: jobStatus,
     sync: {
       status: sync.status,
       delayed: sync.delayed,

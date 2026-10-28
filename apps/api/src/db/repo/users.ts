@@ -1,5 +1,6 @@
 import type { Role, User } from '@fld/shared';
-import type { Db } from '../pool.js';
+import type { Pool } from 'pg';
+import { withTransaction, type Db } from '../pool.js';
 import { toBool, toMs, toMsOr } from '../util.js';
 
 export type UserRow = {
@@ -67,15 +68,25 @@ export async function createUser(
   return mapUser(rows[0]);
 }
 
-/** Creates the first admin; returns null when a user already exists (setup already done). */
-export async function createFirstAdmin(db: Db, username: string, passwordHash: string): Promise<User | null> {
-  const { rows } = await db.query<UserRow>(
-    `INSERT INTO users (username, password_hash, role)
-     SELECT $1, $2, 'admin'::user_role WHERE NOT EXISTS (SELECT 1 FROM users)
-     RETURNING ${PUBLIC_COLUMNS}`,
-    [username, passwordHash],
-  );
-  return rows.length > 0 ? mapUser(rows[0]) : null;
+/** Serializes first-admin setup: held for the setup transaction only. */
+export const FIRST_ADMIN_LOCK_ID = 815_243_002;
+
+/**
+ * Creates the first admin; returns null when a user already exists (setup already done).
+ * Two simultaneous setups would both see an empty `users` table under READ COMMITTED, so the
+ * insert runs after a transaction-scoped advisory lock: the second one waits, then finds a user.
+ */
+export async function createFirstAdmin(pool: Pool, username: string, passwordHash: string): Promise<User | null> {
+  return withTransaction(pool, async (db) => {
+    await db.query('SELECT pg_advisory_xact_lock($1)', [FIRST_ADMIN_LOCK_ID]);
+    const { rows } = await db.query<UserRow>(
+      `INSERT INTO users (username, password_hash, role)
+       SELECT $1, $2, 'admin'::user_role WHERE NOT EXISTS (SELECT 1 FROM users)
+       RETURNING ${PUBLIC_COLUMNS}`,
+      [username, passwordHash],
+    );
+    return rows.length > 0 ? mapUser(rows[0]) : null;
+  });
 }
 
 export async function updateUser(

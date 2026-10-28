@@ -25,6 +25,31 @@ describe('$filter literals', () => {
     expect(formatTimestampLiteral(TS, 'Edm.DateTimeOffset', '2.0')).toBe("datetimeoffset'2025-01-01T00:00:00Z'");
   });
 
+  it('local_no_offset: writes Edm.DateTime filter values in plant wall-clock time', () => {
+    const local = { mode: 'local_no_offset' as const, timezone: 'America/New_York' };
+    expect(formatTimestampLiteral(TS, 'Edm.DateTime', '2.0', local)).toBe("datetime'2024-12-31T19:00:00'");
+    // No $metadata type on a v2 service: the same naive datetime literal.
+    expect(formatTimestampLiteral(TS, null, '2.0', local)).toBe("datetime'2024-12-31T19:00:00'");
+    // Daylight saving: 2025-03-09 06:30Z is 01:30 EST, 07:30Z is 03:30 EDT; 2025-11-02 05:45Z and
+    // 06:05Z are 01:45 EDT and 01:05 EST.
+    expect(formatTimestampLiteral(Date.parse('2025-03-09T06:30:00Z'), 'Edm.DateTime', '2.0', local)).toBe("datetime'2025-03-09T01:30:00'");
+    expect(formatTimestampLiteral(Date.parse('2025-03-09T07:30:00Z'), 'Edm.DateTime', '2.0', local)).toBe("datetime'2025-03-09T03:30:00'");
+    expect(formatTimestampLiteral(Date.parse('2025-11-02T05:45:00Z'), 'Edm.DateTime', '2.0', local)).toBe("datetime'2025-11-02T01:45:00'");
+    expect(formatTimestampLiteral(Date.parse('2025-11-02T06:05:00Z'), 'Edm.DateTime', '2.0', local)).toBe("datetime'2025-11-02T01:05:00'");
+    // Literals with an explicit offset stay UTC.
+    expect(formatTimestampLiteral(TS, 'Edm.DateTimeOffset', '2.0', local)).toBe("datetimeoffset'2025-01-01T00:00:00Z'");
+    expect(formatTimestampLiteral(TS, 'Edm.DateTimeOffset', '4.0', local)).toBe('2025-01-01T00:00:00Z');
+    expect(formatTimestampLiteral(TS, null, null, local)).toBe('2025-01-01T00:00:00Z');
+  });
+
+  it('utc and offset_present modes write the same literals as without a mode', () => {
+    for (const mode of ['utc', 'offset_present'] as const) {
+      const opts = { mode, timezone: 'America/New_York' };
+      expect(formatTimestampLiteral(TS, 'Edm.DateTime', '2.0', opts)).toBe("datetime'2025-01-01T00:00:00'");
+      expect(formatTimestampLiteral(TS, 'Edm.DateTimeOffset', '4.0', opts)).toBe('2025-01-01T00:00:00Z');
+    }
+  });
+
   it('formats Edm.Date as a plain calendar date', () => {
     expect(formatTimestampLiteral(TS, 'Edm.Date', '4.0')).toBe('2025-01-01');
   });

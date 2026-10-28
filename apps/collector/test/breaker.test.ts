@@ -64,6 +64,16 @@ describe('health status', () => {
     expect(computeStatus(stale.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('down');
   });
 
+  it('stays open after a restart until the persisted openUntil', () => {
+    const restarted = new CircuitBreaker();
+    restarted.hydrate({ consecutiveFailures: 4, lastSuccessAt: null, lastError: 'HTTP 503', openUntil: now + 60_000 });
+    expect(restarted.isOpen(now)).toBe(true);
+    expect(restarted.isOpen(now + 60_000)).toBe(false);
+    const closed = new CircuitBreaker();
+    closed.hydrate({ consecutiveFailures: 0, lastSuccessAt: now - 1_000, lastError: null, openUntil: null });
+    expect(closed.isOpen(now)).toBe(false);
+  });
+
   it('flags delay after 3x the poll interval', () => {
     expect(isDelayed(now - 2 * INTERVAL, now, INTERVAL)).toBe(false);
     expect(isDelayed(now - 4 * INTERVAL, now, INTERVAL)).toBe(true);

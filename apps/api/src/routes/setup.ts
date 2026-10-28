@@ -48,7 +48,7 @@ export async function registerSetupRoutes(app: FastifyInstance, ctx: AppContext)
   app.post('/api/setup/admin', async (req, reply): Promise<AuthMe> => {
     const body = parseWith(setupAdminSchema, req.body);
     const hash = await hashPassword(body.password);
-    const user = await createFirstAdmin(ctx.db, body.username, hash);
+    const user = await createFirstAdmin(ctx.pool, body.username, hash);
     if (!user) throw conflict('setup has already been completed');
     req.auth = user;
     await audit(req, 'setup.admin_created', 'user', user.id, null, { username: user.username, role: user.role });

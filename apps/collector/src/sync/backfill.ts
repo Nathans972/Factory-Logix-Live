@@ -2,6 +2,11 @@
  * Historical backfill (spec 4.7): oldest first, one local day per chunk, inside the configured
  * off-shift window unless an admin asked for it now. Progress lives in
  * sync_state('backfill').backfill_progress so it resumes after a restart.
+ *
+ * Two phases. Download: pull each day and recompute its hour cells (counts appear early, but
+ * no standards exist yet, so the cells have no color). Recoloring: run the standards recompute
+ * once, then recompute the hour cells of every backfilled day again, one day per chunk, so the
+ * history gets standards and colors.
  */
 import { addDays, inLocalWindow, localDateString, localToUtc } from '@fld/engine';
 import type { BackfillProgress, MappingConfig, Settings } from '@fld/shared';
@@ -14,6 +19,15 @@ import { loadBackfillProgress, saveBackfillProgress } from './state.js';
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 
+/** Runs the full standards recompute between the download and the recoloring phase. */
+export type StandardsRunner = (settings: Settings, mapping: MappingConfig, now: number) => Promise<void>;
+
+export interface TickResult {
+  worked: boolean;
+  /** The whole backfill (download and recoloring) just finished. */
+  finished: boolean;
+}
+
 export function emptyProgress(daysTotal: number): BackfillProgress {
   return {
     status: 'scheduled',
@@ -24,6 +38,9 @@ export function emptyProgress(daysTotal: number): BackfillProgress {
     started_at: null,
     finished_at: null,
     error: null,
+    first_day: null,
+    standards_done: false,
+    recolor_days_done: 0,
   };
 }
 
@@ -36,14 +53,22 @@ export function dayBounds(tz: string, date: string): { from: number; to: number 
   return { from, to };
 }
 
+function hoursOf(tz: string, day: string): number[] {
+  const { from, to } = dayBounds(tz, day);
+  const hours: number[] = [];
+  for (let h = from; h < to; h += HOUR_MS) hours.push(h);
+  return hours;
+}
+
 export class Backfill {
   private progress: BackfillProgress | null = null;
 
   constructor(
     private readonly pool: Pool,
     private readonly log: Logger,
-    private readonly poller: Poller,
-    private readonly recomputer: Recomputer,
+    private readonly poller: Pick<Poller, 'pullWindow'>,
+    private readonly recomputer: Pick<Recomputer, 'recomputeHours'>,
+    private readonly runStandards: StandardsRunner,
   ) {}
 
   get current(): BackfillProgress | null {
@@ -72,7 +97,7 @@ export class Backfill {
 
   isActive(): boolean {
     const status = this.progress?.status;
-    return status === 'scheduled' || status === 'running' || status === 'paused';
+    return status === 'scheduled' || status === 'running' || status === 'paused' || status === 'recoloring';
   }
 
   /** True when the backfill may process a chunk right now. */
@@ -86,7 +111,16 @@ export class Backfill {
     if (!this.progress) await this.load();
     if (!this.progress) return;
     if (this.progress.status === 'done' || this.progress.status === 'error') {
-      this.progress = { ...this.progress, status: 'scheduled', days_done: 0, finished_at: null, error: null };
+      this.progress = {
+        ...this.progress,
+        status: 'scheduled',
+        days_done: 0,
+        finished_at: null,
+        error: null,
+        first_day: null,
+        standards_done: false,
+        recolor_days_done: 0,
+      };
     }
     this.progress.requested_now = true;
     await saveBackfillProgress(this.pool, this.progress);
@@ -96,7 +130,7 @@ export class Backfill {
     if (this.progress) await saveBackfillProgress(this.pool, this.progress);
   }
 
-  /** Mark as paused when we are outside the window (spec 4.7). */
+  /** Mark as paused when we are outside the window (spec 4.7). The next tick resumes the right phase. */
   async pause(): Promise<void> {
     if (!this.progress || this.progress.status === 'paused' || !this.isActive()) return;
     this.progress.status = 'paused';
@@ -104,36 +138,41 @@ export class Backfill {
   }
 
   /**
-   * Process exactly one day chunk. Returns whether work was done and whether the backfill
-   * just finished (the caller then runs a full standards recompute).
+   * Process exactly one chunk: one downloaded day, the standards recompute, or one re-colored
+   * day. Returns whether work was done and whether the whole backfill just finished.
    */
-  async tick(mapping: MappingConfig, settings: Settings, now: number): Promise<{ worked: boolean; finished: boolean }> {
+  async tick(mapping: MappingConfig, settings: Settings, now: number): Promise<TickResult> {
     if (!this.progress) await this.load();
     if (!this.progress || !this.isActive()) return { worked: false, finished: false };
+    const progress = this.progress;
 
     const tz = settings.plant_timezone;
-    if (this.progress.days_total !== settings.backfill_days && this.progress.days_done === 0) {
-      this.progress.days_total = settings.backfill_days;
+    if (progress.days_total !== settings.backfill_days && progress.days_done === 0) {
+      progress.days_total = settings.backfill_days;
     }
-    if (this.progress.days_done >= this.progress.days_total) {
-      return this.finish(now);
+    // The range is fixed when the first day is processed; counting from `now` on every chunk
+    // skipped a day each time the backfill ran across midnight. Progress saved before first_day
+    // existed computes it once here and keeps it.
+    if (!progress.first_day || progress.days_done === 0) {
+      progress.first_day = localDateString(now - progress.days_total * DAY_MS, tz);
     }
 
-    const firstDay = localDateString(now - this.progress.days_total * DAY_MS, tz);
-    const day = addDays(firstDay, this.progress.days_done);
+    if (progress.days_done >= progress.days_total) return this.recolor(mapping, settings, now, progress.first_day);
+
+    const day = addDays(progress.first_day, progress.days_done);
     const { from, to } = dayBounds(tz, day);
 
-    if (this.progress.status !== 'running') {
-      this.progress.status = 'running';
-      this.progress.started_at = this.progress.started_at ?? now;
+    if (progress.status !== 'running') {
+      progress.status = 'running';
+      progress.started_at = progress.started_at ?? now;
     }
-    this.progress.current_day = day;
-    this.progress.error = null;
+    progress.current_day = day;
+    progress.error = null;
     await this.persist();
 
     const touched: number[] = [];
     try {
-      if (this.progress.days_done === 0) {
+      if (progress.days_done === 0) {
         await this.poller.pullWindow('work_orders', mapping.work_orders, settings, {
           from,
           to: now,
@@ -146,26 +185,75 @@ export class Backfill {
         await this.poller.pullWindow('defects', mapping.defects, settings, { from, to, logSource: 'defects:backfill', touched });
       }
 
-      const hours: number[] = [];
-      for (let h = from; h < to; h += HOUR_MS) hours.push(h);
-      await this.recomputer.recomputeHours(hours, settings, now);
+      await this.recomputer.recomputeHours(hoursOf(tz, day), settings, now);
 
-      this.progress.days_done += 1;
+      progress.days_done += 1;
+      if (progress.days_done >= progress.days_total) {
+        progress.status = 'recoloring';
+        progress.current_day = null;
+        progress.standards_done = false;
+        progress.recolor_days_done = 0;
+      }
       await this.persist();
-      this.log.info({ day, days_done: this.progress.days_done, days_total: this.progress.days_total }, 'backfill day complete');
+      this.log.info({ day, days_done: progress.days_done, days_total: progress.days_total }, 'backfill day complete');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.progress.error = message;
+      progress.error = message;
       await this.persist();
       this.log.error({ day, err: message }, 'backfill day failed');
-      return { worked: true, finished: false };
     }
-
-    if (this.progress.days_done >= this.progress.days_total) return this.finish(now);
     return { worked: true, finished: false };
   }
 
-  private async finish(now: number): Promise<{ worked: boolean; finished: boolean }> {
+  /** Recoloring phase: standards first, then one day of hour cells per chunk. */
+  private async recolor(mapping: MappingConfig, settings: Settings, now: number, firstDay: string): Promise<TickResult> {
+    const progress = this.progress as BackfillProgress;
+    progress.status = 'recoloring';
+    progress.started_at = progress.started_at ?? now;
+    progress.error = null;
+    const done = progress.recolor_days_done ?? 0;
+
+    if (!progress.standards_done) {
+      progress.current_day = null;
+      await this.persist();
+      try {
+        await this.runStandards(settings, mapping, now);
+        progress.standards_done = true;
+        progress.recolor_days_done = done;
+        await this.persist();
+        this.log.info('standards recomputed after backfill; re-coloring backfilled days');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        progress.error = message;
+        await this.persist();
+        this.log.error({ err: message }, 'standards recompute after backfill failed');
+      }
+      return { worked: true, finished: false };
+    }
+
+    if (done >= progress.days_total) return this.finish(now);
+
+    const day = addDays(firstDay, done);
+    progress.current_day = day;
+    await this.persist();
+    try {
+      await this.recomputer.recomputeHours(hoursOf(settings.plant_timezone, day), settings, now);
+      progress.recolor_days_done = done + 1;
+      await this.persist();
+      this.log.info({ day, recolor_days_done: done + 1, days_total: progress.days_total }, 'backfill day re-colored');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      progress.error = message;
+      await this.persist();
+      this.log.error({ day, err: message }, 'backfill re-color failed');
+      return { worked: true, finished: false };
+    }
+
+    if (done + 1 >= progress.days_total) return this.finish(now);
+    return { worked: true, finished: false };
+  }
+
+  private async finish(now: number): Promise<TickResult> {
     if (!this.progress) return { worked: false, finished: false };
     this.progress.status = 'done';
     this.progress.finished_at = now;

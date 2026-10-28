@@ -57,7 +57,7 @@ class Collector {
 
   constructor(private readonly env: Env) {
     this.log = createLogger({ level: env.logLevel, pretty: !env.isProduction });
-    this.pool = createPool(env.databaseUrl);
+    this.pool = createPool(env.databaseUrl, this.log);
     this.health = new HealthReporter(this.pool, this.log);
     this.operations = new OperationCache(this.pool);
     this.timestamps = new TimestampResolver({
@@ -160,6 +160,16 @@ class Collector {
     this.warnedUnconfigured = false;
 
     const mapping = this.config?.mapping as MappingConfig;
+
+    // A restart must not reset the backoff: when the hydrated breaker is still open, the first
+    // poll waits until it closes (heartbeat and health reports keep going meanwhile).
+    if (this.pollCount === 0 && this.breaker.isOpen(Date.now())) {
+      const until = this.breaker.openUntil as number;
+      this.log.info({ open_until: new Date(until).toISOString() }, 'circuit breaker still open after restart; waiting before the first poll');
+      await this.idle(until, settings, mapping, intervalMs);
+      return;
+    }
+
     const now = Date.now();
     await this.source?.init();
 
@@ -257,6 +267,7 @@ class Collector {
     } else {
       this.source.setTimeoutSeconds(config.settings.odata_timeout_seconds);
     }
+    this.source.setTimestampMode(config.settings.fl_timestamp_mode, config.settings.plant_timezone);
 
     if (!this.ingestor) {
       this.ingestor = new Ingestor(
@@ -275,7 +286,11 @@ class Collector {
     }
 
     if (!this.backfill) {
-      this.backfill = new Backfill(this.pool, this.log, this.poller, this.recomputer);
+      this.backfill = new Backfill(this.pool, this.log, this.poller, this.recomputer, async (settings, mapping, now) => {
+        const result = await this.standards.run({ settings, mapping, now, productNumber: null, since: null });
+        await this.health.setLastStandardsRecompute(Date.now());
+        this.log.info(result, 'standards recomputed after backfill');
+      });
     }
     await this.backfill.ensureScheduled(config.settings);
 
@@ -409,15 +424,10 @@ class Collector {
         await this.backfill.load();
         if (this.backfill.isActive()) {
           if (this.backfill.shouldRun(settings, now) && until - now > 5_000) {
-            const { finished } = await this.backfill.tick(mapping, settings, Date.now()).catch((err) => {
+            // One chunk per pass: a downloaded day, the standards recompute, or a re-colored day.
+            await this.backfill.tick(mapping, settings, Date.now()).catch((err) => {
               this.log.error({ err: errorMessage(err) }, 'backfill chunk failed');
-              return { worked: false, finished: false };
             });
-            if (finished) {
-              const result = await this.standards.run({ settings, mapping, now: Date.now(), productNumber: null, since: null });
-              await this.health.setLastStandardsRecompute(Date.now());
-              this.log.info(result, 'standards recomputed after backfill');
-            }
             await this.delay(Math.min(settings.backfill_pause_seconds * 1_000, Math.max(0, until - Date.now())));
             continue;
           }

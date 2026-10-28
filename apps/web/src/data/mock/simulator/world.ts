@@ -528,12 +528,17 @@ export function demoSyncLog(now: number): SyncLogEntry[] {
     const started = Math.round(now - (i * 1.5 + 0.4) * MIN);
     const source = sources[i % sources.length]!;
     const failed = i === 4;
+    const count = failed ? null : source === 'unit_steps' ? 40 + i * 7 : i % 3;
+    // One unit_steps pull drops a row with a missing required field, so the highlight shows.
+    const skipped = count === null ? null : i === 3 ? 1 : 0;
     rows.push({
       id: id--,
       source,
       started_at: started,
       finished_at: started + (failed ? 20_100 : 900 + i * 37),
-      rows: failed ? null : source === 'unit_steps' ? 40 + i * 7 : i % 3,
+      rows: count,
+      ingested: count === null || skipped === null ? null : count - skipped,
+      skipped,
       status: failed ? 'error' : 'ok',
       error: failed ? 'Request timed out after 20000 ms (retrying with backoff)' : null,
     });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BATCH_SIZE, bulkUpsert, chunk, toMs, type Queryable } from '../src/db.js';
+import { BATCH_SIZE, bulkUpsert, chunk, createPool, toMs, type Queryable } from '../src/db.js';
 import { parseControlPayload } from '../src/control.js';
 
 function fakeDb(): { db: Queryable; calls: { sql: string; params: unknown[] }[] } {
@@ -34,6 +34,46 @@ describe('bulkUpsert', () => {
         ' ON CONFLICT (operator_id) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, operators.display_name), last_seen_at = now()',
     );
     expect(calls[0]!.params).toEqual(['jdoe', null, 'asmith', 'A Smith']);
+  });
+
+  it('onlyIfChanged skips the update when no update column changed', async () => {
+    const { db, calls } = fakeDb();
+    await bulkUpsert(db, {
+      table: 'defects',
+      columns: ['natural_key', 'found_ts', 'status', 'fl_modified_at'],
+      rows: [['d1', 1, 'open', 2]],
+      conflict: ['natural_key', 'found_ts'],
+      update: ['status', 'fl_modified_at'],
+      extraSet: ['updated_at = now()'],
+      onlyIfChanged: true,
+    });
+    expect(calls[0]!.sql).toBe(
+      'INSERT INTO defects (natural_key, found_ts, status, fl_modified_at) VALUES ($1, $2, $3, $4)' +
+        ' ON CONFLICT (natural_key, found_ts) DO UPDATE SET status = EXCLUDED.status, fl_modified_at = EXCLUDED.fl_modified_at, updated_at = now()' +
+        ' WHERE (defects.status, defects.fl_modified_at) IS DISTINCT FROM (EXCLUDED.status, EXCLUDED.fl_modified_at)',
+    );
+  });
+
+  it('onlyIfChanged is ANDed with an explicit where and ignored for DO NOTHING', async () => {
+    const { db, calls } = fakeDb();
+    await bulkUpsert(db, {
+      table: 't',
+      columns: ['a', 'b'],
+      rows: [[1, 2]],
+      conflict: ['a'],
+      update: ['b'],
+      where: 't.b < EXCLUDED.b',
+      onlyIfChanged: true,
+    });
+    expect(calls[0]!.sql).toContain(' DO UPDATE SET b = EXCLUDED.b WHERE (t.b < EXCLUDED.b) AND ((t.b) IS DISTINCT FROM (EXCLUDED.b))');
+    await bulkUpsert(db, { table: 't', columns: ['a'], rows: [[1]], conflict: ['a'], update: [], onlyIfChanged: true });
+    expect(calls[1]!.sql).toMatch(/ON CONFLICT \(a\) DO NOTHING$/);
+  });
+
+  it('leaves the DO UPDATE unconditional without onlyIfChanged', async () => {
+    const { db, calls } = fakeDb();
+    await bulkUpsert(db, { table: 't', columns: ['a', 'b'], rows: [[1, 2]], conflict: ['a'], update: ['b'] });
+    expect(calls[0]!.sql).toMatch(/DO UPDATE SET b = EXCLUDED\.b$/);
   });
 
   it('falls back to DO NOTHING when nothing is updated', async () => {
@@ -72,6 +112,17 @@ describe('bulkUpsert', () => {
     const { db, calls } = fakeDb();
     await bulkUpsert(db, { table: 't', columns: ['a'], rows: [], conflict: ['a'], update: ['a'] });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('createPool', () => {
+  it('listens for idle-client errors so a database restart does not crash the collector', async () => {
+    const warnings: string[] = [];
+    const pool = createPool('postgres://localhost:1/none', { warn: (_obj, msg) => warnings.push(msg) });
+    expect(pool.listenerCount('error')).toBe(1);
+    pool.emit('error', new Error('terminating connection due to administrator command'), {} as never);
+    expect(warnings).toEqual(['idle database connection lost']);
+    await pool.end();
   });
 });
 

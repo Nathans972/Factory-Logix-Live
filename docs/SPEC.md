@@ -225,11 +225,11 @@ on each poll:
                  &$select=<mapped columns>
            with HTTP timeout settings.odata_timeout_seconds (default 20)
     upsert rows by natural key (see 6.1)          // idempotent; overlap re-pulls are harmless
-    store raw payload in raw_events
+    store raw payload in raw_events                // only when new or changed (raw_event_hashes)
     if rows.length < page_size: break
     offset += page_size
   watermark[S] = max watermark value seen (only after the whole pull succeeds)
-  record poll stats (rows, duration, status) in sync_log
+  record poll stats (rows, ingested, skipped, duration, status) in sync_log
 ```
 
 Rules:
@@ -247,7 +247,9 @@ Rules:
 
 - On first run (and on demand from admin), backfill `settings.backfill_days` (default 180) of history, oldest first, one day per chunk, with `settings.backfill_pause_seconds` (default 5) between chunks.
 - Backfill runs only inside the configured off-shift window (`settings.backfill_window`, default 22:00 to 05:00 plant time) unless an admin explicitly runs it "now".
-- Progress is persisted so it resumes after restart. Standards are computed once backfill completes.
+- The first day of the range is saved when the backfill starts and every chunk counts from it, so a backfill that runs across midnight processes every day exactly once.
+- When the download completes, standards are computed, then the hour cells of every backfilled day are recomputed one day per chunk (status `recoloring`, same window and pause rules) so the history gets standards and colors.
+- Progress (days downloaded, the saved first day, the recoloring counters) is persisted, so after a restart the backfill resumes at the next day of the phase it was in.
 
 ### 4.8 Field mapping
 
@@ -301,7 +303,7 @@ The existing dashboard does not handle daylight saving time. This system must.
 2. **Plant time zone:** a single IANA time zone in settings (e.g. `America/New_York`). All clock-hour bucketing, column labels, shift and break definitions, and display clocks use it.
 3. **Hour buckets:** an hour cell is the local clock hour `[HH:00, HH+1:00)` converted to a UTC range. On the fall-back night one local hour occurs twice; the engine keys hour cells by `hour_start_utc`, so both occurrences are distinct cells, and the TV label shows the local hour for each (two columns may share a label that night; acceptable). On the spring-forward night one local hour does not exist; the rolling window simply contains 12 consecutive UTC hours.
 4. **Rolling windows** are computed in UTC (now minus 11 full hours), so DST transitions do not create gaps or overlaps.
-5. **FactoryLogix timestamp interpretation:** a setting `fl_timestamp_mode` with values `offset_present` (ISO strings include offset; parse directly), `utc` (naive strings are UTC), or `local_no_offset` (naive strings are plant-local). For `local_no_offset`, the ambiguous repeated hour on fall-back night is resolved by monotonic ordering: if a row's naive timestamp is more than 30 minutes earlier than the previous row from the same data source in ingestion order, treat it as the second occurrence. **VERIFY** which mode applies by inspecting `$metadata` types and sample rows.
+5. **FactoryLogix timestamp interpretation:** a setting `fl_timestamp_mode` with values `offset_present` (ISO strings include offset; parse directly), `utc` (naive strings are UTC), or `local_no_offset` (naive strings are plant-local). For `local_no_offset`, the ambiguous repeated hour on fall-back night is resolved by monotonic ordering: if a row's naive timestamp is more than 30 minutes earlier than the previous row from the same data source in ingestion order, treat it as the second occurrence. In `local_no_offset` mode offset-less `/Date(ms)/` values are read as plant wall-clock time too, and time filters on OData v2/v3 `Edm.DateTime` fields are written in plant wall-clock time (`datetime'...'`); OData v4 and `Edm.DateTimeOffset` literals stay UTC. **VERIFY** which mode applies by inspecting `$metadata` types and sample rows.
 6. **Shifts and breaks** are defined in local time and may cross midnight. They are expanded to concrete UTC intervals per calendar day when evaluated.
 
 ---
@@ -337,12 +339,17 @@ PostgreSQL. Names are suggestions; keep the semantics. `hour_cells`, `unit_steps
 **raw_events**  (hypertable on `received_at`)
 - `id`, `source` text, `natural_key`, `payload` jsonb, `received_at`
 - Purpose: preserve every field FactoryLogix sent, including unmapped ones, so future tools can use them. Compress aggressively.
+- One row per version of a record: a re-read whose payload is unchanged is not stored again.
+
+**raw_event_hashes**
+- `source`, `natural_key` (PK together), `payload_hash` (sha256 of the last stored payload JSON), `updated_at`
 
 **sync_state**
 - `source` PK, `watermark` text, `last_success_at`, `last_error`, `consecutive_failures` int, `backfill_progress` jsonb
+- Source `late_data`: `watermark` is the last late-data re-pull attempt; failures back off (1 h, doubling, at most 6 h).
 
 **sync_log**
-- `id`, `source`, `started_at`, `finished_at`, `rows`, `status`, `error`
+- `id`, `source`, `started_at`, `finished_at`, `rows`, `ingested`, `skipped`, `status`, `error`
 
 ### 6.2 Computed tables
 
@@ -462,7 +469,7 @@ Rule, evaluated per (operator, job, operation, hour):
 - `work_minutes` = sum over the operator's units on that job/operation of the overlap between `[start_ts, complete_ts or now]` and the hour bucket. (No union here; batching only makes eligibility easier, which is acceptable.)
 - **Completed hours:** eligible if `work_minutes >= settings.eligibility_minutes` (default 10).
 - **Current hour:** the threshold scales with elapsed time so the rule works from the first minutes: `threshold = max(1, eligibility_minutes × elapsed_minutes_in_hour / 60)`. An operator is also provisionally eligible if they were eligible on the same job/operation in the previous hour (continuing operator). Eligibility in the current hour may flip as evidence accumulates; that is expected.
-- Slow operations are safe: a step whose standard is 5 units/hour still has 40+ minutes of work time on one board, so it clears the threshold.
+- Slow operations are safe: a step whose standard is 5 units/hour has about 12 minutes of work time on one board (60 / 5), so it still clears the 10-minute threshold.
 - Manager pins (`operator_pins`) force eligibility either way for a job (optionally a specific operation) until removed or expired.
 
 **Consequences of being a visitor:** the operator's units on that job/operation still count toward job totals (Prior, Shift column, Qty Complete, defect counts). They do not create an operator row in separate mode with color (they appear as a gray "visitor" row, see 8.5), do not contribute charged minutes in grouped mode, do not count in the pace numerator, and their units are excluded from standards.
@@ -852,7 +859,7 @@ The simulator advances in real time (with a hidden speed control for reviewers) 
   db/
     migrations/                 SQL migrations (node-pg-migrate or equivalent)
   .github/workflows/
-    ci.yml                      lint, typecheck, engine tests
+    ci.yml                      install, build the shared packages, typecheck, lint, every test suite, build the demo
     pages.yml                   build mock and deploy to GitHub Pages
 ```
 
@@ -890,7 +897,7 @@ The simulator advances in real time (with a hidden speed control for reviewers) 
 
 ## 15. Acceptance Scenarios
 
-Each scenario should be encoded as an engine test and be demonstrable in the demo.
+Each scenario is encoded as a test and is demonstrable in the demo. Scenarios 1 to 13 are engine tests (`packages/engine/test/acceptance.test.ts`); scenarios 14 and 15 are web tests that play the TV against the mock data source (`apps/web/src/pages/tv/scenarios.test.ts`).
 
 1. **Partial first hour.** Operator starts at 15:20, completes 4 units by 16:00 with StdHr 30. Charged minutes = 40, target = 20, pace = 0.20, red. Same operator with 18 units: pace 0.90, green.
 2. **Current hour prorating.** At 09:10, continuing operator has 5 units, StdHr 30, no breaks. Charged = 10, target = 5, pace = 1.00, green. At 09:03 with 0 units: charged 3 < 5, neutral.

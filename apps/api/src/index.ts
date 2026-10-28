@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   const log = createLogger(env);
   const version = await readVersion(env);
 
-  const pool = createPool(env);
+  const pool = createPool(env, log);
   await waitForDb(pool, log);
   await migrate(pool, env.migrationsDir, { info: (m) => log.info(m), warn: (m) => log.warn(m) });
 

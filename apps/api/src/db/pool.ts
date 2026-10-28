@@ -16,14 +16,27 @@ export interface Db {
   query<R extends QueryResultRow = any>(text: string, values?: any[]): Promise<QueryResult<R>>;
 }
 
-export function createPool(env: Pick<AppEnv, 'databaseUrl'>): Pool {
-  return new PgPool({
+export interface PoolWarnLogger {
+  warn(obj: object, msg: string): void;
+}
+
+export function createPool(env: Pick<AppEnv, 'databaseUrl'>, log?: PoolWarnLogger): Pool {
+  const pool = new PgPool({
     connectionString: env.databaseUrl,
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
     application_name: 'fld-api',
   });
+  // An idle client dying (e.g. the database restarting) emits 'error' on the pool; without a
+  // listener Node treats it as unhandled and the process exits. The pool drops that client and
+  // the next query opens a fresh one, so a warning is all that is needed.
+  pool.on('error', (err) => {
+    if (log) log.warn({ err: err.message }, 'idle database connection lost');
+    // eslint-disable-next-line no-console
+    else console.warn(`idle database connection lost: ${err.message}`);
+  });
+  return pool;
 }
 
 /** Run `fn` inside a transaction on a dedicated client. */

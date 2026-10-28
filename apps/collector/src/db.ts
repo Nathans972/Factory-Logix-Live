@@ -14,14 +14,26 @@ export type Queryable = Pool | PoolClient;
 /** Max rows per multi-row INSERT statement (spec: batched upserts, <= 500 rows). */
 export const BATCH_SIZE = 500;
 
-export function createPool(connectionString: string): Pool {
-  return new PgPool({
+export interface PoolWarnLogger {
+  warn(obj: object, msg: string): void;
+}
+
+export function createPool(connectionString: string, log?: PoolWarnLogger): Pool {
+  const pool = new PgPool({
     connectionString,
     max: 6,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
     application_name: 'fld-collector',
   });
+  // An idle client dying (e.g. the database restarting) emits 'error' on the pool; without a
+  // listener Node treats it as unhandled and the process exits. The pool drops that client and
+  // the next query opens a fresh one, so a warning is all that is needed.
+  pool.on('error', (err) => {
+    if (log) log.warn({ err: err.message }, 'idle database connection lost');
+    else console.warn(`idle database connection lost: ${err.message}`);
+  });
+  return pool;
 }
 
 export async function q<T extends QueryResultRow = QueryResultRow>(
@@ -112,6 +124,11 @@ export interface UpsertSpec {
   extraSet?: string[];
   /** Raw SQL predicate for the DO UPDATE branch. */
   where?: string;
+  /**
+   * Skip the update (and `extraSet`, e.g. `updated_at = now()`) when none of the `update` columns
+   * changed: appends `WHERE (<table>.<col>, ...) IS DISTINCT FROM (EXCLUDED.<col>, ...)`.
+   */
+  onlyIfChanged?: boolean;
   /** Raw SQL expression overrides per updated column, e.g. { sequence: 'LEAST(EXCLUDED.sequence, t.sequence)' }. */
   updateExpr?: Record<string, string>;
 }
@@ -149,11 +166,21 @@ export async function bulkUpsert(db: Queryable, spec: UpsertSpec): Promise<numbe
   }
   for (const extra of spec.extraSet ?? []) setParts.push(extra);
 
+  const predicates: string[] = [];
+  if (spec.where) predicates.push(spec.where);
+  const updateCols = spec.update ?? [];
+  if (spec.onlyIfChanged && updateCols.length > 0) {
+    predicates.push(
+      `(${updateCols.map((c) => `${table}.${c}`).join(', ')}) IS DISTINCT FROM (${updateCols.map((c) => `EXCLUDED.${c}`).join(', ')})`,
+    );
+  }
+  const where = predicates.length > 1 ? predicates.map((p) => `(${p})`).join(' AND ') : predicates[0];
+
   let onConflict = '';
   if (conflict.length > 0) {
     onConflict =
       setParts.length > 0
-        ? ` ON CONFLICT (${conflict.join(', ')}) DO UPDATE SET ${setParts.join(', ')}${spec.where ? ` WHERE ${spec.where}` : ''}`
+        ? ` ON CONFLICT (${conflict.join(', ')}) DO UPDATE SET ${setParts.join(', ')}${where ? ` WHERE ${where}` : ''}`
         : ` ON CONFLICT (${conflict.join(', ')}) DO NOTHING`;
   }
 
