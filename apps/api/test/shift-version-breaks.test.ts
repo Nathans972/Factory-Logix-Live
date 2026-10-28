@@ -25,13 +25,43 @@ function breakDef(b: Pick<BreakDef, 'id' | 'name' | 'start_local' | 'shift_ids'>
   return { duration_minutes: 30, days_of_week: ALL_DAYS, effective_from: '2026-01-01', effective_to: null, ...b };
 }
 
-/** The `shifts` and `breaks` tables behind the statements the schedule routes send, and one admin. */
-function fakeScheduleDb(shifts: ShiftDef[], breaks: BreakDef[]) {
+interface AuditRow {
+  action: string;
+  entity_id: string;
+  before: { shift_ids?: number[] | null } | null;
+  after: { shift_ids?: number[] | null } | null;
+}
+
+/**
+ * The `shifts`, `breaks` and `audit_log` tables behind the statements the schedule routes send, and one
+ * admin. ROLLBACK undoes the writes since BEGIN; a statement matching `failOn` throws.
+ */
+function fakeScheduleDb(shifts: ShiftDef[], breaks: BreakDef[], failOn?: RegExp) {
   const admin = { id: 1, username: 'admin', role: 'admin', active: true, created_at: new Date(0), last_login_at: null };
+  const audit: AuditRow[] = [];
   let nextShiftId = Math.max(0, ...shifts.map((s) => s.id)) + 1;
+  let snapshot: { shifts: ShiftDef[]; breaks: BreakDef[] } | null = null;
   const result = <T>(rows: T[]) => ({ rows: rows.map((r) => structuredClone(r)), rowCount: rows.length });
   const query = async (text: string, values: unknown[] = []) => {
     const sql = text.replace(/\s+/g, ' ').trim();
+    if (failOn?.test(sql)) throw new Error(`simulated failure of: ${sql}`);
+    if (sql === 'BEGIN') {
+      snapshot = structuredClone({ shifts, breaks });
+      return result([]);
+    }
+    if (sql === 'COMMIT' || sql === 'ROLLBACK') {
+      if (sql === 'ROLLBACK' && snapshot) {
+        shifts.splice(0, shifts.length, ...snapshot.shifts);
+        breaks.splice(0, breaks.length, ...snapshot.breaks);
+      }
+      snapshot = null;
+      return result([]);
+    }
+    if (sql.startsWith('INSERT INTO audit_log ')) {
+      const [, action, , entity_id, before, after] = values as [unknown, string, string, string, string, string];
+      audit.push({ action, entity_id, before: JSON.parse(before), after: JSON.parse(after) });
+      return result([]);
+    }
     if (sql.includes('FROM users WHERE id = $1')) return result([admin]);
     if (/FROM shifts WHERE id = \$1$/.test(sql)) return result(shifts.filter((s) => s.id === values[0]));
     if (/FROM shifts ORDER BY /.test(sql)) return result(shifts);
@@ -71,7 +101,7 @@ function fakeScheduleDb(shifts: ShiftDef[], breaks: BreakDef[]) {
     return { rows: [], rowCount: 0 };
   };
   const client = { query, release: () => undefined };
-  return { query, connect: async () => client };
+  return { query, connect: async () => client, audit };
 }
 
 let closers: Array<() => Promise<unknown>> = [];
@@ -80,8 +110,12 @@ afterEach(async () => {
   closers = [];
 });
 
-async function boot(shifts: ShiftDef[], breaks: BreakDef[]): Promise<{ app: FastifyInstance; cookie: string }> {
-  const db = fakeScheduleDb(shifts, breaks);
+async function boot(
+  shifts: ShiftDef[],
+  breaks: BreakDef[],
+  failOn?: RegExp,
+): Promise<{ app: FastifyInstance; cookie: string; audit: AuditRow[] }> {
+  const db = fakeScheduleDb(shifts, breaks, failOn);
   const app = await buildServer({
     env: { sessionSecret: SECRET },
     db,
@@ -91,7 +125,7 @@ async function boot(shifts: ShiftDef[], breaks: BreakDef[]): Promise<{ app: Fast
     version: 'test',
   } as unknown as AppContext);
   closers.push(() => app.close());
-  return { app, cookie: `fld_session=${await signSession({ userId: 1, role: 'admin' }, SECRET)}` };
+  return { app, cookie: `fld_session=${await signSession({ userId: 1, role: 'admin' }, SECRET)}`, audit: db.audit };
 }
 
 async function editShift(app: FastifyInstance, cookie: string, id: number, body: ShiftWrite): Promise<ShiftDef> {
@@ -197,6 +231,55 @@ describe('PUT /api/admin/shifts/:id with a later effective-from', () => {
       effective_to: null,
     });
     expect(updated.id).toBe(1);
+    expect((await list<BreakDef>(app, cookie, 'breaks')).map((b) => b.shift_ids)).toEqual([[1]]);
+  });
+
+  it('records each break it changed in the audit log', async () => {
+    const { app, cookie, audit } = await boot(
+      [shift({ id: 1, name: 'Day', start_local: '07:00', end_local: '19:00' })],
+      [
+        breakDef({ id: 1, name: 'Lunch', start_local: '11:00', shift_ids: [1] }),
+        breakDef({ id: 2, name: 'Afternoon', start_local: '14:00', duration_minutes: 15, shift_ids: null }),
+      ],
+    );
+
+    await editShift(app, cookie, 1, {
+      name: 'Day',
+      start_local: '06:00',
+      end_local: '18:00',
+      days_of_week: ALL_DAYS,
+      effective_from: '2026-11-08',
+      effective_to: null,
+    });
+    expect(audit.map((e) => [e.action, e.entity_id, e.before?.shift_ids, e.after?.shift_ids])).toEqual([
+      ['shift.versioned', '2', undefined, undefined],
+      ['break.updated', '1', [1], [1, 2]],
+    ]);
+  });
+
+  it('rolls the whole edit back when the breaks cannot be updated', async () => {
+    const { app, cookie } = await boot(
+      [shift({ id: 1, name: 'Day', start_local: '07:00', end_local: '19:00' })],
+      [breakDef({ id: 1, name: 'Lunch', start_local: '11:00', shift_ids: [1] })],
+      /^UPDATE breaks /,
+    );
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/shifts/1',
+      headers: { cookie },
+      payload: {
+        name: 'Day',
+        start_local: '06:00',
+        end_local: '18:00',
+        days_of_week: ALL_DAYS,
+        effective_from: '2026-11-08',
+        effective_to: null,
+      },
+    });
+    expect(res.statusCode).toBe(500);
+    // Not the old version closed with no new one, nor a new version that Lunch does not know about.
+    expect((await list<ShiftDef>(app, cookie, 'shifts')).map((s) => [s.id, s.effective_to])).toEqual([[1, null]]);
     expect((await list<BreakDef>(app, cookie, 'breaks')).map((b) => b.shift_ids)).toEqual([[1]]);
   });
 });

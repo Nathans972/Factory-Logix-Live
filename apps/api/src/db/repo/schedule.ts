@@ -146,6 +146,20 @@ export async function updateBreak(db: Db, id: number, input: BreakWrite): Promis
   return rows.length > 0 ? mapBreak(rows[0]) : null;
 }
 
+/**
+ * Breaks scoped to shift `shiftId` also apply to `versionId`, the version a versioned edit inserted for
+ * it. Without this they stay on a row that stops applying at its effective_to. Returns the changed breaks.
+ */
+export async function addShiftVersionToBreaks(db: Db, shiftId: number, versionId: number): Promise<BreakDef[]> {
+  const { rows } = await db.query<BreakRow>(
+    `UPDATE breaks SET shift_ids = array_append(shift_ids, $2::int)
+     WHERE $1::int = ANY(shift_ids) AND NOT ($2::int = ANY(shift_ids))
+     RETURNING ${BREAK_COLUMNS}`,
+    [shiftId, versionId],
+  );
+  return rows.map(mapBreak);
+}
+
 export async function deleteBreak(db: Db, id: number): Promise<boolean> {
   const res = await db.query('DELETE FROM breaks WHERE id = $1', [id]);
   return (res.rowCount ?? 0) > 0;

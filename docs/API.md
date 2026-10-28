@@ -51,7 +51,7 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | DELETE | `/api/admin/displays/:id` | admin | | `OkResponse` |
 | GET | `/api/admin/shifts` | viewer | | `ShiftDef[]` |
 | POST | `/api/admin/shifts` | admin | `ShiftWrite` | `ShiftDef` |
-| PUT | `/api/admin/shifts/:id` | admin | `ShiftWrite` | `ShiftDef` (versioning: closes old with effective_to = new.effective_from - 1 day, inserts new) |
+| PUT | `/api/admin/shifts/:id` | admin | `ShiftWrite` | `ShiftDef` (versioning: closes old with effective_to = new.effective_from - 1 day, inserts new, and adds the new id to every break whose `shift_ids` holds the old one, in one transaction) |
 | DELETE | `/api/admin/shifts/:id` | admin | | `OkResponse` |
 | GET | `/api/admin/breaks` | viewer | | `BreakDef[]` |
 | POST | `/api/admin/breaks` | admin | `BreakWrite` | `BreakDef` |

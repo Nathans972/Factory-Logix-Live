@@ -3,7 +3,9 @@ import type { FastifyInstance } from 'fastify';
 import { audit } from '../../audit.js';
 import { requireRole } from '../../auth/index.js';
 import type { AppContext } from '../../context.js';
+import { withTransaction } from '../../db/pool.js';
 import {
+  addShiftVersionToBreaks,
   closeShiftVersion,
   deleteBreak,
   deleteShift,
@@ -52,6 +54,7 @@ export async function registerAdminScheduleRoutes(app: FastifyInstance, ctx: App
   /**
    * Versioned update: a new effective_from closes the previous version (effective_to = new
    * effective_from - 1 day) and inserts a new row, so past shifts keep the definition in effect then.
+   * Breaks scoped to the shift get the new row's id too, or they would stop applying with the old row.
    */
   app.put('/api/admin/shifts/:id', admin, async (req): Promise<ShiftDef> => {
     const id = requireIdParam((req.params as { id: string }).id);
@@ -69,9 +72,17 @@ export async function registerAdminScheduleRoutes(app: FastifyInstance, ctx: App
 
     let result: ShiftDef | null;
     if (versioning) {
-      await closeShiftVersion(ctx.db, id, previousDay(body.effective_from));
-      result = await insertShift(ctx.db, body, req.auth?.username ?? null);
-      await audit(req, 'shift.versioned', 'shift', result.id, before, result);
+      const { created, carried } = await withTransaction(ctx.pool, async (tx) => {
+        await closeShiftVersion(tx, id, previousDay(body.effective_from));
+        const inserted = await insertShift(tx, body, req.auth?.username ?? null);
+        return { created: inserted, carried: await addShiftVersionToBreaks(tx, id, inserted.id) };
+      });
+      result = created;
+      await audit(req, 'shift.versioned', 'shift', created.id, before, created);
+      for (const b of carried) {
+        const previous = { ...b, shift_ids: (b.shift_ids ?? []).filter((s) => s !== created.id) };
+        await audit(req, 'break.updated', 'break', b.id, previous, b);
+      }
     } else {
       result = await updateShift(ctx.db, id, body);
       if (!result) throw notFound('unknown shift');
