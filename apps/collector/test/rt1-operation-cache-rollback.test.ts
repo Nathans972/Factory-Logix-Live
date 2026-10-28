@@ -70,6 +70,8 @@ function memoryDb() {
       for (let i = 0; i < params.length; i += 3) changed.push({ source: params[i], natural_key: params[i + 1] });
       return ok(changed);
     }
+    // deleteMovedRows: no stored copy of these keys at another time.
+    if (text.startsWith('DELETE FROM unit_steps')) return ok();
     if (text.startsWith('INSERT INTO unit_steps')) {
       // Columns: unit_id, job_number, product_number, operation_id, operator_id, start_ts, ... (11 per row).
       const ids = new Set(visible.values());
