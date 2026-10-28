@@ -88,6 +88,7 @@ Every variable in `.env.example`:
 | `PLANT_TIMEZONE` | IANA time zone used to seed settings on first start (e.g. `America/New_York`). Can be changed later in Admin > Settings. |
 | `WEB_PORT` | Host port published by the `web` (nginx) container. Default `8080`. This is the only port you need to expose. |
 | `LOG_LEVEL` | Log verbosity for `api` and `collector`: `trace` \| `debug` \| `info` \| `warn` \| `error`. Default `info`. |
+| `FACTORYLOGIX_CA_CERT` | Only for an `https://` FactoryLogix whose certificate is self-signed or issued by your own CA: the file name of that CA's certificate (PEM) in the `certs/` folder, e.g. `plant-ca.pem`. Empty by default. See [section 10](#factorylogix-over-https). |
 
 Everything else (poll interval, eligibility rules, color bands, shifts, breaks, standards
 settings, and the FactoryLogix connection itself) is configured later in the admin UI, not in
@@ -137,7 +138,8 @@ setup wizard (spec 10.10):
 3. **FactoryLogix connection** — server URL (`http://<factorylogix-server>:6065/odata`), the
    read-only user name and password from step 2, and the timestamp mode (see
    `docs/MAPPING.md`). Use **Test connection** to confirm `$metadata` is reachable before
-   continuing.
+   continuing. An `https://` URL whose certificate is self-signed or issued by your own CA needs
+   `FACTORYLOGIX_CA_CERT` first (see [section 10](#factorylogix-over-https)).
 4. **Mapping wizard** — pick the entity set and fields for each dataset. See `docs/MAPPING.md`
    for a full walkthrough of every field.
 5. **Shifts** — define your plant's shift schedule (name, local start/end time, days of week,
@@ -166,6 +168,8 @@ switched on again.
 
 ## 10. Optional: TLS
 
+### HTTPS for the dashboard
+
 The application does not terminate TLS itself. If you want HTTPS, put your own reverse proxy
 (e.g. nginx, Traefik, or an existing corporate proxy) in front of port `8080` and terminate TLS
 there; point it at `http://<host>:8080`.
@@ -181,6 +185,47 @@ range that also covers the computers people sign in from lets anyone at one of t
 address on every attempt and never reach the limit. Afterwards, fail one more sign-in from a
 workstation: the `failed login` line should now show that workstation's own address, and
 `TRUSTED_PROXIES` must not cover it.
+
+### FactoryLogix over https
+
+The default FactoryLogix address, `http://<factorylogix-server>:6065/odata`, needs nothing here,
+and neither does an `https://` address whose certificate comes from a public CA. If the
+certificate is self-signed or issued by your plant's own CA (an Active Directory Certificate
+Services CA, for example), Test connection and Admin > Sync say `certificate not trusted` until
+the dashboard has that CA's certificate. Both the `api` (Test connection, mapping preview) and the
+`collector` (polls) use it:
+
+1. Get the CA certificate as PEM: a text file that starts with `-----BEGIN CERTIFICATE-----`.
+   For a certificate issued by your own CA, that is the CA's root certificate (if an intermediate
+   CA issued the FactoryLogix certificate, add the intermediate's certificate to the same file,
+   after the root's). For a self-signed certificate, it is that certificate itself. Your IT
+   department can provide it. On a Windows machine that trusts the CA, export it from
+   `certlm.msc` (Trusted Root Certification Authorities > the CA > All Tasks > Export) as
+   **Base-64 encoded X.509 (.CER)**. The wizard's default, **DER encoded binary**, also makes a
+   `.cer` file, but one the dashboard cannot read; convert it with
+   `openssl x509 -inform der -in plant-ca.cer -out plant-ca.pem`.
+2. Copy it into the `certs/` folder next to `docker-compose.yml` and let everyone read it. It is a
+   public certificate, not a key, and the containers do not run as root:
+
+   ```bash
+   cp plant-ca.pem certs/
+   chmod 644 certs/plant-ca.pem
+   ```
+
+3. Put its file name, without the folder, in `.env`: `FACTORYLOGIX_CA_CERT=plant-ca.pem`.
+4. Run `docker compose up -d`. Both containers say on start whether they could use the file:
+
+   ```bash
+   docker compose logs api collector | grep FACTORYLOGIX_CA_CERT
+   ```
+
+   `holds 1 certificate, trusted for https:// FactoryLogix` (from each) means it was read;
+   anything else says what to fix.
+5. Press **Test connection** again.
+
+The certificate must still be made out to the host name or IP address in the server URL, and be
+in date: trusting its CA does not change that. The containers read the file when they start, so
+after replacing it (a renewed CA, for example) run `docker compose restart api collector`.
 
 ## 11. Firewall notes
 

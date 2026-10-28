@@ -46,6 +46,12 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       MIGRATIONS_DIR: /app/db/migrations
+      # An https:// FactoryLogix whose certificate is self-signed or from the plant's own CA: that CA's
+      # certificate goes in certs/ and FACTORYLOGIX_CA_CERT in .env names it (docs/INSTALL.md, section 10).
+      # Empty without it, and Node trusts only its built-in public CAs.
+      NODE_EXTRA_CA_CERTS: ${FACTORYLOGIX_CA_CERT:+/app/certs/}${FACTORYLOGIX_CA_CERT:-}
+    volumes:
+      - ./certs:/app/certs:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/health"]
       interval: 15s
@@ -73,6 +79,10 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       PLANT_TIMEZONE: ${PLANT_TIMEZONE:-America/New_York}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # The same CA as the api: the api tests the connection, the collector polls.
+      NODE_EXTRA_CA_CERTS: ${FACTORYLOGIX_CA_CERT:+/app/certs/}${FACTORYLOGIX_CA_CERT:-}
+    volumes:
+      - ./certs:/app/certs:ro
     networks: [fld]
 
   web:

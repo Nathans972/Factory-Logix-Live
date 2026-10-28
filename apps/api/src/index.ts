@@ -1,7 +1,9 @@
 /**
  * apps/api bootstrap: env -> database -> migrations -> settings seed -> SSE listener -> HTTP server.
  */
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { checkExtraCaFile } from '@fld/shared';
 import { EnvError, loadEnv, type AppEnv } from './env.js';
 import { createLogger } from './logger.js';
 import { createPool, waitForDb } from './db/pool.js';
@@ -28,6 +30,11 @@ async function main(): Promise<void> {
   const env = loadEnv();
   const log = createLogger(env);
   const version = await readVersion(env);
+
+  // FACTORYLOGIX_CA_CERT: Node skips a CA file it cannot use without saying so.
+  const ca = checkExtraCaFile(process.env.NODE_EXTRA_CA_CERTS, (path) => readFileSync(path, 'latin1'));
+  if (ca?.ok) log.info(ca.message);
+  else if (ca) log.error(ca.message);
 
   const pool = createPool(env, log);
   await waitForDb(pool, log);

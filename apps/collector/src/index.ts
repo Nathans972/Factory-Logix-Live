@@ -5,8 +5,9 @@
  * nightly standards job and the historical backfill. Nothing in here is allowed to kill the
  * process: every iteration is wrapped, errors are logged and the loop continues.
  */
+import { readFileSync } from 'node:fs';
 import { hourStartUtc, nextLocalTime } from '@fld/engine';
-import type { MappingConfig, Settings } from '@fld/shared';
+import { checkExtraCaFile, type MappingConfig, type Settings } from '@fld/shared';
 import { ControlListener, type ControlCommand } from './control.js';
 import { createPool, exec, type Pool } from './db.js';
 import { Recomputer } from './engine/recompute.js';
@@ -81,6 +82,10 @@ class Collector {
 
   async start(): Promise<void> {
     this.log.info({ node: process.version }, 'collector starting');
+    // FACTORYLOGIX_CA_CERT: Node skips a CA file it cannot use without saying so.
+    const ca = checkExtraCaFile(process.env.NODE_EXTRA_CA_CERTS, (path) => readFileSync(path, 'latin1'));
+    if (ca?.ok) this.log.info(ca.message);
+    else if (ca) this.log.error(ca.message);
     // The database may still be starting up: never fail startup, the loop retries.
     try {
       await this.health.ensureRow();

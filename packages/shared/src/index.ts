@@ -6,3 +6,4 @@ export * from './api-types.js';
 export * from './schemas.js';
 export * from './colors.js';
 export * from './fetch-error.js';
+export * from './extra-ca.js';
