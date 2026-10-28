@@ -160,6 +160,8 @@ Pages demo), so the numbers you see in the demo and in production come from the 
     web/                        React app: /tv, /, /admin; DataSource abstraction + mock simulator
   db/
     migrations/                 SQL migrations, applied automatically on API start
+  scripts/
+    backup.sh                   nightly pg_dump of the database, for cron (docs/OPERATIONS.md)
   .github/workflows/
     ci.yml                      install, build the shared packages, typecheck, lint, every test suite, build the demo
     pages.yml                   build the mock bundle and deploy to GitHub Pages

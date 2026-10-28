@@ -10,15 +10,34 @@ the named volume `fld-db-data`). Back it up on a schedule.
 
 ### Logical backup (`pg_dump`) — recommended for routine backups
 
+`scripts/backup.sh` dumps the database to `backups/fld-YYYYMMDD-HHMM.dump` in the project
+directory (the one with `docker-compose.yml`). Run it once by hand first, with the directory you
+cloned into in place of `/path/to/Factory-Logix-Live`:
+
 ```bash
-docker compose exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F c -f /tmp/fld.dump
-docker compose cp db:/tmp/fld.dump ./backups/fld-$(date +%Y%m%d-%H%M).dump
-docker compose exec -T db rm /tmp/fld.dump
+/path/to/Factory-Logix-Live/scripts/backup.sh
 ```
 
-Put this in a nightly cron job on the host (outside the container), rotating old dump files as
-your retention policy requires. `POSTGRES_USER` and `POSTGRES_DB` come from your `.env`
-(defaults `fld`/`fld`).
+It works from any directory and needs nothing from `.env` in your shell: the `db` container
+fills in `POSTGRES_USER` and `POSTGRES_DB` itself (from your `.env`, defaults `fld`/`fld`). It
+ends with `backup written:` and the file name. If a step fails, it stops there, prints the error
+and `backup FAILED`, and leaves no dump file.
+
+Then run it every night from root's crontab (`sudo crontab -e`), here at 03:00:
+
+```
+0 3 * * * /path/to/Factory-Logix-Live/scripts/backup.sh >>/var/log/fld-backup.log 2>&1
+```
+
+Keep the `>>/var/log/fld-backup.log 2>&1`. Without it cron mails the output to a local mailbox,
+and a server with no mail set up throws it away, so a failing backup would go unnoticed. Check
+the end of that log the morning after you add the line, and whenever you look in on the server:
+the last line should be last night's `backup written`.
+
+The script keeps every dump. To delete old ones as your retention policy requires, add
+`&& find /path/to/Factory-Logix-Live/backups -name 'fld-*.dump' -mtime +30 -delete` to the end
+of the cron line (30 days here). After `&&` it only runs when that night's backup worked, so
+failed nights never delete the dumps you still have.
 
 ### Volume backup — for full disaster-recovery snapshots
 
@@ -42,9 +61,12 @@ docker compose start
 ```bash
 docker compose stop api collector
 docker compose cp ./backups/fld-YYYYMMDD-HHMM.dump db:/tmp/fld.dump
-docker compose exec -T db pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/fld.dump
+docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/fld.dump'
 docker compose up -d
 ```
+
+Keep the single quotes: inside them the `db` container fills in `POSTGRES_USER` and
+`POSTGRES_DB` from your `.env`. Your own shell doesn't have them, and would pass empty values.
 
 **From a volume tarball:** stop the stack, remove the existing volume, recreate it and extract
 the tarball into it, then start the stack again:
@@ -281,7 +303,7 @@ There is no SQL snippet or CLI command shipped for this. Use one of:
    first-run setup wizard, then create a fresh admin account:
 
    ```bash
-   docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DELETE FROM users;"
+   docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DELETE FROM users;"'
    ```
 
    This does not touch any production data (jobs, unit steps, standards, shifts, breaks) —
