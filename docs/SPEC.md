@@ -728,6 +728,7 @@ Route `/admin`. Admin role only unless noted.
 ### 10.4 FactoryLogix connection
 
 - Server URL, user name, password (stored encrypted at rest), timestamp mode (5.5), plant time zone.
+- The server URL cannot hold a user name or password (`http://user:password@server/...`): they go in their own fields, where the password is stored encrypted. Save and "Test connection" refuse such a URL, and one saved before that is never used.
 - The stored password is only ever sent with the server URL and user name it was saved with. Changing either one (even just the path) needs the password typed again: "Test connection" sends no stored password, and Save is refused until the password is entered.
 - "Test connection": fetches `$metadata`, reports version/entity sets found.
 - Poll interval, page size, overlap, timeouts, breaker settings, backfill settings, "Run backfill now".

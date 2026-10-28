@@ -85,7 +85,8 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
     try {
       creds = await getCredentials(ctx.db, override);
     } catch (err) {
-      // The saved password cannot be decrypted with this ENCRYPTION_KEY: a failed test that says so.
+      // A URL holding a user name or password, or a saved password this ENCRYPTION_KEY cannot
+      // decrypt: a failed test that says so.
       if (err instanceof ApiError) return { ok: false, error: err.message, metadata: null, latency_ms: null };
       throw err;
     }

@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ConnectionTestResult, FlConnection } from '@fld/shared';
+import { urlHasCredentials, type ConnectionTestResult, type FlConnection } from '@fld/shared';
 import { useDataSource } from '../../../data/DataSourceContext';
 import { Button, Field, Input, Note, Spinner } from '../../../ui';
 import { ApiError, Flash, useFlash } from './common';
@@ -16,6 +16,7 @@ function urlError(v: string): string | null {
   try {
     const u = new URL(v);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'Must start with http:// or https://';
+    if (urlHasCredentials(v)) return 'Leave the user name and password out of the URL: enter them in their own fields';
     return null;
   } catch {
     return 'Not a valid URL';
@@ -109,7 +110,9 @@ export function ConnectionForm({
   if (connQ.isLoading) return <Spinner />;
   if (connQ.isError) return <ApiError error={connQ.error} />;
 
-  const urlErr = touched ? urlError(baseUrl) : null;
+  // A user name or password in the URL shows straight away: a URL saved with them by an earlier
+  // version would otherwise only disable Save and Test.
+  const urlErr = touched || urlHasCredentials(baseUrl) ? urlError(baseUrl) : null;
   const userErr = touched && !username.trim() ? 'Required' : null;
   const canSubmit = !urlError(baseUrl) && !!username.trim();
   // Saved under another ENCRYPTION_KEY (a backup restored from another install): it cannot be kept.

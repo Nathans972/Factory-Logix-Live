@@ -4,7 +4,7 @@
  * The password never leaves the server, and the stored one is only sent with the URL and user name
  * it was saved with (see sameConnection).
  */
-import type { FlConnection } from '@fld/shared';
+import { URL_CREDENTIALS_MESSAGE, urlHasCredentials, type FlConnection } from '@fld/shared';
 import { decryptIfNeeded, encrypt } from '../crypto.js';
 import type { Db } from '../db/pool.js';
 import { getSettingValue, setSettingValue } from '../db/repo/settings.js';
@@ -46,11 +46,23 @@ export async function getStoredConnection(db: Db): Promise<StoredConnection | nu
   };
 }
 
+/** A URL saved with a password in it by an earlier version is shown, and audited, with the password masked. */
+function maskUrlPassword(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.password) return url;
+    parsed.password = '***';
+    return parsed.href;
+  } catch {
+    return url;
+  }
+}
+
 /** Public shape: never includes the password. */
 export function toPublicConnection(stored: StoredConnection | null): FlConnection {
   const unreadable = stored?.password_enc ? decryptStored(stored.password_enc) === null : false;
   return {
-    base_url: stored?.base_url ?? '',
+    base_url: maskUrlPassword(stored?.base_url ?? ''),
     username: stored?.username ?? '',
     has_password: Boolean(stored?.password_enc),
     ...(unreadable ? { password_unreadable: true } : {}),
@@ -79,6 +91,7 @@ export async function saveConnection(
   const password = typeof input.password === 'string' ? input.password : '';
   const base_url = input.base_url.trim();
   const username = input.username.trim();
+  if (urlHasCredentials(base_url)) throw badRequest(URL_CREDENTIALS_MESSAGE);
   if (password.length === 0 && existing?.password_enc && !sameConnection({ base_url, username }, existing)) {
     throw badRequest(
       'enter the password again: the saved password is only sent with the server URL and user name it was saved with',
@@ -101,7 +114,8 @@ export async function saveConnection(
  * Decrypted credentials for outbound calls; null when nothing usable is configured. An override
  * (unsaved form values) without a password only gets the stored one while its URL and user name are
  * the saved ones; otherwise the password is empty. A stored password that is needed but cannot be
- * decrypted is a 400 asking for it again.
+ * decrypted is a 400 asking for it again. So is a URL holding a user name or password (typed into
+ * the form, or saved by an earlier version), which fetch would repeat in its error.
  */
 export async function getCredentials(
   db: Db,
@@ -111,6 +125,7 @@ export async function getCredentials(
   const base_url = (override?.base_url ?? stored?.base_url ?? '').trim();
   const username = (override?.username ?? stored?.username ?? '').trim();
   if (!base_url) return null;
+  if (urlHasCredentials(base_url)) throw badRequest(URL_CREDENTIALS_MESSAGE);
   let password = '';
   if (override && typeof override.password === 'string' && override.password.length > 0) {
     password = override.password;

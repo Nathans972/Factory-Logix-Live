@@ -134,6 +134,23 @@ export interface FlConnection {
   password_unreadable?: boolean;
 }
 
+/**
+ * True when the URL holds a user name or password (`http://svc:secret@server:6065/odata`). The
+ * FactoryLogix connection refuses such a URL: it is stored and audited in clear text (only the
+ * password field is encrypted), and fetch rejects it with an error that repeats it, password included.
+ */
+export function urlHasCredentials(url: string): boolean {
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.username !== '' || parsed.password !== '';
+  } catch {
+    return false;
+  }
+}
+
+export const URL_CREDENTIALS_MESSAGE =
+  'the FactoryLogix server URL must not contain a user name or password: in Admin > Connection, enter the URL without them and the password in its own field';
+
 export const TIME_CONSTANTS = {
   HOUR_MS: 3_600_000,
   MINUTE_MS: 60_000,

@@ -7,8 +7,10 @@
 import {
   DEFAULT_SETTINGS,
   SETTINGS_KEYS,
+  URL_CREDENTIALS_MESSAGE,
   mappingConfigSchema,
   settingsSchema,
+  urlHasCredentials,
   type MappingConfig,
   type Settings,
   type SettingsKey,
@@ -85,7 +87,11 @@ export async function loadConfig(db: Queryable, opts: { encryptionKey: string; f
     const base_url = typeof value.base_url === 'string' ? value.base_url.trim().replace(/\/+$/, '') : '';
     const username = typeof value.username === 'string' ? value.username : '';
     const passwordEnc = typeof value.password_enc === 'string' ? value.password_enc : '';
-    if (!base_url || !username || !passwordEnc) {
+    if (urlHasCredentials(base_url)) {
+      // Saved by an earlier version: fetch would repeat the URL, password included, in every poll
+      // error (sync_log, Sync health).
+      connection_error = URL_CREDENTIALS_MESSAGE;
+    } else if (!base_url || !username || !passwordEnc) {
       connection_error = 'the FactoryLogix connection is incomplete: Admin > Connection needs the server URL, user name and password';
     } else {
       try {

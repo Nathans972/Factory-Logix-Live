@@ -22,6 +22,9 @@ const OLD_INSTALL_KEY_HEX = 'ef'.repeat(32);
 const STORED_PASSWORD = 'MES-service-account-Passw0rd!';
 const STORED_URL = 'http://factorylogix.plant.local:6065/odata';
 const OTHER_URL = 'http://factorylogix-new.plant.local:6065/odata';
+const URL_PASSWORD = 's3cretPass';
+/** The saved server with the account in front, the way a browser or curl takes it. */
+const URL_WITH_PASSWORD = `http://svc-dashboard:${URL_PASSWORD}@factorylogix.plant.local:6065/odata`;
 
 /** One admin user and the `fl_connection` row of `settings`; a PUT writes the row back into `state.row`. */
 function fakeDb(row: Record<string, unknown> | null) {
@@ -239,5 +242,73 @@ describe('a saved password this ENCRYPTION_KEY cannot decrypt (a backup restored
       { url: `${STORED_URL}/$metadata`, authorization: basicAuthHeader('svc-dashboard', STORED_PASSWORD) },
       { url: `${STORED_URL}/$metadata`, authorization: basicAuthHeader('svc-dashboard', STORED_PASSWORD) },
     ]);
+  });
+});
+
+describe('a user name or password typed into the server URL', () => {
+  it('refuses to save it, and leaves the saved connection alone', async () => {
+    const db = fakeDb(savedRow());
+    const before = db.state.row;
+    const api = await adminApi(db);
+    for (const base_url of [URL_WITH_PASSWORD, 'http://svc-dashboard@factorylogix.plant.local:6065/odata']) {
+      const res = await api('PUT', '/api/admin/connection', { base_url, username: 'svc-dashboard', password: 'typed' });
+      expect(res.statusCode, base_url).toBe(400);
+      expect(res.json().message).toMatch(/^the FactoryLogix server URL must not contain a user name or password/);
+      expect(res.body).not.toContain(URL_PASSWORD);
+    }
+    expect(db.state.row).toBe(before);
+    expect(db.state.notified).toBe(0);
+  });
+
+  it('fails Test connection with what to do, and sends nothing', async () => {
+    const api = await adminApi(fakeDb(savedRow()));
+    const res = await api('POST', '/api/admin/connection/test', { base_url: URL_WITH_PASSWORD, username: 'svc-dashboard', password: 'typed' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: false, error: expect.stringMatching(/^the FactoryLogix server URL must not contain/) });
+    expect(res.body).not.toContain(URL_PASSWORD);
+    expect(outgoing).toEqual([]);
+  });
+});
+
+describe('a server URL saved with the password in it by an earlier version', () => {
+  const savedWithPassword = () => ({ base_url: URL_WITH_PASSWORD, username: 'svc-dashboard', password_enc: encrypt(STORED_PASSWORD, KEY_HEX) });
+
+  it('shows it with the password masked', async () => {
+    const api = await adminApi(fakeDb(savedWithPassword()));
+    const res = await api('GET', '/api/admin/connection');
+    expect(res.json().connection).toEqual({
+      base_url: 'http://svc-dashboard:***@factorylogix.plant.local:6065/odata',
+      username: 'svc-dashboard',
+      has_password: true,
+    });
+  });
+
+  it('is never sent: Test connection and $metadata say what to do', async () => {
+    const api = await adminApi(fakeDb(savedWithPassword()));
+    const test = await api('POST', '/api/admin/connection/test', {});
+    expect(test.json()).toMatchObject({ ok: false, error: expect.stringMatching(/^the FactoryLogix server URL must not contain/) });
+    const metadata = await api('GET', '/api/admin/mapping/metadata');
+    expect(metadata.statusCode).toBe(400);
+    expect(metadata.json().message).toMatch(/^the FactoryLogix server URL must not contain/);
+    expect(test.body + metadata.body).not.toContain(URL_PASSWORD);
+    expect(outgoing).toEqual([]);
+  });
+
+  it('is replaced once saved without it, and the audit entry does not repeat the password', async () => {
+    const db = fakeDb(savedWithPassword());
+    const sent: unknown[][] = [];
+    const query = db.query;
+    db.query = async (text, values = []) => {
+      sent.push(values);
+      return query(text, values);
+    };
+    const api = await adminApi(db);
+    const res = await api('PUT', '/api/admin/connection', { base_url: STORED_URL, username: 'svc-dashboard', password: STORED_PASSWORD });
+    expect(res.statusCode).toBe(200);
+    expect(db.state.row?.base_url).toBe(STORED_URL);
+    const statements = JSON.stringify(sent);
+    expect(statements).toContain('connection.updated');
+    expect(statements).toContain('svc-dashboard:***@factorylogix.plant.local');
+    expect(statements).not.toContain(URL_PASSWORD);
   });
 });

@@ -218,6 +218,23 @@ describe('Sync health while the collector cannot use what is saved', () => {
     expect(waiting.last_error).toMatch(/FactoryLogix connection is incomplete/);
   });
 
+  it('says the saved URL holds a user name or password, without repeating it, and clears once saved without them', async () => {
+    const { waiting, afterFix, unexpected } = await syncHealth(
+      [
+        { key: 'mapping', value: mapping },
+        {
+          key: 'fl_connection',
+          value: { base_url: 'http://svc:s3cretPass@factorylogix.invalid/odata', username: 'svc', password_enc: encryptSecret('the-real-password', THIS_KEY) },
+        },
+      ],
+      connectionSavedUnder(THIS_KEY),
+    );
+    expect(unexpected).toEqual([]);
+    expect(waiting.last_error).toMatch(/server URL must not contain a user name or password/);
+    expect(waiting.last_error).not.toContain('s3cretPass');
+    expect(afterFix).toEqual({ status: 'ok', last_error: null });
+  });
+
   it('control: with nothing saved yet (the first-run wizard) no error is reported', async () => {
     const { waiting, unexpected } = await syncHealth([]);
     expect(unexpected).toEqual([]);
