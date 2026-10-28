@@ -20,6 +20,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    # Without a cap Docker keeps every log line for as long as the container exists, on the same
+    # disk as the database. Each service here keeps at most 5 files of 50 MB, deleting the oldest,
+    # so the four logs stay under about 1 GB together (docs/OPERATIONS.md → Logs).
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks: [fld]
 
   api:
@@ -57,6 +65,11 @@ services:
       interval: 15s
       timeout: 5s
       retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks: [fld]
 
   collector:
@@ -83,6 +96,11 @@ services:
       NODE_EXTRA_CA_CERTS: ${FACTORYLOGIX_CA_CERT:+/app/certs/}${FACTORYLOGIX_CA_CERT:-}
     volumes:
       - ./certs:/app/certs:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks: [fld]
 
   web:
@@ -94,6 +112,11 @@ services:
       - api
     ports:
       - "${WEB_PORT:-8080}:80"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks: [fld]
 
 volumes:

@@ -203,6 +203,29 @@ one-JSON-object-per-line, suitable for shipping to a log aggregator. Verbosity i
 by `LOG_LEVEL` in `.env` (`trace` \| `debug` \| `info` \| `warn` \| `error`; default `info`).
 The `web` service's logs are nginx's standard access/error logs.
 
+Docker keeps each container's log in files on the host, on the same disk as the database, and
+`docker-compose.yml` caps them: every service has `logging:` with `max-size: "50m"` and
+`max-file: "5"`, so it keeps at most five 50 MB files and deletes the oldest as it goes, and the
+four logs never take more than about 1 GB together. The `api` writes the most, two lines for
+every request: with 20 TVs about 35 MB a day, so its log goes back about a week (further with
+fewer TVs). A container's log is also deleted when the container is recreated, which
+`docker compose up -d` does to every container an upgrade changed.
+
+To change the limits, or to use another Docker logging driver, put the services' `logging:` in
+a `docker-compose.override.yml` next to `docker-compose.yml`, not in `docker-compose.yml`
+itself: Compose reads the override file by itself, and the next `git pull` does not conflict
+with it. For example, to keep twice as much of the api's log:
+
+```yaml
+services:
+  api:
+    logging:
+      options:
+        max-file: "10"
+```
+
+Then run `docker compose up -d`: a container takes its log settings when it is created.
+
 ## Health endpoints and the admin Sync page
 
 - `GET /api/health` — overall app health: database reachability, app version, plant time zone,
@@ -341,7 +364,8 @@ At roughly 20,000 units/day across 15 operations (≈300,000 `unit_steps` rows/d
 defects and raw payloads, expect well under 100 MB/day uncompressed. With TimescaleDB
 compression on chunks older than 7 days, a full year of data is realistically tens of GB. The
 100 GB disk recommendation in `README.md` leaves comfortable headroom for several years at
-that volume, plus OS, images, and backups.
+that volume, plus OS, images, and backups. The container logs share that disk but are capped
+at about 1 GB in total (see [Logs](#logs)).
 
 ## Troubleshooting
 
