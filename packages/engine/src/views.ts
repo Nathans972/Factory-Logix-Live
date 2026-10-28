@@ -131,6 +131,48 @@ function aggregateColor(
   return colorForPace(pace, settings);
 }
 
+/**
+ * Totals of a row that adds up hour cells (spec 7.11). A cell keeps the StdHr in force when it was
+ * computed, so a standard changed mid-range gives one row several: the target is the sum of the cells'
+ * own targets and the pace is earned hours over charged hours, the arithmetic of computeRollups, so the
+ * row agrees with the efficiency of the same cells (with a single StdHr that is units / target). A cell
+ * without a StdHr leaves the row unjudged, as it does a roll-up.
+ */
+interface RowTotals {
+  charged_minutes: number;
+  target_units: number;
+  earned_hours: number;
+  cells_without_std: number;
+}
+
+function newRowTotals(): RowTotals {
+  return { charged_minutes: 0, target_units: 0, earned_hours: 0, cells_without_std: 0 };
+}
+
+function addToRow(t: RowTotals, c: HourCell): void {
+  t.charged_minutes += c.charged_minutes;
+  if (c.std_hr !== null && c.std_hr > 0) {
+    t.target_units += (c.std_hr * c.charged_minutes) / 60;
+    t.earned_hours += c.units / c.std_hr;
+  } else {
+    t.cells_without_std += 1;
+  }
+}
+
+function rowPace(t: RowTotals): number | null {
+  const charged_hours = t.charged_minutes / 60;
+  return charged_hours > 0 && t.cells_without_std === 0 ? t.earned_hours / charged_hours : null;
+}
+
+/**
+ * The later of two cells that carry a StdHr. A row shows the StdHr of its latest hour: the standard in
+ * force now, as the TV and the product page show it (earlier hours may have run against another).
+ */
+function laterStdCell(cur: HourCell | null, c: HourCell): HourCell | null {
+  if (c.std_hr === null) return cur;
+  return cur === null || c.hour_start_utc >= cur.hour_start_utc ? c : cur;
+}
+
 // ---------------------------------------------------------------------------
 // TV dashboard (8.3, 8.5)
 // ---------------------------------------------------------------------------
@@ -393,25 +435,25 @@ export function buildShiftView(input: ShiftViewInput): ShiftView {
     for (const [operation, opCells] of byOperation) {
       let units = 0;
       let visitor_units = 0;
-      let charged_minutes = 0;
-      let std_hr: number | null = null;
+      const totals = newRowTotals();
+      let stdCell: HourCell | null = null;
       const operatorAccs = new Map<
         string,
-        { units: number; visitorUnits: number; charged: number; eligible: boolean }
+        { units: number; visitorUnits: number; totals: RowTotals; eligible: boolean }
       >();
 
       for (const c of opCells) {
-        if (std_hr === null && c.std_hr !== null) std_hr = c.std_hr;
+        stdCell = laterStdCell(stdCell, c);
         let acc = operatorAccs.get(c.operator_id);
         if (acc === undefined) {
-          acc = { units: 0, visitorUnits: 0, charged: 0, eligible: false };
+          acc = { units: 0, visitorUnits: 0, totals: newRowTotals(), eligible: false };
           operatorAccs.set(c.operator_id, acc);
         }
         if (c.eligible) {
           units += c.units;
-          charged_minutes += c.charged_minutes;
+          addToRow(totals, c);
           acc.units += c.units;
-          acc.charged += c.charged_minutes;
+          addToRow(acc.totals, c);
           acc.eligible = true;
         } else {
           visitor_units += c.units;
@@ -419,22 +461,22 @@ export function buildShiftView(input: ShiftViewInput): ShiftView {
         }
       }
 
-      const target_units = std_hr === null ? 0 : (std_hr * charged_minutes) / 60;
-      const pace = std_hr !== null && target_units > 0 ? units / target_units : null;
+      const std_hr = stdCell?.std_hr ?? null;
+      const { charged_minutes, target_units } = totals;
+      const pace = rowPace(totals);
 
       const operators: ShiftOperatorRow[] = [];
       for (const [operator_id, acc] of operatorAccs) {
         if (acc.eligible) {
-          const t = std_hr === null ? 0 : (std_hr * acc.charged) / 60;
-          const p = std_hr !== null && t > 0 ? acc.units / t : null;
+          const p = rowPace(acc.totals);
           operators.push({
             operator_id,
             operator_name: operator_names[operator_id] ?? operator_id,
             units: acc.units,
-            charged_minutes: acc.charged,
-            target_units: t,
+            charged_minutes: acc.totals.charged_minutes,
+            target_units: acc.totals.target_units,
             pace: p,
-            color: aggregateColor(std_hr, acc.charged, p, settings),
+            color: aggregateColor(std_hr, acc.totals.charged_minutes, p, settings),
             eligible: true,
             visitor: false,
           });
@@ -596,7 +638,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
     job: string;
     product: string;
     op: string;
-    std_hr: number | null;
+    std_cell: HourCell | null;
     cells: TvCell[];
     total_units: number;
   }
@@ -606,9 +648,9 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
     job: string;
     product: string;
     op: string;
-    std_hr: number | null;
+    std_cell: HourCell | null;
     window_minutes: number;
-    charged_minutes: number;
+    totals: RowTotals;
     units: number;
     eligible_hours: number;
     visitor_hours: number;
@@ -627,7 +669,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
           job: c.job_number,
           product: c.product_number,
           op: c.operation,
-          std_hr: null,
+          std_cell: null,
           cells: blankRow(columns),
           total_units: 0,
         };
@@ -635,7 +677,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
       }
       strip.cells[col] = tvCellFromHourCell(c);
       strip.total_units += c.units;
-      if (strip.std_hr === null && c.std_hr !== null) strip.std_hr = c.std_hr;
+      strip.std_cell = laterStdCell(strip.std_cell, c);
     }
 
     if (c.hour_start_utc >= range.from_utc && c.hour_start_utc < range.to_utc) {
@@ -645,18 +687,18 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
           job: c.job_number,
           product: c.product_number,
           op: c.operation,
-          std_hr: null,
+          std_cell: null,
           window_minutes: 0,
-          charged_minutes: 0,
+          totals: newRowTotals(),
           units: 0,
           eligible_hours: 0,
           visitor_hours: 0,
         };
         rowAccs.set(key, row);
       }
-      if (row.std_hr === null && c.std_hr !== null) row.std_hr = c.std_hr;
+      row.std_cell = laterStdCell(row.std_cell, c);
       row.window_minutes += c.window_minutes;
-      row.charged_minutes += c.charged_minutes;
+      addToRow(row.totals, c);
       row.units += c.units;
       if (c.eligible) row.eligible_hours += 1;
       else row.visitor_hours += 1;
@@ -682,7 +724,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
       job_number: s.job,
       product_number: s.product,
       operation: s.op,
-      std_hr: s.std_hr,
+      std_hr: s.std_cell?.std_hr ?? null,
       cells: s.cells,
       total_units: s.total_units,
     }))
@@ -690,20 +732,20 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
 
   const rows: OperatorRangeRow[] = [...rowAccs.values()]
     .map((r) => {
-      const target_units = r.std_hr === null ? 0 : (r.std_hr * r.charged_minutes) / 60;
-      const pace = r.std_hr !== null && target_units > 0 ? r.units / target_units : null;
+      const std_hr = r.std_cell?.std_hr ?? null;
+      const pace = rowPace(r.totals);
       return {
         job_number: r.job,
         product_number: r.product,
         product_name: product_names[r.product] ?? null,
         operation: r.op,
-        std_hr: r.std_hr,
+        std_hr,
         window_minutes: r.window_minutes,
-        charged_minutes: r.charged_minutes,
+        charged_minutes: r.totals.charged_minutes,
         units: r.units,
-        target_units,
+        target_units: r.totals.target_units,
         pace,
-        color: aggregateColor(r.std_hr, r.charged_minutes, pace, settings),
+        color: aggregateColor(std_hr, r.totals.charged_minutes, pace, settings),
         eligible_hours: r.eligible_hours,
         visitor_hours: r.visitor_hours,
         pinned: activePin(r.job, r.op),

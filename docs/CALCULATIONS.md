@@ -277,6 +277,15 @@ Either they were a **visitor** (not eligible) in every hour currently on screen 
 intentionally omitted rather than shown as an all-gray row (spec 8.5) — or their idle timeout
 expired with no scans in the visible window, so they have no open window on any job right now.
 
+**What happens when a standard changes during a shift?**
+Hours that have already been computed keep the StdHr they were judged against; only hours
+computed after the change (an override, an adjustment, or the nightly recompute) use the new
+one. A row on the shift view or the operator page adds its hours up: its target is the sum of
+each hour's own target, and its pace is earned hours over charged hours — the same arithmetic
+as the job efficiency, so the two always agree for the same work (with a single standard it is
+simply units / target). The StdHr column shows the latest standard. If part of the row ran with
+no standard at all, the row is left unjudged, just like the job efficiency.
+
 **Why is StdHr a dash?**
 There is not yet enough sampled history for that product/operation (fewer than the configured
 minimum units or distinct operators) and no FactoryLogix StdHr is mapped as a fallback. Cells

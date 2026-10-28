@@ -147,7 +147,8 @@ Over per-operator cells: visitor cells contribute only to `visitor_units` (not u
 ### ShiftView (spec 9.2)
 
 - Apply filters (job, product, operation, operator) to cells first; a job section is included when its job is in `active_job_numbers` and passes the filters. Jobs with no cells still appear (with zero rows) if active.
-- Per job: operations ordered by route; each operation row aggregates eligible cells (`charged`, `units`, `target = std * charged/60`, `pace`, color with no neutral rule except `charged < neutral_minutes`), `visitor_units` separately; `operators` = per-operator aggregates (eligible and visitors; visitors flagged, color `'visitor'`). Job efficiency via `computeRollups` on the job's cells.
+- Per job: operations ordered by route; each operation row aggregates eligible cells (`charged`, `units`, `target`, `pace`, color with no neutral rule except `charged < neutral_minutes`), `visitor_units` separately; `operators` = per-operator aggregates (eligible and visitors; visitors flagged, color `'visitor'`). Job efficiency via `computeRollups` on the job's cells.
+- Row totals (here and in OperatorDetail): a cell keeps the StdHr in force when it was computed, so a standard changed mid-range gives one row several. `target` = sum of the cells' own `std * charged / 60`; `pace` = earned hours / charged hours over the same cells, the `computeRollups` arithmetic (with a single StdHr that is `units / target`), so an operation row always equals the efficiency of the same cells; null when any of them has no StdHr. The row's `std_hr` is the latest hour's (the standard in force now, as the TV and product page show it); null only when no cell has one.
 - Summary from `computeRollups(all filtered cells)`; `active_jobs` = number of job sections; `eligible_operators` = distinct operators with an eligible cell.
 - `in_progress = shift.start_utc <= now < shift.end_utc`.
 
@@ -157,8 +158,8 @@ One row per `(operator, job, op)` with an **eligible** cell in the current hour;
 
 ### OperatorDetail (spec 9.4)
 
-- `strips`: one per `(job, op)` the operator touched within `columns`, cells aligned to columns like the TV.
-- `rows`: per `(job, op)` over the full `range`: sums of window/charged/units, `target = std * charged / 60`, pace, color (same bands, neutral when charged < neutral_minutes), `eligible_hours`/`visitor_hours` counts, `pinned` from an active pin.
+- `strips`: one per `(job, op)` the operator touched within `columns`, cells aligned to columns like the TV; `std_hr` = the latest hour's.
+- `rows`: per `(job, op)` over the full `range`: sums of window/charged/units, `target`, pace and `std_hr` as in the row totals above, color (same bands, neutral when charged < neutral_minutes), `eligible_hours`/`visitor_hours` counts, `pinned` from an active pin.
 
 ### JobDetail (spec 9.5)
 
