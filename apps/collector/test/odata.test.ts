@@ -7,7 +7,7 @@ import {
   isLegacyVersion,
   quoteString,
 } from '../src/odata/literals.js';
-import { ODataClient, buildQueryString, extractNextLink, extractRows } from '../src/odata/client.js';
+import { ODataClient, ODataError, buildQueryString, extractNextLink, extractRows } from '../src/odata/client.js';
 import { edmTypeOf, parseEdmx } from '../src/odata/metadata.js';
 
 const TS = Date.parse('2025-01-01T00:00:00.000Z');
@@ -143,5 +143,22 @@ describe('$metadata parsing', () => {
     expect(set.fields[2]!.kind).toBe('number');
     expect(set.fields[0]!.nullable).toBe(false);
     expect(edmTypeOf(metadata, 'UnitProcessHistory', 'CompletedDate')).toBe('Edm.DateTimeOffset');
+  });
+});
+
+describe('request failures', () => {
+  it('says why FactoryLogix could not be reached, not just "fetch failed"', async () => {
+    const refused = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:6065'), { code: 'ECONNREFUSED' });
+    const client = new ODataClient({
+      baseUrl: 'http://10.0.0.5:6065/odata',
+      username: 'u',
+      password: 'p',
+      timeoutSeconds: 5,
+      fetchImpl: () => Promise.reject(new TypeError('fetch failed', { cause: refused })),
+    });
+    const err = await client.fetchMetadata().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ODataError);
+    expect((err as ODataError).message).toBe('OData request failed: connection refused (connect ECONNREFUSED 10.0.0.5:6065)');
+    expect((err as ODataError).status).toBeNull();
   });
 });

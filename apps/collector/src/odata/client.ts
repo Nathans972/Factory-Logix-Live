@@ -3,7 +3,7 @@
  * hard request timeout, tolerant response parsing (v4 `value`, v2/v3 `d.results` / `d`)
  * and `@odata.nextLink` / `__next` server-driven paging.
  */
-import type { ODataMetadata } from '@fld/shared';
+import { describeFetchError, type ODataMetadata } from '@fld/shared';
 import { parseEdmx } from './metadata.js';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -142,7 +142,7 @@ export class ODataClient {
       const name = (err as Error)?.name ?? '';
       const timeout = name === 'TimeoutError' || name === 'AbortError';
       throw new ODataError(
-        timeout ? `OData request timed out after ${this.timeoutSeconds}s` : `OData request failed: ${(err as Error)?.message ?? String(err)}`,
+        timeout ? `OData request timed out after ${this.timeoutSeconds}s` : `OData request failed: ${describeFetchError(err)}`,
         { isTimeout: timeout, url, cause: err },
       );
     }

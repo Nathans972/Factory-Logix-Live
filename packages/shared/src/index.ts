@@ -5,3 +5,4 @@ export * from './engine-types.js';
 export * from './api-types.js';
 export * from './schemas.js';
 export * from './colors.js';
+export * from './fetch-error.js';

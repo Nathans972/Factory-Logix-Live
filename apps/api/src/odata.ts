@@ -5,6 +5,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import {
   DATASET_SPECS,
+  describeFetchError,
   edmTypeToKind,
   type DatasetMapping,
   type DatasetName,
@@ -153,11 +154,9 @@ async function request(url: string, creds: ODataCredentials, timeoutMs: number, 
     return { ok: true, status: res.status, data: text, error: null, content_type: contentType, latency_ms: Date.now() - started };
   } catch (err) {
     const message =
-      err instanceof Error
-        ? err.name === 'TimeoutError' || err.name === 'AbortError'
-          ? `request timed out after ${timeoutMs} ms`
-          : err.message
-        : String(err);
+      err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+        ? `request timed out after ${timeoutMs} ms`
+        : describeFetchError(err);
     return { ok: false, status: 0, data: null, error: message, content_type: null, latency_ms: Date.now() - started };
   }
 }
