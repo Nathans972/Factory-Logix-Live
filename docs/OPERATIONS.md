@@ -142,7 +142,9 @@ The `web` service's logs are nginx's standard access/error logs.
 - The hourly late-data re-pull reports as source `late_data`. If it fails, the error and the
   failure count show on that row; the next attempt waits an hour, doubling after each further
   failure up to 6 hours. Nothing is lost while it waits, because every re-pull covers the whole
-  `late_data_hours` window, and it never counts against the main circuit breaker.
+  `late_data_hours` window, and it never counts against the main circuit breaker. It re-pulls
+  only the data sources whose regular poll succeeded that cycle, so a failing defects data
+  source does not hold up the re-pull of unit steps.
 
 ## The circuit breaker and "Data delayed" banner
 
@@ -151,6 +153,15 @@ consecutive failures. Once that count reaches `breaker_failure_threshold` (defau
 off: the next attempt waits 2x the normal poll interval, then 4x, doubling up to
 `breaker_max_backoff_minutes` (default 10 minutes). Any successful poll resets the counter and
 the interval back to normal immediately.
+
+One data source failing does not hold up the others: the poll records the error on that data
+source's row in Admin > Sync and goes on with the next one. It stops early only when
+FactoryLogix itself is down (no answer, a timeout, a refused login, or "busy") before anything
+came back that poll. Unit steps wait while work orders fail, because they need the work orders
+to find each job's product. A poll counts as successful for the breaker and the banner below
+when the two required data sources, work orders and unit steps, came in. When only an optional
+one (defects, operators, routes, FactoryLogix standards) fails, the numbers stay current and
+there is no backoff, but the status shows `degraded` with that data source's error.
 
 Regardless of the breaker state, the TV and portal treat data as **delayed** whenever the last
 successful poll is older than **3x the configured poll interval**, and show a "Data delayed
@@ -162,7 +173,7 @@ Sync status values you will see in Admin > Sync:
 | Status | Meaning |
 |---|---|
 | `ok` | Last poll succeeded and data is current. |
-| `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. |
+| `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in; the last error names it. |
 | `down` | The breaker is open (threshold reached) and the last success is older than 3x the poll interval. |
 | `never` | The collector has never completed a poll — either FactoryLogix connection/mapping has not been configured yet, or every attempt so far has failed. |
 

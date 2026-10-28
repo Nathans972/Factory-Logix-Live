@@ -177,22 +177,30 @@ class Collector {
     try {
       outcome = await (this.poller as Poller).pollOnce(mapping, settings, now);
     } catch (err) {
-      outcome = { ok: false, rows: 0, touched: [], error: errorMessage(err), datasets: [], durationMs: Date.now() - now };
+      outcome = { ok: false, requiredOk: false, rows: 0, touched: [], error: errorMessage(err), datasets: [], durationMs: Date.now() - now };
     }
     this.pollCount += 1;
 
-    if (outcome.ok) {
-      this.breaker.recordSuccess(Date.now());
-      this.log.info({ rows: outcome.rows, ms: outcome.durationMs }, 'poll ok');
+    if (outcome.requiredOk) {
+      // An optional data source failing (defects, operators, routes, standards) leaves the numbers
+      // current: no backoff and no "Data delayed", but the status shows degraded with its error.
+      this.breaker.recordSuccess(Date.now(), outcome.error);
+      if (outcome.ok) this.log.info({ rows: outcome.rows, ms: outcome.durationMs }, 'poll ok');
+      else this.log.warn({ rows: outcome.rows, ms: outcome.durationMs, err: outcome.error }, 'poll ok except an optional data source');
+    } else {
+      this.breaker.recordFailure(Date.now(), outcome.error ?? 'poll failed', breakerOpts);
+      this.log.warn({ err: outcome.error, failures: this.breaker.consecutiveFailures }, 'poll failed');
+    }
+
+    // Recompute whatever came in, even when another data source failed: the watermarks have
+    // already moved past those rows.
+    if (outcome.requiredOk || outcome.touched.length > 0) {
       // A recompute failure must not stop ingestion: the next poll recomputes the same hours.
       try {
         await this.recomputeTouched(outcome.touched, settings);
       } catch (err) {
         this.log.error({ err: errorMessage(err) }, 'hour cell recompute failed');
       }
-    } else {
-      this.breaker.recordFailure(Date.now(), outcome.error ?? 'poll failed', breakerOpts);
-      this.log.warn({ err: outcome.error, failures: this.breaker.consecutiveFailures }, 'poll failed');
     }
 
     await this.health.report({

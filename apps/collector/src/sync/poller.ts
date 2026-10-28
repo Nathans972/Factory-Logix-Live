@@ -9,6 +9,7 @@ import type { Logger } from '../logger.js';
 import { selectFieldsFor, type TimestampResolver } from '../mapping/extract.js';
 import type { Ingestor } from '../ingest/datasets.js';
 import type { Source } from '../sources/Source.js';
+import { ODataError } from '../odata/client.js';
 import { andAll, cmp } from '../odata/literals.js';
 import { pullPages } from './paging.js';
 import { finishSyncLog, loadSyncState, recordSyncFailure, recordSyncSuccess, startSyncLog } from './state.js';
@@ -43,6 +44,18 @@ export function latePullWaitMs(consecutiveFailures: number): number {
   return Math.min(LATE_PULL_MAX_WAIT_MS, HOUR_MS * 2 ** Math.min(extra, 10));
 }
 
+/** HTTP statuses that mean FactoryLogix as a whole refused or could not serve the request. */
+const SERVICE_DOWN_STATUS = new Set([401, 408, 429, 502, 503, 504]);
+
+/**
+ * True when FactoryLogix itself is down or refusing us: no usable answer (unreachable, timed
+ * out, not an OData service), a refused login, or "busy". Anything else (a 400/500 for one
+ * entity set, a row the ingest rejects) belongs to that data source alone.
+ */
+function isServiceDown(err: unknown): boolean {
+  return err instanceof ODataError && (err.status === null || SERVICE_DOWN_STATUS.has(err.status));
+}
+
 export interface DatasetOutcome {
   dataset: DatasetName;
   rows: number;
@@ -50,11 +63,16 @@ export interface DatasetOutcome {
   skipped: number;
   durationMs: number;
   error: string | null;
+  /** The error says FactoryLogix itself is down, not just this data source (see `isServiceDown`). */
+  serviceDown: boolean;
   truncated: boolean;
 }
 
 export interface PollOutcome {
+  /** Every mapped data source succeeded. */
   ok: boolean;
+  /** work_orders and unit_steps succeeded: the numbers are current even if an optional data source failed. */
+  requiredOk: boolean;
   rows: number;
   touched: number[];
   error: string | null;
@@ -110,30 +128,46 @@ export class Poller {
     return { watermarkField, watermarkKind, timestampField };
   }
 
-  /** One full pass over every mapped data source, in order. */
+  /**
+   * One full pass over every mapped data source, in order. A data source that fails is recorded
+   * in its own sync_state / sync_log row and the pass goes on with the next one, unless
+   * FactoryLogix itself is down.
+   */
   async pollOnce(mapping: MappingConfig, settings: Settings, now: number): Promise<PollOutcome> {
     const started = Date.now();
-    const outcome: PollOutcome = { ok: true, rows: 0, touched: [], error: null, datasets: [], durationMs: 0 };
+    const outcome: PollOutcome = { ok: true, requiredOk: false, rows: 0, touched: [], error: null, datasets: [], durationMs: 0 };
+    const succeeded = new Set<DatasetName>();
 
     for (const dataset of DATASET_ORDER) {
       const datasetMapping = mapping[dataset];
       if (!datasetMapping) continue;
+      if (dataset === 'unit_steps' && !succeeded.has('work_orders')) {
+        // unit_steps finds products through the work orders: without this cycle's, the steps of
+        // new jobs would be skipped while its watermark moves past them. It catches up from its
+        // watermark once work_orders is back.
+        this.deps.log.warn({ dataset }, 'work_orders failed; unit_steps waits until it is back');
+        continue;
+      }
       const result = await this.pollDataset(dataset, datasetMapping, settings, now, outcome.touched);
       outcome.datasets.push(result);
       outcome.rows += result.rows;
-      if (result.error) {
-        outcome.ok = false;
-        outcome.error = outcome.error ?? `${dataset}: ${result.error}`;
-        break; // the service is unhappy; stop hammering it this cycle
+      if (!result.error) {
+        succeeded.add(dataset);
+        continue;
       }
+      outcome.ok = false;
+      outcome.error = outcome.error ?? `${dataset}: ${result.error}`;
+      // Once anything came back this cycle FactoryLogix is up, and a failure belongs to that data
+      // source. Before that, a failure that says the service itself is down ends the cycle: the
+      // service is unhappy, stop hammering it.
+      if (result.serviceDown && succeeded.size === 0) break;
     }
+    outcome.requiredOk = succeeded.has('work_orders') && succeeded.has('unit_steps');
 
-    if (outcome.ok) {
-      try {
-        await this.latePullIfDue(mapping, settings, now, outcome.touched);
-      } catch (err) {
-        this.deps.log.warn({ err }, 'late-data re-pull failed');
-      }
+    try {
+      await this.latePullIfDue(mapping, settings, now, outcome.touched, succeeded);
+    } catch (err) {
+      this.deps.log.warn({ err }, 'late-data re-pull failed');
     }
 
     outcome.durationMs = Date.now() - started;
@@ -148,7 +182,7 @@ export class Poller {
     touched: number[],
   ): Promise<DatasetOutcome> {
     const started = Date.now();
-    const out: DatasetOutcome = { dataset, rows: 0, ingested: 0, skipped: 0, durationMs: 0, error: null, truncated: false };
+    const out: DatasetOutcome = { dataset, rows: 0, ingested: 0, skipped: 0, durationMs: 0, error: null, serviceDown: false, truncated: false };
     const logId = await startSyncLog(this.deps.pool, dataset);
     const state = await loadSyncState(this.deps.pool, dataset);
     const plan = this.plan(dataset, mapping, state?.watermark ?? null);
@@ -238,6 +272,7 @@ export class Poller {
     } catch (err) {
       out.durationMs = Date.now() - started;
       out.error = err instanceof Error ? err.message : String(err);
+      out.serviceDown = isServiceDown(err);
       await recordSyncFailure(this.deps.pool, dataset, out.error, out.durationMs);
       await finishSyncLog(this.deps.pool, logId, {
         status: 'error',
@@ -258,9 +293,20 @@ export class Poller {
    * The `late_data` watermark is the last attempt, successful or not. A failure is recorded in
    * sync_state('late_data') and backs off (see `latePullWaitMs`); nothing is lost because every
    * re-pull covers the full window. It never fails the regular poll or feeds the main breaker.
+   *
+   * Only the data sources that came in this cycle (`polledOk`) are re-pulled: one that just
+   * failed would fail again, and it catches up from its own watermark once it is back.
    */
-  private async latePullIfDue(mapping: MappingConfig, settings: Settings, now: number, touched: number[]): Promise<void> {
+  private async latePullIfDue(
+    mapping: MappingConfig,
+    settings: Settings,
+    now: number,
+    touched: number[],
+    polledOk: ReadonlySet<DatasetName>,
+  ): Promise<void> {
     if (settings.late_data_hours <= 0) return;
+    const datasets = (['unit_steps', 'defects'] as const).filter((dataset) => polledOk.has(dataset));
+    if (datasets.length === 0) return;
     const state = await loadSyncState(this.deps.pool, 'late_data');
     const last = state?.watermark ? Date.parse(state.watermark) : null;
     if (last !== null && !Number.isNaN(last) && now - last < latePullWaitMs(state?.consecutive_failures ?? 0)) return;
@@ -268,7 +314,7 @@ export class Poller {
     const started = Date.now();
     let rows = 0;
     try {
-      for (const dataset of ['unit_steps', 'defects'] as const) {
+      for (const dataset of datasets) {
         const datasetMapping = mapping[dataset];
         if (!datasetMapping) continue;
         const result = await this.pullWindow(dataset, datasetMapping, settings, {

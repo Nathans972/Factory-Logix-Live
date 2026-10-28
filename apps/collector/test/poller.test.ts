@@ -5,6 +5,7 @@ import type { Logger } from '../src/logger.js';
 import { Ingestor } from '../src/ingest/datasets.js';
 import { OperationCache } from '../src/ingest/operations.js';
 import { TimestampResolver } from '../src/mapping/extract.js';
+import { ODataError } from '../src/odata/client.js';
 import type { Source, SourceRequest } from '../src/sources/Source.js';
 import { Poller, latePullWaitMs } from '../src/sync/poller.js';
 
@@ -77,8 +78,11 @@ function fakePool() {
   return { pool: pool as unknown as Pool, state, log };
 }
 
-/** Serves fixed rows per entity set; a window pull (`lt` upper bound) on UnitSteps fails when asked. */
-function fakeSource(rows: Record<string, Record<string, unknown>[]>, opts: { failLatePull: boolean }) {
+/**
+ * Serves fixed rows per entity set; a window pull (`lt` upper bound) on UnitSteps fails when asked,
+ * and the entity sets in `fail` throw their error.
+ */
+function fakeSource(rows: Record<string, Record<string, unknown>[]>, opts: { failLatePull?: boolean; fail?: Record<string, Error> }) {
   const requests: SourceRequest[] = [];
   const source: Source = {
     kind: 'odata',
@@ -90,6 +94,8 @@ function fakeSource(rows: Record<string, Record<string, unknown>[]>, opts: { fai
     describe: () => '',
     fetchPage: async (req) => {
       requests.push(req);
+      const error = opts.fail?.[req.entitySet];
+      if (error) throw error;
       if (opts.failLatePull && req.entitySet === 'UnitSteps' && / lt /.test(req.filter ?? '')) throw new Error('HTTP 503');
       return { rows: (req.skip ?? 0) === 0 ? (rows[req.entitySet] ?? []) : [], nextLink: null };
     },
@@ -120,11 +126,15 @@ const mapping = {
 
 const settings: Settings = { ...DEFAULT_SETTINGS, plant_timezone: 'UTC', late_data_hours: 24 };
 
-function harness(rows: Record<string, Record<string, unknown>[]> = {}, opts = { failLatePull: false }) {
+function harness(
+  rows: Record<string, Record<string, unknown>[]> = {},
+  opts: { failLatePull?: boolean; fail?: Record<string, Error> } = {},
+  map: MappingConfig = mapping,
+) {
   const db = fakePool();
   const src = fakeSource(rows, opts);
   const timestamps = new TimestampResolver({ mode: 'offset_present', timezone: 'UTC' });
-  const ingestor = new Ingestor({ pool: db.pool, log, operations: new OperationCache(db.pool), timestamps }, mapping);
+  const ingestor = new Ingestor({ pool: db.pool, log, operations: new OperationCache(db.pool), timestamps }, map);
   const poller = new Poller({ pool: db.pool, log, ingestor, timestamps }, src.source);
   return { poller, db, src };
 }
@@ -206,5 +216,52 @@ describe('late-data re-pull backoff', () => {
     await poller.pollOnce(mapping, settings, t0);
     expect(src.latePulls()).toBe(1);
     expect(db.state.get('late_data')).toMatchObject({ last_error: null, consecutive_failures: 0, watermark: new Date(t0).toISOString() });
+  });
+});
+
+describe('a failing data source', () => {
+  const t0 = Date.parse('2025-03-04T12:00:00Z');
+  const full = {
+    ...mapping,
+    defects: { entity_set: 'Defects', watermark_field: null, key: ['Id'], fields: { unit_id: 'Unit', job_number: 'Job', operation: 'Op', found_ts: 'Found' } },
+    operators: { entity_set: 'Operators', watermark_field: null, key: ['Id'], fields: { operator_id: 'Id', display_name: 'Name' } },
+    routes: { entity_set: 'Routes', watermark_field: null, key: ['Id'], fields: { product_number: 'Product', operation: 'Op', sequence: 'Seq' } },
+  } as unknown as MappingConfig;
+  const url = 'http://fl:6065/odata/WorkOrders';
+  const http = (status: number) => new ODataError(`OData request failed with HTTP ${status}`, { status, url, body: '' });
+  const timeout = new ODataError('OData request timed out after 20s', { isTimeout: true, url });
+
+  it('stops the cycle at the first data source when FactoryLogix itself is down', async () => {
+    for (const error of [timeout, new ODataError('OData request failed: fetch failed', { url }), http(401), http(503)]) {
+      const everySet = Object.fromEntries(['WorkOrders', 'UnitSteps', 'Defects', 'Operators', 'Routes'].map((set) => [set, error]));
+      const { poller, src, db } = harness({}, { fail: everySet }, full);
+      const outcome = await poller.pollOnce(full, settings, t0);
+      expect(outcome).toMatchObject({ ok: false, requiredOk: false, error: `work_orders: ${error.message}` });
+      // One request, not one per data source, and no late-data re-pull either.
+      expect(src.requests.map((r) => r.entitySet)).toEqual(['WorkOrders']);
+      expect(db.state.has('late_data')).toBe(false);
+    }
+  });
+
+  it('polls the rest when work_orders fails on its own, but unit_steps waits for it', async () => {
+    const { poller, src, db } = harness({}, { fail: { WorkOrders: http(500) } }, full);
+    const outcome = await poller.pollOnce(full, settings, t0);
+    expect(outcome).toMatchObject({ ok: false, requiredOk: false });
+    expect(outcome.datasets.map((d) => d.dataset)).toEqual(['work_orders', 'defects', 'operators', 'routes']);
+    // unit_steps is not asked (nor re-pulled), so its watermark stays where it was.
+    expect(src.requests.some((r) => r.entitySet === 'UnitSteps')).toBe(false);
+    expect(db.state.has('unit_steps')).toBe(false);
+  });
+
+  it('keeps the cycle current when an optional data source fails, even on a timeout', async () => {
+    const { poller, src, db } = harness({}, { fail: { Defects: timeout } }, full);
+    const outcome = await poller.pollOnce(full, settings, t0);
+    expect(outcome).toMatchObject({ ok: false, requiredOk: true, error: `defects: ${timeout.message}` });
+    expect(outcome.datasets.map((d) => d.dataset)).toEqual(['work_orders', 'unit_steps', 'defects', 'operators', 'routes']);
+    // The hourly late-data re-pull still runs for unit_steps and counts as done; defects, which
+    // just failed, is left out instead of failing it and backing it off.
+    expect(src.latePulls()).toBe(1);
+    expect(src.requests.filter((r) => r.entitySet === 'Defects')).toHaveLength(1);
+    expect(db.state.get('late_data')).toMatchObject({ last_error: null, consecutive_failures: 0 });
   });
 });

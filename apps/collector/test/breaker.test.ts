@@ -64,6 +64,19 @@ describe('health status', () => {
     expect(computeStatus(stale.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('down');
   });
 
+  it('stays current but degraded while an optional data source fails', () => {
+    const breaker = new CircuitBreaker();
+    for (let i = 0; i < 5; i += 1) breaker.recordSuccess(now - 1_000, 'defects: OData request failed with HTTP 500');
+    expect(breaker.consecutiveFailures).toBe(0);
+    expect(breaker.nextDelayMs(OPTS)).toBe(INTERVAL);
+    expect(isDelayed(breaker.lastSuccessAt, now, INTERVAL)).toBe(false);
+    expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('degraded');
+
+    breaker.recordSuccess(now);
+    expect(breaker.lastError).toBeNull();
+    expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('ok');
+  });
+
   it('stays open after a restart until the persisted openUntil', () => {
     const restarted = new CircuitBreaker();
     restarted.hydrate({ consecutiveFailures: 4, lastSuccessAt: null, lastError: 'HTTP 503', openUntil: now + 60_000 });

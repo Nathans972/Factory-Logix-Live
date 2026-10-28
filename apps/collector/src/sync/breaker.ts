@@ -41,10 +41,14 @@ export class CircuitBreaker {
     this.everPolled = Boolean(this.lastSuccessAt !== null || this.consecutiveFailures > 0);
   }
 
-  recordSuccess(now: number): void {
+  /**
+   * `error` is an optional data source that failed while the required ones came in: the data is
+   * current (no backoff, not delayed), but the status stays degraded and shows the error.
+   */
+  recordSuccess(now: number, error: string | null = null): void {
     this.consecutiveFailures = 0;
     this.lastSuccessAt = now;
-    this.lastError = null;
+    this.lastError = error;
     this.openUntil = null;
     this.everPolled = true;
   }
@@ -84,7 +88,8 @@ export function isDelayed(lastSuccessAt: number | null, now: number, intervalMs:
 
 /**
  * ok        - last poll succeeded
- * degraded  - some failures (under threshold) or in backoff but with a recent success
+ * degraded  - some failures (under threshold) or in backoff but with a recent success, or an
+ *             optional data source failing while the required ones come in
  * down      - breaker open and the last success is older than 3x the interval (or never)
  * never     - nothing has ever been polled (no mapping/connection yet)
  */
@@ -98,6 +103,6 @@ export function computeStatus(
   const delayed = isDelayed(snapshot.lastSuccessAt, now, opts.intervalMs);
   const breakerOpen = snapshot.consecutiveFailures >= opts.threshold;
   if (breakerOpen && delayed) return 'down';
-  if (snapshot.consecutiveFailures > 0 || delayed) return 'degraded';
+  if (snapshot.consecutiveFailures > 0 || snapshot.lastError !== null || delayed) return 'degraded';
   return 'ok';
 }
