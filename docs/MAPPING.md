@@ -187,7 +187,9 @@ sample rows during the Test & preview step:
 - **Writing.** Time filters the collector sends (`$filter=... ge datetime'...'`) use the same
   form FactoryLogix returns: on an OData v2/v3 service, an `Edm.DateTime` (or untyped) field is
   compared against plant-local wall-clock time, e.g. `datetime'2025-06-01T10:30:00'` for
-  14:30 UTC in New York in summer.
+  14:30 UTC in New York in summer. On the fall-back night, a filter that starts in the first
+  pass through the repeated hour (say 01:40 EDT) is written an hour earlier (`00:40`), so it
+  also finds the rows written in the second pass (01:00-01:40 EST), whose clock times are lower.
 - **Not changed:** OData v4 literals and `Edm.DateTimeOffset` fields always carry an offset, so
   they stay in UTC (`2025-06-01T14:30:00Z`) and mean the same instant whatever the mode.
   If a v4 FactoryLogix service ever returns offset-less values for a `DateTimeOffset` field,

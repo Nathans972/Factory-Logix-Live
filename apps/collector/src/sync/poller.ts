@@ -237,7 +237,11 @@ export class Poller {
           storedMs = this.usableStoredMs(dataset, stored.ms, now);
           replaceStored = storedMs !== stored.ms;
           const since = (storedMs ?? now - FIRST_RUN_LOOKBACK_MS) - overlapMs;
-          filter = cmp(plan.watermarkField, 'ge', this.source.literal(mapping.entity_set, plan.watermarkField, { kind: 'timestamp', ms: since }));
+          filter = cmp(
+            plan.watermarkField,
+            'ge',
+            this.source.literal(mapping.entity_set, plan.watermarkField, { kind: 'timestamp', ms: since, lowerBound: true }),
+          );
         } else if (plan.watermarkKind === 'number' && stored.numeric !== null) {
           filter = cmp(
             plan.watermarkField,
@@ -256,7 +260,11 @@ export class Poller {
         storedMs = this.usableStoredMs(dataset, persistedMs, now);
         replaceStored = storedMs !== persistedMs;
         const since = (storedMs ?? now - FIRST_RUN_LOOKBACK_MS) - overlapMs;
-        filter = cmp(plan.timestampField, 'ge', this.source.literal(mapping.entity_set, plan.timestampField, { kind: 'timestamp', ms: since }));
+        filter = cmp(
+          plan.timestampField,
+          'ge',
+          this.source.literal(mapping.entity_set, plan.timestampField, { kind: 'timestamp', ms: since, lowerBound: true }),
+        );
       } else {
         if (!FULL_PULL_ALLOWED.has(dataset)) {
           throw new Error(`${dataset} has neither a watermark field nor a primary timestamp; refusing an unbounded pull`);
@@ -412,7 +420,7 @@ export class Poller {
       if (plan.timestampField) {
         const field = plan.timestampField;
         filter = andAll([
-          cmp(field, 'ge', this.source.literal(mapping.entity_set, field, { kind: 'timestamp', ms: opts.from })),
+          cmp(field, 'ge', this.source.literal(mapping.entity_set, field, { kind: 'timestamp', ms: opts.from, lowerBound: true })),
           cmp(field, 'lt', this.source.literal(mapping.entity_set, field, { kind: 'timestamp', ms: opts.to })),
         ]);
         orderBy = `${field} asc`;

@@ -6,6 +6,7 @@ import {
   formatTimestampLiteral,
   isLegacyVersion,
   quoteString,
+  type TimestampLiteralOptions,
 } from '../src/odata/literals.js';
 import { ODataClient, ODataError, buildQueryString, extractNextLink, extractRows } from '../src/odata/client.js';
 import { edmTypeOf, parseEdmx } from '../src/odata/metadata.js';
@@ -40,6 +41,24 @@ describe('$filter literals', () => {
     expect(formatTimestampLiteral(TS, 'Edm.DateTimeOffset', '2.0', local)).toBe("datetimeoffset'2025-01-01T00:00:00Z'");
     expect(formatTimestampLiteral(TS, 'Edm.DateTimeOffset', '4.0', local)).toBe('2025-01-01T00:00:00Z');
     expect(formatTimestampLiteral(TS, null, null, local)).toBe('2025-01-01T00:00:00Z');
+  });
+
+  it('local_no_offset: a lower bound in the first pass through the repeated hour also covers the second pass', () => {
+    const local = { mode: 'local_no_offset' as const, timezone: 'America/New_York' };
+    const from = (iso: string, edmType: string | null = 'Edm.DateTime', opts: TimestampLiteralOptions = local) =>
+      formatLiteral({ kind: 'timestamp', ms: Date.parse(iso), lowerBound: true }, edmType, '2.0', opts);
+    // 2026-11-01 05:40Z is 01:40 EDT; 01:00-01:40 EST (06:00Z-06:40Z) come after it and read earlier.
+    expect(from('2026-11-01T05:40:00Z')).toBe("datetime'2026-11-01T00:40:00'");
+    expect(from('2026-11-01T05:00:00Z', null)).toBe("datetime'2026-11-01T00:00:00'");
+    expect(formatTimestampLiteral(Date.parse('2026-11-01T05:40:00Z'), 'Edm.DateTime', '2.0', local)).toBe("datetime'2026-11-01T01:40:00'");
+    // Second pass, before the repeated hour, spring forward and an ordinary day: the plain wall clock.
+    expect(from('2026-11-01T06:20:00Z')).toBe("datetime'2026-11-01T01:20:00'");
+    expect(from('2026-11-01T04:59:00Z')).toBe("datetime'2026-11-01T00:59:00'");
+    expect(from('2026-03-08T06:30:00Z')).toBe("datetime'2026-03-08T01:30:00'");
+    expect(from('2026-06-01T14:30:00Z')).toBe("datetime'2026-06-01T10:30:00'");
+    // Offset-carrying literals and the other modes are instants: nothing to widen.
+    expect(from('2026-11-01T05:40:00Z', 'Edm.DateTimeOffset')).toBe("datetimeoffset'2026-11-01T05:40:00Z'");
+    expect(from('2026-11-01T05:40:00Z', 'Edm.DateTime', { mode: 'utc', timezone: 'America/New_York' })).toBe("datetime'2026-11-01T05:40:00'");
   });
 
   it('utc and offset_present modes write the same literals as without a mode', () => {
