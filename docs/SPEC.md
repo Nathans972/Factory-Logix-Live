@@ -579,6 +579,7 @@ Given a shift instance (a concrete UTC interval from a shift definition and a ca
 - On first load the page generates a `device_token` (UUID), stores it in `localStorage` and a long-lived cookie, and registers with the API, which returns a 4-digit `pairing_code`.
 - Unclaimed state: full-screen message "This TV is **4821**. Claim it in the admin portal." with the internal admin URL.
 - The page polls (or subscribes via SSE) for its assignment. Once claimed and assigned a job, the dashboard renders.
+- If the API answers that it does not know the token (the first registration failed, or the display was deleted or re-paired onto another TV), the page registers the same token again and shows the new pairing code.
 - Persistence: token survives reboots and normal cache behavior. If storage is cleared, the TV shows a new code; the admin "re-pair" action lets a manager attach the new code to the existing display record (keeping name and settings). The page also accepts `?token=<uuid>` so a bookmark can restore identity.
 - Heartbeat: the TV pings every poll so admin shows "last seen".
 

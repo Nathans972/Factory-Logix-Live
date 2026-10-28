@@ -147,3 +147,46 @@ describe('TV page when the server does not know its device token', () => {
     expect(render().state?.status, 'TV screen five minutes after its display was deleted').toBe('unclaimed');
   });
 });
+
+describe('TV page when the server is unreachable or refuses the new registration', () => {
+  const assigned = () =>
+    tvState({ status: 'assigned', display: display({ name: 'Line 3', claimed_at: 1, job_number: 'J-100' }), job_status: 'ok' });
+
+  it('keeps the last screen under the offline banner and does not register during an outage', async () => {
+    ds.tvRegister.mockResolvedValue(assigned());
+    ds.tvState.mockResolvedValue(assigned());
+    mount();
+    await vi.advanceTimersByTimeAsync(0);
+
+    ds.tvState.mockRejectedValue(new DataSourceError(502, 'Bad Gateway'));
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    const view = render();
+    expect(view.state?.status).toBe('assigned');
+    expect(view.offlineSince).not.toBeNull();
+    expect(ds.tvRegister).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers the same token again and keeps the last screen until that succeeds', async () => {
+    ds.tvRegister.mockResolvedValue(assigned());
+    ds.tvState.mockResolvedValue(assigned());
+    mount();
+    await vi.advanceTimersByTimeAsync(0);
+
+    ds.tvState.mockRejectedValue(unknownToken());
+    ds.tvRegister.mockRejectedValue(new DataSourceError(429, 'Too Many Requests'));
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const view = render();
+    expect(view.state?.status).toBe('assigned');
+    expect(view.offlineSince).not.toBeNull();
+    expect(ds.tvRegister.mock.calls.length).toBeGreaterThan(1);
+    expect(ds.tvRegister.mock.calls.every(([token]) => token === view.token)).toBe(true);
+
+    ds.tvRegister.mockResolvedValue(tvState({ device_token: view.token }));
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(render().state?.status).toBe('unclaimed');
+    expect(render().offlineSince).toBeNull();
+  });
+});

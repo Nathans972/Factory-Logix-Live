@@ -159,9 +159,10 @@ On each TV, open `http://<host>:8080/tv` in the browser, in full-screen/kiosk mo
 display a name, and assign it a job. The TV renders the dashboard within one poll interval.
 
 The server takes at most 10 new TVs a minute from one address. If your TVs reach it through a
-single proxy or NAT, a TV that shows "Dashboard unavailable" during a large rollout only needs
-its page reloaded a minute later. A TV that is switched off for more than a day before it is
-claimed can lose its code; it shows a new one when it is switched on again.
+single proxy or NAT, a TV that shows "Dashboard unavailable" during a large rollout tries again
+by itself every minute and shows its code once the server takes it. A TV that is switched off
+for more than a day before it is claimed can lose its code; it shows a new one when it is
+switched on again.
 
 ## 10. Optional: TLS
 

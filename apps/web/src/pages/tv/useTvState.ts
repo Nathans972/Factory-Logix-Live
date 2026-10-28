@@ -2,7 +2,8 @@
  * TV lifecycle hook (spec 8.1, 8.2, 8.4).
  *
  * - resolves the device identity once and registers with the backend on mount
- * - refetches `tvState` every 60 s and on `data_updated` / `display_updated` / `sync_health`
+ * - refetches `tvState` every 60 s and on `data_updated` / `display_updated` / `sync_health`, and
+ *   registers the same token again when the server does not know it (404)
  * - re-renders at the top of every plant-local hour so the rolling window rolls without data
  * - keeps the last good dashboard while refetching (no flicker) and tracks the offline/delayed
  *   banner timestamps
@@ -13,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SseEvent, TvDashboard, TvState } from '@fld/shared';
 import { IS_MOCK } from '../../data';
+import { DataSourceError } from '../../data/DataSource';
 import { useDataSource } from '../../data/DataSourceContext';
 import { getDeviceToken, msUntilNextHour, nextDashboard, tvDelay } from './tvLogic';
 
@@ -89,7 +91,13 @@ export function useTvState(): TvViewState {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      const next = await ds.tvState(token);
+      const next = await ds.tvState(token).catch((err: unknown) => {
+        // The server does not know this token: the register on mount failed, or the display was
+        // deleted or re-paired onto another TV. Register it again so the TV shows a pairing code
+        // (spec 8.1) rather than an outage. Only a successful response changes the screen.
+        if (err instanceof DataSourceError && err.status === 404) return ds.tvRegister(token);
+        throw err;
+      });
       apply(next);
     } catch {
       fail();
