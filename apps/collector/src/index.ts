@@ -18,7 +18,7 @@ import { OperationCache } from './ingest/operations.js';
 import { loadEnv, type Env } from './env.js';
 import { createLogger, errorMessage, type Logger } from './logger.js';
 import { TimestampResolver } from './mapping/extract.js';
-import { loadConfig, type CollectorConfig } from './settings.js';
+import { configError, loadConfig, type CollectorConfig } from './settings.js';
 import { ODataSource } from './sources/ODataSource.js';
 import { Backfill } from './sync/backfill.js';
 import { CircuitBreaker } from './sync/breaker.js';
@@ -145,8 +145,12 @@ class Collector {
           'waiting for the first-run wizard: FactoryLogix connection and field mapping are required',
         );
       }
+      // Sync health says why nothing is polled when something saved cannot be used (a password
+      // saved under another ENCRYPTION_KEY, an incomplete connection, an invalid mapping).
+      const problem = configError(this.config);
+      const snapshot = this.breaker.snapshot();
       await this.health.report({
-        snapshot: this.breaker.snapshot(),
+        snapshot: problem ? { ...snapshot, lastError: problem } : snapshot,
         now: Date.now(),
         intervalMs,
         threshold: settings.breaker_failure_threshold,

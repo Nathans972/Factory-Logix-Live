@@ -59,13 +59,13 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | DELETE | `/api/admin/breaks/:id` | admin | | `OkResponse` |
 | GET | `/api/admin/settings` | viewer | | `SettingsResponse` |
 | PATCH | `/api/admin/settings` | admin | `SettingsPatch` | `SettingsResponse` |
-| GET | `/api/admin/connection` | admin | | `ConnectionResponse` (never includes password) |
-| PUT | `/api/admin/connection` | admin | `FlConnection` (password optional = keep, only while `base_url` and `username` are the saved ones; 400 otherwise) | `ConnectionResponse` |
-| POST | `/api/admin/connection/test` | admin | optional `FlConnection` body to test unsaved values (without a password, the saved one is only sent when `base_url` and `username` are the saved ones) | `ConnectionTestResult` |
+| GET | `/api/admin/connection` | admin | | `ConnectionResponse` (never includes password; `password_unreadable: true` when this server's `ENCRYPTION_KEY` cannot decrypt the saved one, as after restoring a backup from another install) |
+| PUT | `/api/admin/connection` | admin | `FlConnection` (password optional = keep, only while `base_url` and `username` are the saved ones and the saved password can be decrypted; 400 otherwise) | `ConnectionResponse` |
+| POST | `/api/admin/connection/test` | admin | optional `FlConnection` body to test unsaved values (without a password, the saved one is only sent when `base_url` and `username` are the saved ones) | `ConnectionTestResult` (`ok: false` asking for the password again when the saved one is needed but cannot be decrypted) |
 | GET | `/api/admin/mapping` | admin | | `MappingResponse` |
 | PUT | `/api/admin/mapping` | admin | `MappingConfig` | `MappingResponse` (validates; notifies collector to restart) |
-| GET | `/api/admin/mapping/metadata` | admin | | `ODataMetadata` (fetches live `$metadata`) |
-| POST | `/api/admin/mapping/preview` | admin | `MappingPreviewRequest` | `MappingPreviewResult` |
+| GET | `/api/admin/mapping/metadata` | admin | | `ODataMetadata` (fetches live `$metadata`; 400 asking for the password again when the saved one cannot be decrypted) |
+| POST | `/api/admin/mapping/preview` | admin | `MappingPreviewRequest` | `MappingPreviewResult` (400 asking for the password again when the saved one cannot be decrypted) |
 | GET | `/api/admin/standards` | manager | | `StandardsAdminResponse` |
 | POST | `/api/admin/standards/adjustments` | manager | `CreateAdjustmentRequest` (global / operation) | `StandardAdjustment` |
 | DELETE | `/api/admin/standards/adjustments/:id` | manager | | `OkResponse` |

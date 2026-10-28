@@ -86,16 +86,28 @@ export async function loadConfig(db: Queryable, opts: { encryptionKey: string; f
     const username = typeof value.username === 'string' ? value.username : '';
     const passwordEnc = typeof value.password_enc === 'string' ? value.password_enc : '';
     if (!base_url || !username || !passwordEnc) {
-      connection_error = 'fl_connection is incomplete (base_url, username and password are required)';
+      connection_error = 'the FactoryLogix connection is incomplete: Admin > Connection needs the server URL, user name and password';
     } else {
       try {
         const password = isEncrypted(passwordEnc) ? decryptSecret(passwordEnc, opts.encryptionKey) : passwordEnc;
         connection = { base_url, username, password };
       } catch (err) {
-        connection_error = `could not decrypt the FactoryLogix password (check ENCRYPTION_KEY): ${(err as Error).message}`;
+        connection_error = `could not decrypt the FactoryLogix password with this ENCRYPTION_KEY: enter the password again in Admin > Connection (${(err as Error).message})`;
       }
     }
   }
 
   return { settings, mapping, connection, connection_error, mapping_error };
+}
+
+/**
+ * Why the saved connection or mapping cannot be used, for Sync health while the collector waits.
+ * Null when nothing is saved yet, or everything saved is usable.
+ */
+export function configError(config: CollectorConfig | null): string | null {
+  const problems = [
+    config?.connection_error,
+    config?.mapping_error && `the saved field mapping is invalid, fix it in Admin > Mapping: ${config.mapping_error}`,
+  ];
+  return problems.filter(Boolean).join('; ') || null;
 }

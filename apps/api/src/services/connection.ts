@@ -13,10 +13,27 @@ import type { ODataCredentials } from '../odata.js';
 
 export const FL_CONNECTION_KEY = 'fl_connection';
 
+/**
+ * A saved password this ENCRYPTION_KEY cannot decrypt was saved under another key, typically on the
+ * install a backup was restored from (the key is in `.env`, not in the database). Typing the
+ * password again is the only way to use the connection.
+ */
+export const UNREADABLE_PASSWORD_MESSAGE =
+  "enter the password again: the saved password cannot be decrypted with this server's ENCRYPTION_KEY (it was saved under another key, as when a backup from another install is restored)";
+
 export interface StoredConnection {
   base_url: string;
   username: string;
   password_enc: string | null;
+}
+
+/** The saved password in clear, or null when this ENCRYPTION_KEY cannot decrypt it. */
+function decryptStored(passwordEnc: string): string | null {
+  try {
+    return decryptIfNeeded(passwordEnc);
+  } catch {
+    return null;
+  }
 }
 
 export async function getStoredConnection(db: Db): Promise<StoredConnection | null> {
@@ -31,10 +48,12 @@ export async function getStoredConnection(db: Db): Promise<StoredConnection | nu
 
 /** Public shape: never includes the password. */
 export function toPublicConnection(stored: StoredConnection | null): FlConnection {
+  const unreadable = stored?.password_enc ? decryptStored(stored.password_enc) === null : false;
   return {
     base_url: stored?.base_url ?? '',
     username: stored?.username ?? '',
     has_password: Boolean(stored?.password_enc),
+    ...(unreadable ? { password_unreadable: true } : {}),
   };
 }
 
@@ -65,6 +84,10 @@ export async function saveConnection(
       'enter the password again: the saved password is only sent with the server URL and user name it was saved with',
     );
   }
+  // Keeping it would save a connection that neither the API nor the collector can use.
+  if (password.length === 0 && existing?.password_enc && decryptStored(existing.password_enc) === null) {
+    throw badRequest(UNREADABLE_PASSWORD_MESSAGE);
+  }
   const next: StoredConnection = {
     base_url,
     username,
@@ -77,7 +100,8 @@ export async function saveConnection(
 /**
  * Decrypted credentials for outbound calls; null when nothing usable is configured. An override
  * (unsaved form values) without a password only gets the stored one while its URL and user name are
- * the saved ones; otherwise the password is empty.
+ * the saved ones; otherwise the password is empty. A stored password that is needed but cannot be
+ * decrypted is a 400 asking for it again.
  */
 export async function getCredentials(
   db: Db,
@@ -91,7 +115,9 @@ export async function getCredentials(
   if (override && typeof override.password === 'string' && override.password.length > 0) {
     password = override.password;
   } else if (stored?.password_enc && sameConnection({ base_url, username }, stored)) {
-    password = decryptIfNeeded(stored.password_enc) ?? '';
+    const saved = decryptStored(stored.password_enc);
+    if (saved === null) throw badRequest(UNREADABLE_PASSWORD_MESSAGE);
+    password = saved;
   }
   return { base_url, username, password };
 }

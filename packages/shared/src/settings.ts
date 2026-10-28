@@ -130,6 +130,8 @@ export interface FlConnection {
   /** Present only in write payloads. Read payloads set `has_password` instead. */
   password?: string;
   has_password?: boolean;
+  /** Read payloads: a password is stored, but this server's ENCRYPTION_KEY cannot decrypt it, so it must be typed again. */
+  password_unreadable?: boolean;
 }
 
 export const TIME_CONSTANTS = {

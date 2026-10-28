@@ -17,9 +17,9 @@ import { audit } from '../../audit.js';
 import { requireRole } from '../../auth/index.js';
 import type { AppContext } from '../../context.js';
 import { applySettingsPatch, getSettings } from '../../db/repo/settings.js';
-import { badRequest } from '../../errors.js';
+import { ApiError, badRequest } from '../../errors.js';
 import { sendControl } from '../../notify.js';
-import { fetchMetadata, runPreview } from '../../odata.js';
+import { fetchMetadata, runPreview, type ODataCredentials } from '../../odata.js';
 import { getCredentials, getStoredConnection, saveConnection, toPublicConnection } from '../../services/connection.js';
 import { cacheMetadata, getCachedMetadata, getMapping, saveMapping } from '../../services/mapping.js';
 import { parseWith } from '../../util/query.js';
@@ -81,7 +81,14 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
       raw && typeof raw.base_url === 'string' && raw.base_url.length > 0
         ? parseWith(connectionWriteSchema, raw)
         : null;
-    const creds = await getCredentials(ctx.db, override);
+    let creds: ODataCredentials | null;
+    try {
+      creds = await getCredentials(ctx.db, override);
+    } catch (err) {
+      // The saved password cannot be decrypted with this ENCRYPTION_KEY: a failed test that says so.
+      if (err instanceof ApiError) return { ok: false, error: err.message, metadata: null, latency_ms: null };
+      throw err;
+    }
     if (!creds) {
       return { ok: false, error: 'no FactoryLogix connection is configured', metadata: null, latency_ms: null };
     }

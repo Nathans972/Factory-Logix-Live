@@ -112,12 +112,18 @@ export function ConnectionForm({
   const urlErr = touched ? urlError(baseUrl) : null;
   const userErr = touched && !username.trim() ? 'Required' : null;
   const canSubmit = !urlError(baseUrl) && !!username.trim();
-  const keepsPassword = !!saved?.has_password && sameConnection(baseUrl, username, saved);
+  // Saved under another ENCRYPTION_KEY (a backup restored from another install): it cannot be kept.
+  const unreadable = !!saved?.password_unreadable;
+  const keepsPassword = !!saved?.has_password && !unreadable && sameConnection(baseUrl, username, saved);
   const passwordHint = keepsPassword
     ? 'A password is stored — leave blank to keep it.'
-    : saved?.has_password
+    : saved?.has_password && !unreadable
       ? 'The stored password is only sent with the saved URL and user name. Enter the password again to change them.'
       : 'Stored encrypted at rest.';
+  const passwordErr =
+    unreadable && !password
+      ? "The stored password cannot be decrypted with this server's ENCRYPTION_KEY: it was saved under another key, as when a backup from another install is restored. Enter it again."
+      : null;
 
   return (
     <form
@@ -154,7 +160,7 @@ export function ConnectionForm({
             onBlur={() => setTouched(true)}
           />
         </Field>
-        <Field label="Password" hint={passwordHint}>
+        <Field label="Password" hint={passwordHint} error={passwordErr}>
           <Input
             type="password"
             autoComplete="new-password"

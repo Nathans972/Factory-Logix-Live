@@ -17,6 +17,8 @@ const { buildServer } = await import('../src/server.js');
 
 const SECRET = 'a-very-long-test-session-secret-value';
 const KEY_HEX = 'cd'.repeat(32);
+/** The key of the install a restored backup came from. */
+const OLD_INSTALL_KEY_HEX = 'ef'.repeat(32);
 const STORED_PASSWORD = 'MES-service-account-Passw0rd!';
 const STORED_URL = 'http://factorylogix.plant.local:6065/odata';
 const OTHER_URL = 'http://factorylogix-new.plant.local:6065/odata';
@@ -66,7 +68,7 @@ async function adminApi(db: ReturnType<typeof fakeDb>) {
   const app = await buildServer(ctx);
   closers.push(() => app.close());
   const headers = { cookie: `fld_session=${await signSession({ userId: 1, role: 'admin' }, SECRET)}` };
-  return (method: 'POST' | 'PUT', url: string, payload: Record<string, unknown>) => app.inject({ method, url, headers, payload });
+  return (method: 'GET' | 'POST' | 'PUT', url: string, payload?: Record<string, unknown>) => app.inject({ method, url, headers, payload });
 }
 
 describe('sameConnection', () => {
@@ -184,5 +186,58 @@ describe('PUT /api/admin/connection', () => {
     const res = await api('PUT', '/api/admin/connection', { base_url: OTHER_URL, username: 'svc-dashboard' });
     expect(res.statusCode).toBe(200);
     expect(db.state.row).toEqual({ base_url: OTHER_URL, username: 'svc-dashboard', password_enc: null });
+  });
+});
+
+describe('a saved password this ENCRYPTION_KEY cannot decrypt (a backup restored from another install)', () => {
+  const restoredRow = () => ({ base_url: STORED_URL, username: 'svc-dashboard', password_enc: encrypt(STORED_PASSWORD, OLD_INSTALL_KEY_HEX) });
+
+  it('shows the connection as needing the password again', async () => {
+    const api = await adminApi(fakeDb(restoredRow()));
+    const res = await api('GET', '/api/admin/connection');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().connection).toEqual({ base_url: STORED_URL, username: 'svc-dashboard', has_password: true, password_unreadable: true });
+  });
+
+  it('fails Test connection with what to do, and sends nothing', async () => {
+    const api = await adminApi(fakeDb(restoredRow()));
+    const res = await api('POST', '/api/admin/connection/test', {});
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: false, error: expect.stringMatching(/^enter the password again: .*ENCRYPTION_KEY/) });
+    expect(outgoing).toEqual([]);
+  });
+
+  it('answers $metadata with a 400 that says what to do, and sends nothing', async () => {
+    const api = await adminApi(fakeDb(restoredRow()));
+    const res = await api('GET', '/api/admin/mapping/metadata');
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toMatch(/^enter the password again: .*ENCRYPTION_KEY/);
+    expect(outgoing).toEqual([]);
+  });
+
+  it('refuses to keep it on save, and leaves the saved connection alone', async () => {
+    const db = fakeDb(restoredRow());
+    const before = db.state.row;
+    const api = await adminApi(db);
+    const res = await api('PUT', '/api/admin/connection', { base_url: STORED_URL, username: 'svc-dashboard' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toMatch(/^enter the password again: .*ENCRYPTION_KEY/);
+    expect(db.state.row).toBe(before);
+    expect(db.state.notified).toBe(0);
+  });
+
+  it('works again once the password is typed and saved', async () => {
+    const db = fakeDb(restoredRow());
+    const api = await adminApi(db);
+    const typed = { base_url: STORED_URL, username: 'svc-dashboard', password: STORED_PASSWORD };
+    expect((await api('POST', '/api/admin/connection/test', typed)).statusCode).toBe(200);
+    expect((await api('PUT', '/api/admin/connection', typed)).statusCode).toBe(200);
+    expect(decrypt(String(db.state.row?.password_enc), KEY_HEX)).toBe(STORED_PASSWORD);
+    expect((await api('GET', '/api/admin/connection')).json().connection).toEqual({ base_url: STORED_URL, username: 'svc-dashboard', has_password: true });
+    expect((await api('POST', '/api/admin/connection/test', {})).statusCode).toBe(200);
+    expect(outgoing).toEqual([
+      { url: `${STORED_URL}/$metadata`, authorization: basicAuthHeader('svc-dashboard', STORED_PASSWORD) },
+      { url: `${STORED_URL}/$metadata`, authorization: basicAuthHeader('svc-dashboard', STORED_PASSWORD) },
+    ]);
   });
 });
