@@ -813,11 +813,38 @@ export function buildJobDetail(input: JobDetailInput): JobDetail {
         cmp(a.operator_id, b.operator_id),
     );
 
+  // One pass over the cells, not one per shift instance: a job that has run for a year has more
+  // than a thousand instances. Each cell goes to every instance whose [start, end) holds its hour,
+  // in all_cells order, so each shift gets the same cells a filter would give it.
+  const shifts = [...shift_instances].sort((a, b) => a.start_utc - b.start_utc);
+  // reach[i]: the latest end among shifts[0..i]. Walking back from a cell's hour can stop once no
+  // earlier shift reaches it.
+  const reach: UtcMs[] = [];
+  let latestEnd = -Infinity;
+  for (const shift of shifts) {
+    if (shift.end_utc > latestEnd) latestEnd = shift.end_utc;
+    reach.push(latestEnd);
+  }
+  const cellsByShift: HourCell[][] = shifts.map(() => []);
+  for (const c of all_cells) {
+    const hour = c.hour_start_utc;
+    // First shift starting after the hour.
+    let lo = 0;
+    let hi = shifts.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (shifts[mid]!.start_utc <= hour) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo - 1; i >= 0 && reach[i]! > hour; i--) {
+      if (shifts[i]!.end_utc > hour) cellsByShift[i]!.push(c);
+    }
+  }
+
   const shift_history: JobShiftHistoryRow[] = [];
-  for (const shift of [...shift_instances].sort((a, b) => a.start_utc - b.start_utc)) {
-    const shiftCells = all_cells.filter(
-      (c) => c.hour_start_utc >= shift.start_utc && c.hour_start_utc < shift.end_utc,
-    );
+  for (let i = 0; i < shifts.length; i++) {
+    const shift = shifts[i]!;
+    const shiftCells = cellsByShift[i]!;
     if (shiftCells.length === 0) continue;
     const r = computeRollups(shiftCells, settings, { operator_names }).overall;
     shift_history.push({
