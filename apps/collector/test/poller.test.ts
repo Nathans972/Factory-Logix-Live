@@ -129,6 +129,27 @@ function harness(rows: Record<string, Record<string, unknown>[]> = {}, opts = { 
   return { poller, db, src };
 }
 
+describe('sync_log row counts', () => {
+  it('logs ingested and skipped for every pull; a row missing a required field shows skipped = 1', async () => {
+    const { poller, db } = harness({
+      WorkOrders: [
+        { Job: 'J-1', Product: 'P-1', Qty: 10, Modified: '2025-03-04T11:00:00Z' },
+        { Job: 'J-2', Product: null, Qty: 5, Modified: '2025-03-04T11:01:00Z' },
+      ],
+    });
+    const outcome = await poller.pollOnce(mapping, { ...settings, late_data_hours: 0 }, Date.parse('2025-03-04T12:00:00Z'));
+    expect(outcome.ok).toBe(true);
+    expect(db.log.find((e) => e.source === 'work_orders')).toMatchObject({ status: 'ok', rows: 2, ingested: 1, skipped: 1 });
+    expect(db.log.find((e) => e.source === 'unit_steps')).toMatchObject({ status: 'ok', rows: 0, ingested: 0, skipped: 0 });
+  });
+
+  it('window pulls (late data, backfill) log the counts too', async () => {
+    const { poller, db } = harness({ WorkOrders: [{ Job: 'J-1', Product: null, Modified: '2025-03-04T11:00:00Z' }] });
+    await poller.pullWindow('work_orders', mapping.work_orders, settings, { from: 0, to: 1, logSource: 'work_orders:backfill' });
+    expect(db.log).toEqual([expect.objectContaining({ source: 'work_orders:backfill', rows: 1, ingested: 0, skipped: 1 })]);
+  });
+});
+
 describe('late-data re-pull backoff', () => {
   it('waits an hour, then doubles after each further failure up to 6 hours', () => {
     expect(latePullWaitMs(0)).toBe(HOUR);

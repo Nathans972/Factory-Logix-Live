@@ -234,12 +234,18 @@ export class Poller {
         rows: out.rows,
         durationMs: out.durationMs,
       });
-      await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows });
+      await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows, ingested: out.ingested, skipped: out.skipped });
     } catch (err) {
       out.durationMs = Date.now() - started;
       out.error = err instanceof Error ? err.message : String(err);
       await recordSyncFailure(this.deps.pool, dataset, out.error, out.durationMs);
-      await finishSyncLog(this.deps.pool, logId, { status: 'error', rows: out.rows, error: out.error });
+      await finishSyncLog(this.deps.pool, logId, {
+        status: 'error',
+        rows: out.rows,
+        ingested: out.ingested,
+        skipped: out.skipped,
+        error: out.error,
+      });
       this.deps.log.error({ dataset, err: out.error }, 'poll failed');
     }
     return out;
@@ -340,11 +346,17 @@ export class Poller {
       );
       out.rows = summary.rows;
       out.truncated = summary.truncated;
-      await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows });
+      await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows, ingested: out.ingested, skipped: out.skipped });
       return out;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await finishSyncLog(this.deps.pool, logId, { status: 'error', rows: out.rows, error: message });
+      await finishSyncLog(this.deps.pool, logId, {
+        status: 'error',
+        rows: out.rows,
+        ingested: out.ingested,
+        skipped: out.skipped,
+        error: message,
+      });
       this.deps.log.error({ dataset, logSource, err: message, durationMs: Date.now() - started }, 'window pull failed');
       throw err;
     }

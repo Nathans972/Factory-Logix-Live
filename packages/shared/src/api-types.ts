@@ -73,6 +73,10 @@ export interface SyncLogEntry {
   started_at: UtcMs;
   finished_at: UtcMs | null;
   rows: number | null;
+  /** Rows written to the normalized tables; null while running or for pulls logged before migration 0005. */
+  ingested: number | null;
+  /** Rows dropped (required field missing, product or operation unresolved); null as for `ingested`. */
+  skipped: number | null;
   status: 'ok' | 'error' | 'running';
   error: string | null;
 }

@@ -95,15 +95,14 @@ export async function startSyncLog(db: Queryable, source: string): Promise<numbe
 export async function finishSyncLog(
   db: Queryable,
   id: number | null,
-  opts: { status: 'ok' | 'error'; rows: number; error?: string | null },
+  opts: { status: 'ok' | 'error'; rows: number; ingested: number; skipped: number; error?: string | null },
 ): Promise<void> {
   if (id === null) return;
-  await exec(db, 'UPDATE sync_log SET finished_at = now(), rows = $2, status = $3, error = $4 WHERE id = $1', [
-    id,
-    Math.trunc(opts.rows),
-    opts.status,
-    opts.error ? opts.error.slice(0, 2000) : null,
-  ]);
+  await exec(
+    db,
+    'UPDATE sync_log SET finished_at = now(), rows = $2, status = $3, error = $4, ingested = $5, skipped = $6 WHERE id = $1',
+    [id, Math.trunc(opts.rows), opts.status, opts.error ? opts.error.slice(0, 2000) : null, Math.trunc(opts.ingested), Math.trunc(opts.skipped)],
+  );
 }
 
 export async function saveBackfillProgress(db: Queryable, progress: BackfillProgress): Promise<void> {

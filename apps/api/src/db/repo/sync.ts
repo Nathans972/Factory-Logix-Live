@@ -95,10 +95,12 @@ export async function listSyncLog(db: Db, limit: number): Promise<SyncLogEntry[]
     started_at: Date;
     finished_at: Date | null;
     rows: number | null;
+    ingested: number | null;
+    skipped: number | null;
     status: 'ok' | 'error' | 'running';
     error: string | null;
   }>(
-    `SELECT id, source, started_at, finished_at, rows, status, error
+    `SELECT id, source, started_at, finished_at, rows, ingested, skipped, status, error
      FROM sync_log ORDER BY started_at DESC, id DESC LIMIT $1`,
     [limit],
   );
@@ -108,6 +110,8 @@ export async function listSyncLog(db: Db, limit: number): Promise<SyncLogEntry[]
     started_at: toMsOr(r.started_at, 0),
     finished_at: toMs(r.finished_at),
     rows: toNum(r.rows),
+    ingested: toNum(r.ingested),
+    skipped: toNum(r.skipped),
     status: r.status,
     error: r.error,
   }));
