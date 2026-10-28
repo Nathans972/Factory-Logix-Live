@@ -26,6 +26,8 @@ export interface TickResult {
   worked: boolean;
   /** The whole backfill (download and recoloring) just finished. */
   finished: boolean;
+  /** Why the day being downloaded failed, if it did. */
+  error?: unknown;
 }
 
 export function emptyProgress(daysTotal: number): BackfillProgress {
@@ -204,6 +206,7 @@ export class Backfill {
       progress.error = message;
       await this.persist();
       this.log.error({ day, err: message }, 'backfill day failed');
+      return { worked: true, finished: false, error: err };
     }
     return { worked: true, finished: false };
   }

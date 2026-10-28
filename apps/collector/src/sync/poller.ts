@@ -65,6 +65,8 @@ export interface DatasetOutcome {
   error: string | null;
   /** The error says FactoryLogix itself is down, not just this data source (see `isServiceDown`). */
   serviceDown: boolean;
+  /** FactoryLogix refused the login or the account (HTTP 401 or 403). */
+  refused: boolean;
   truncated: boolean;
 }
 
@@ -73,6 +75,12 @@ export interface PollOutcome {
   ok: boolean;
   /** work_orders and unit_steps succeeded: the numbers are current even if an optional data source failed. */
   requiredOk: boolean;
+  /**
+   * FactoryLogix refused the login or the account (HTTP 401 or 403) and nothing came back this
+   * poll: the error it answered, or null. That does not heal by itself, and retrying a refused
+   * login can lock the account.
+   */
+  loginRefused: string | null;
   rows: number;
   touched: number[];
   error: string | null;
@@ -195,7 +203,7 @@ export class Poller {
    */
   async pollOnce(mapping: MappingConfig, settings: Settings, now: number): Promise<PollOutcome> {
     const started = Date.now();
-    const outcome: PollOutcome = { ok: true, requiredOk: false, rows: 0, touched: [], error: null, datasets: [], durationMs: 0 };
+    const outcome: PollOutcome = { ok: true, requiredOk: false, loginRefused: null, rows: 0, touched: [], error: null, datasets: [], durationMs: 0 };
     const succeeded = new Set<DatasetName>();
 
     for (const dataset of DATASET_ORDER) {
@@ -223,6 +231,9 @@ export class Poller {
       if (result.serviceDown && succeeded.size === 0) break;
     }
     outcome.requiredOk = succeeded.has('work_orders') && succeeded.has('unit_steps');
+    // A refusal after something came back this poll belongs to that data source, as above.
+    const refusal = succeeded.size === 0 ? outcome.datasets.find((d) => d.refused) : undefined;
+    outcome.loginRefused = refusal ? `${refusal.dataset}: ${refusal.error}` : null;
 
     try {
       await this.latePullIfDue(mapping, settings, now, outcome.touched, succeeded);
@@ -242,7 +253,7 @@ export class Poller {
     touched: number[],
   ): Promise<DatasetOutcome> {
     const started = Date.now();
-    const out: DatasetOutcome = { dataset, rows: 0, ingested: 0, skipped: 0, durationMs: 0, error: null, serviceDown: false, truncated: false };
+    const out: DatasetOutcome = { dataset, rows: 0, ingested: 0, skipped: 0, durationMs: 0, error: null, serviceDown: false, refused: false, truncated: false };
     const logId = await startSyncLog(this.deps.pool, dataset);
     const state = await loadSyncState(this.deps.pool, dataset);
     const plan = this.plan(dataset, mapping, state?.watermark ?? null);
@@ -387,6 +398,7 @@ export class Poller {
       out.durationMs = Date.now() - started;
       out.error = err instanceof Error ? err.message : String(err);
       out.serviceDown = isServiceDown(err);
+      out.refused = err instanceof ODataError && err.isAuth;
       await recordSyncFailure(this.deps.pool, dataset, out.error, out.durationMs);
       await finishSyncLog(this.deps.pool, logId, {
         status: 'error',

@@ -5,6 +5,7 @@ import type { Logger } from '../src/logger.js';
 import { Ingestor } from '../src/ingest/datasets.js';
 import { OperationCache } from '../src/ingest/operations.js';
 import { TimestampResolver } from '../src/mapping/extract.js';
+import { ODataError } from '../src/odata/client.js';
 import type { Source, SourceRequest } from '../src/sources/Source.js';
 import { Poller } from '../src/sync/poller.js';
 
@@ -65,8 +66,12 @@ function fakePool() {
   return { pool: pool as unknown as Pool, state };
 }
 
-/** Serves fixed rows per entity set; entity sets listed in `broken` answer like a 500. */
-function fakeSource(rows: Record<string, Record<string, unknown>[]>, broken: string[]) {
+/** Serves fixed rows per entity set; entity sets listed in `broken` answer like a 500, or with `fail`. */
+function fakeSource(
+  rows: Record<string, Record<string, unknown>[]>,
+  broken: string[],
+  fail: () => Error = () => new Error('OData request failed with HTTP 500 Internal Server Error'),
+) {
   const requests: SourceRequest[] = [];
   const source: Source = {
     kind: 'odata',
@@ -78,7 +83,7 @@ function fakeSource(rows: Record<string, Record<string, unknown>[]>, broken: str
     describe: () => '',
     fetchPage: async (req) => {
       requests.push(req);
-      if (broken.includes(req.entitySet)) throw new Error('OData request failed with HTTP 500 Internal Server Error');
+      if (broken.includes(req.entitySet)) throw fail();
       return { rows: (req.skip ?? 0) === 0 ? (rows[req.entitySet] ?? []) : [], nextLink: null };
     },
     close: async () => undefined,
@@ -119,9 +124,9 @@ const ROWS = {
   Routes: [{ Product: 'P-1', Op: 'Weld', Seq: 10 }],
 };
 
-function harness(broken: string[]) {
+function harness(broken: string[], fail?: () => Error) {
   const db = fakePool();
-  const src = fakeSource(ROWS, broken);
+  const src = fakeSource(ROWS, broken, fail);
   const timestamps = new TimestampResolver({ mode: 'offset_present', timezone: 'UTC' });
   const ingestor = new Ingestor({ pool: db.pool, log, operations: new OperationCache(db.pool), timestamps }, mapping);
   const poller = new Poller({ pool: db.pool, log, ingestor, timestamps }, src.source);
@@ -150,5 +155,31 @@ describe('one failing data source', () => {
     expect(polled('Operators')).toBe(true);
     expect(polled('Routes')).toBe(true);
     expect(outcome.datasets.map((d) => d.dataset)).toEqual(['work_orders', 'unit_steps', 'defects', 'operators', 'routes']);
+  });
+});
+
+describe('FactoryLogix refusing the login or the account', () => {
+  const now = Date.parse('2025-03-04T12:00:00Z');
+  const refuse = (status: 401 | 403) => () =>
+    new ODataError(`OData request failed with HTTP ${status}`, { status, url: 'http://factorylogix.invalid/odata/x' });
+
+  it('says so when nothing came back: a 401 ends the poll at its first request', async () => {
+    const { poller, src } = harness(['WorkOrders', 'UnitSteps', 'Defects', 'Operators', 'Routes'], refuse(401));
+    const outcome = await poller.pollOnce(mapping, settings, now);
+    expect(outcome.loginRefused).toBe('work_orders: OData request failed with HTTP 401');
+    expect(src.requests).toHaveLength(1);
+  });
+
+  it('says so for a 403 on every data source', async () => {
+    const { poller } = harness(['WorkOrders', 'UnitSteps', 'Defects', 'Operators', 'Routes'], refuse(403));
+    expect((await poller.pollOnce(mapping, settings, now)).loginRefused).toBe('work_orders: OData request failed with HTTP 403');
+  });
+
+  it('control: a 403 for one data source while others come back is that data source\'s error, not a refused login', async () => {
+    const { poller } = harness(['Defects'], refuse(403));
+    const outcome = await poller.pollOnce(mapping, settings, now);
+    expect(outcome.requiredOk).toBe(true);
+    expect(outcome.loginRefused).toBeNull();
+    expect(outcome.error).toBe('defects: OData request failed with HTTP 403');
   });
 });

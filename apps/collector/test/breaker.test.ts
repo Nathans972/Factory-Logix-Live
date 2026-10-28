@@ -77,6 +77,20 @@ describe('health status', () => {
     expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('ok');
   });
 
+  it('stays open with no retry time once the login is refused, until a poll goes through', () => {
+    const breaker = new CircuitBreaker();
+    breaker.recordSuccess(now - 10 * INTERVAL);
+    breaker.recordLoginRefused('FactoryLogix refused the saved login (work_orders: OData request failed with HTTP 401 Unauthorized)');
+    expect(breaker.consecutiveFailures).toBe(1);
+    expect(breaker.openUntil).toBeNull();
+    expect(breaker.snapshot().loginRefused).toBe(true);
+    expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('down');
+
+    breaker.recordSuccess(now);
+    expect(breaker.loginRefused).toBe(false);
+    expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('ok');
+  });
+
   it('stays open after a restart until the persisted openUntil', () => {
     const restarted = new CircuitBreaker();
     restarted.hydrate({ consecutiveFailures: 4, lastSuccessAt: null, lastError: 'HTTP 503', openUntil: now + 60_000 });

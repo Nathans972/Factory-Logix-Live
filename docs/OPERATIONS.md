@@ -232,11 +232,21 @@ The `web` service's logs are nginx's standard access/error logs.
 
 ## The circuit breaker and "Data delayed" banner
 
-If a poll to FactoryLogix fails (HTTP error, timeout, or auth failure), the collector counts
-consecutive failures. Once that count reaches `breaker_failure_threshold` (default 3), it backs
+If a poll to FactoryLogix fails (HTTP error or timeout), the collector counts consecutive
+failures. Once that count reaches `breaker_failure_threshold` (default 3), it backs
 off: the next attempt waits 2x the normal poll interval, then 4x, doubling up to
 `breaker_max_backoff_minutes` (default 10 minutes). Any successful poll resets the counter and
 the interval back to normal immediately.
+
+A refused login is different: FactoryLogix answers the same until someone changes the password
+or the account, and every refused login counts towards locking the account. When FactoryLogix
+refuses the saved login (HTTP 401, or a 403 while nothing else came back that poll), the
+collector stops at once and sends nothing more with that login, not on a timer and not after
+other admin edits. Admin > Sync shows `FactoryLogix refused the saved login` under "Last error".
+Polling starts again when Admin > Connection is saved again: with a new password, or unchanged
+once the account works again (for example after a FactoryLogix admin unlocks it). Restarting
+the collector also tries once more. A backfill chunk that FactoryLogix refuses stops the
+backfill until the next poll, which tells whether the login is still refused.
 
 One data source failing does not hold up the others: the poll records the error on that data
 source's row in Admin > Sync and goes on with the next one. It stops early only when
@@ -258,7 +268,7 @@ Sync status values you will see in Admin > Sync:
 |---|---|
 | `ok` | Last poll succeeded and data is current. |
 | `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in; the last error names it. |
-| `down` | The breaker is open (threshold reached) and the last success is older than 3x the poll interval. |
+| `down` | The breaker is open (threshold reached, or FactoryLogix refused the login) and the last success is older than 3x the poll interval. |
 | `never` | The collector has never completed a poll — either FactoryLogix connection/mapping has not been configured yet, or every attempt so far has failed. |
 
 ## Backfill
@@ -346,6 +356,7 @@ that volume, plus OS, images, and backups.
 | Test connection or Admin > Sync still says `certificate not trusted` after `FACTORYLOGIX_CA_CERT` was set | The containers could not use the file, it is not the CA that issued FactoryLogix's certificate, or they have not been restarted since the file was replaced | `docker compose logs api collector \| grep FACTORYLOGIX_CA_CERT` shows whether each read it and, if not, why (no such file, not readable, DER instead of PEM). Check that the certificate's issuer is the CA in the file. After replacing the file, run `docker compose restart api collector`. See `docs/INSTALL.md`, section 10 |
 | Sync status stuck at `never` | FactoryLogix connection and/or field mapping have not been completed yet, or what is saved cannot be used: Admin > Sync then shows why under "Last error" | Finish Admin > Connection and Admin > Mapping (or the first-run wizard), or fix what the last error names |
 | After a restore, Admin > Connection asks for the password again, or Admin > Sync shows `could not decrypt the FactoryLogix password` | The database came from an install with another `ENCRYPTION_KEY`. The key is in `.env`, not in the backup, so the saved password cannot be decrypted here | Type the FactoryLogix password in Admin > Connection and save. Or put the old install's `ENCRYPTION_KEY` in `.env` and run `docker compose up -d` (see [Restore](#restore)) |
+| Admin > Sync says `FactoryLogix refused the saved login` and nothing is polled any more | The FactoryLogix account's password was changed, or the account is locked, disabled or without rights to the OData service. The collector stopped retrying so that it cannot lock the account | Fix the account in FactoryLogix if needed, type the current password in Admin > Connection, Test connection, then save. Saving restarts polling, even with the password left blank once the account works again |
 | Saving Admin > Connection says "enter the password again", or Test connection gets `HTTP 401` after the server URL or user name was changed | The saved password is only ever sent with the server URL and user name it was saved with, so any change to either (even just the path) needs it typed again | Type the FactoryLogix password in the Password box, then test and save again |
 | Admin > Sync or Test connection says `the FactoryLogix server URL must not contain a user name or password` | The server URL was saved as `http://user:password@server:6065/odata` by an earlier version. Such a URL is never used: it is stored in clear text, and fetch repeats it, password included, in its errors | In Admin > Connection, enter the URL without the user name and password, type the password in the Password box, and save. Earlier versions repeated that URL in the poll errors `/api/health/sync` shows without a login, so change that password in FactoryLogix too |
 | Hour labels look shifted, or a shift's numbers don't line up with the wall clock | Wrong `plant_timezone`, or `fl_timestamp_mode` mismatched with how FactoryLogix serializes timestamps | Fix the time zone and timestamp mode in Admin > Connection; see `docs/MAPPING.md`. The last `late_data_hours` are corrected within the hour; "Run backfill now" corrects older history (see [Retention](#retention)) |

@@ -19,7 +19,8 @@ import { OperationCache } from './ingest/operations.js';
 import { loadEnv, type Env } from './env.js';
 import { createLogger, errorMessage, type Logger } from './logger.js';
 import { TimestampResolver } from './mapping/extract.js';
-import { configError, loadConfig, type CollectorConfig } from './settings.js';
+import { ODataError } from './odata/client.js';
+import { configError, connectionSavedAt, loadConfig, loginRefusedMessage, type CollectorConfig } from './settings.js';
 import { ODataSource } from './sources/ODataSource.js';
 import { Backfill } from './sync/backfill.js';
 import { CircuitBreaker } from './sync/breaker.js';
@@ -47,6 +48,14 @@ class Collector {
   private backfill: Backfill | null = null;
 
   private connectionFingerprint = '';
+  /**
+   * The login FactoryLogix refused (`PollOutcome.loginRefused`), as `connectionFingerprint`, and
+   * when Admin > Connection had last been saved then. Nothing goes out with that login any more,
+   * not even $metadata, until the connection is saved again: another login, or the same one once
+   * the account works again. Retrying on the breaker schedule, or after every settings edit, would
+   * only add failed logins towards an account lockout. In memory: a restarted collector tries once.
+   */
+  private refusedLogin: { connection: string; savedAt: number | null } | null = null;
   private mappingFingerprint = '';
   private pollCount = 0;
   private reloadRequested = true;
@@ -168,6 +177,21 @@ class Collector {
     }
     this.warnedUnconfigured = false;
 
+    if (await this.loginStillRefused()) {
+      await this.health.report({
+        snapshot: this.breaker.snapshot(),
+        now: Date.now(),
+        intervalMs,
+        threshold: settings.breaker_failure_threshold,
+        configured: true,
+        force: true,
+      });
+      await this.delay(HEARTBEAT_SLICE_MS);
+      // Read the connection again even without a restart command (a missed NOTIFY).
+      this.reloadRequested = true;
+      return;
+    }
+
     const mapping = this.config?.mapping as MappingConfig;
 
     // A restart must not reset the backoff: when the hydrated breaker is still open, the first
@@ -186,7 +210,7 @@ class Collector {
     try {
       outcome = await (this.poller as Poller).pollOnce(mapping, settings, now);
     } catch (err) {
-      outcome = { ok: false, requiredOk: false, rows: 0, touched: [], error: errorMessage(err), datasets: [], durationMs: Date.now() - now };
+      outcome = { ok: false, requiredOk: false, loginRefused: null, rows: 0, touched: [], error: errorMessage(err), datasets: [], durationMs: Date.now() - now };
     }
     this.pollCount += 1;
 
@@ -196,6 +220,10 @@ class Collector {
       this.breaker.recordSuccess(Date.now(), outcome.error);
       if (outcome.ok) this.log.info({ rows: outcome.rows, ms: outcome.durationMs }, 'poll ok');
       else this.log.warn({ rows: outcome.rows, ms: outcome.durationMs, err: outcome.error }, 'poll ok except an optional data source');
+    } else if (outcome.loginRefused) {
+      this.breaker.recordLoginRefused(loginRefusedMessage(outcome.loginRefused));
+      this.refusedLogin = { connection: this.connectionFingerprint, savedAt: await connectionSavedAt(this.pool) };
+      this.log.error({ err: outcome.loginRefused }, 'FactoryLogix refused the login; polling stops until Admin > Connection is saved again');
     } else {
       this.breaker.recordFailure(Date.now(), outcome.error ?? 'poll failed', breakerOpts);
       this.log.warn({ err: outcome.error, failures: this.breaker.consecutiveFailures }, 'poll failed');
@@ -228,6 +256,8 @@ class Collector {
     }
     await this.maybeTrimRawEvents(settings);
 
+    // Refused: the next pass waits for the connection to be saved again, with no backfill either.
+    if (this.refusedLogin) return;
     const delay = this.breaker.nextDelayMs(breakerOpts);
     await this.idle(Date.now() + delay, settings, mapping, intervalMs);
   }
@@ -244,6 +274,16 @@ class Collector {
       if (Number.isFinite(instant)) hours.add(hourStartUtc(instant, tz));
     }
     await this.recomputer.recomputeHours(hours, settings, now);
+  }
+
+  /** True while the login FactoryLogix refused is still the saved one, not saved again since (see `refusedLogin`). */
+  private async loginStillRefused(): Promise<boolean> {
+    const refused = this.refusedLogin;
+    if (!refused) return false;
+    if (refused.connection === this.connectionFingerprint && refused.savedAt === (await connectionSavedAt(this.pool))) return true;
+    this.refusedLogin = null;
+    this.log.info('FactoryLogix connection saved again; polling again');
+    return false;
   }
 
   private async reloadConfig(): Promise<void> {
@@ -280,7 +320,7 @@ class Collector {
         onMetadataError: (err) => this.log.warn({ err: errorMessage(err) }, 'could not read $metadata; assuming OData v4 literals'),
       });
       this.connectionFingerprint = connectionFingerprint;
-      await this.source.init(true);
+      if (this.refusedLogin?.connection !== connectionFingerprint) await this.source.init(true);
     } else {
       this.source.setTimeoutSeconds(config.settings.odata_timeout_seconds);
     }
@@ -429,6 +469,8 @@ class Collector {
    * backfill chunks (spec 4.7).
    */
   private async idle(until: number, settings: Settings, mapping: MappingConfig, intervalMs: number): Promise<void> {
+    /** FactoryLogix refused a chunk's login or account: no other chunk until the next poll tells whether it still does. */
+    let refused = false;
     while (!this.stopping && Date.now() < until) {
       const now = Date.now();
       await this.health.report({
@@ -442,11 +484,13 @@ class Collector {
       if (this.backfill) {
         await this.backfill.load();
         if (this.backfill.isActive()) {
-          if (this.backfill.shouldRun(settings, now) && until - now > 5_000) {
+          if (!refused && this.backfill.shouldRun(settings, now) && until - now > 5_000) {
             // One chunk per pass: a downloaded day, the standards recompute, or a re-colored day.
-            await this.backfill.tick(mapping, settings, Date.now()).catch((err) => {
+            const result = await this.backfill.tick(mapping, settings, Date.now()).catch((err) => {
               this.log.error({ err: errorMessage(err) }, 'backfill chunk failed');
+              return null;
             });
+            if (result?.error instanceof ODataError && result.error.isAuth) refused = true;
             await this.delay(Math.min(settings.backfill_pause_seconds * 1_000, Math.max(0, until - Date.now())));
             continue;
           }

@@ -17,7 +17,7 @@ import {
 } from '@fld/shared';
 import { decryptSecret, isEncrypted } from './crypto.js';
 import type { Logger } from './logger.js';
-import { q, type Queryable } from './db.js';
+import { q, q1, toMs, type Queryable } from './db.js';
 
 export interface FlCredentials {
   base_url: string;
@@ -104,6 +104,24 @@ export async function loadConfig(db: Queryable, opts: { encryptionKey: string; f
   }
 
   return { settings, mapping, connection, connection_error, mapping_error };
+}
+
+/**
+ * When Admin > Connection was last saved: every save moves it, even one that keeps the saved
+ * password. Null when it never was.
+ */
+export async function connectionSavedAt(db: Queryable): Promise<number | null> {
+  const row = await q1<{ updated_at: Date | null }>(db, `SELECT updated_at FROM settings WHERE key = 'fl_connection'`);
+  return toMs(row?.updated_at ?? null);
+}
+
+/** For Sync health while the collector waits for a login FactoryLogix refused to be saved again. */
+export function loginRefusedMessage(error: string): string {
+  return (
+    `FactoryLogix refused the saved login (${error}). Polling has stopped so that retries cannot lock the account: ` +
+    'check the user name and password in Admin > Connection, and the account in FactoryLogix (password changed, locked, ' +
+    'disabled, or no rights to the OData service), then save Admin > Connection again to resume polling'
+  );
 }
 
 /**
