@@ -128,6 +128,7 @@ export class ODataClient {
 
   private async request(url: string, accept: string): Promise<{ text: string; contentType: string }> {
     let res: Response;
+    let text: string;
     try {
       res = await this.fetchImpl(url, {
         method: 'GET',
@@ -138,6 +139,9 @@ export class ODataClient {
         },
         signal: AbortSignal.timeout(Math.max(1, this.timeoutSeconds) * 1000),
       });
+      // Reading the body fails the same ways: undici's bare "terminated" when the connection drops
+      // halfway, or the timeout firing while the answer is still coming in.
+      text = await res.text();
     } catch (err) {
       const name = (err as Error)?.name ?? '';
       const timeout = name === 'TimeoutError' || name === 'AbortError';
@@ -146,7 +150,6 @@ export class ODataClient {
         { isTimeout: timeout, url, cause: err },
       );
     }
-    const text = await res.text();
     if (!res.ok) {
       throw new ODataError(`OData request failed with HTTP ${res.status} ${res.statusText ?? ''}`.trim(), {
         status: res.status,

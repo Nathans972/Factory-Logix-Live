@@ -180,4 +180,34 @@ describe('request failures', () => {
     expect((err as ODataError).message).toBe('OData request failed: connection refused (connect ECONNREFUSED 10.0.0.5:6065)');
     expect((err as ODataError).status).toBeNull();
   });
+
+  /** A client whose answer starts (HTTP 200) and then fails while the body is read. */
+  function failingBody(reason: unknown): ODataClient {
+    return new ODataClient({
+      baseUrl: 'http://10.0.0.5:6065/odata',
+      username: 'u',
+      password: 'p',
+      timeoutSeconds: 5,
+      fetchImpl: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.reject(reason) } as unknown as Response),
+    });
+  }
+
+  it('says why when the connection drops halfway through the answer, not just "terminated"', async () => {
+    const closed = Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' });
+    const err = await failingBody(new TypeError('terminated', { cause: closed }))
+      .fetchPage('UnitProcessHistory')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ODataError);
+    expect((err as ODataError).message).toBe('OData request failed: connection closed by the server (other side closed, UND_ERR_SOCKET)');
+    expect((err as ODataError).status).toBeNull();
+  });
+
+  it('reports the timeout firing while the answer is still coming in as a timeout', async () => {
+    const err = await failingBody(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+      .fetchPage('UnitProcessHistory')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ODataError);
+    expect((err as ODataError).message).toBe('OData request timed out after 5s');
+    expect((err as ODataError).isTimeout).toBe(true);
+  });
 });
