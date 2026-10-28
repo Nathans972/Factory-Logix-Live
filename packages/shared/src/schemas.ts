@@ -124,7 +124,8 @@ export const setDisplayJobSchema = z.object({ job_number: z.string().min(1).null
 
 export const repairDisplaySchema = z.object({ pairing_code: z.string().regex(/^\d{4}$/) });
 
-export const loginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) });
+/** Capped at the longest user name and password an account can have, so a failed login logs a short name. */
+export const loginSchema = z.object({ username: z.string().min(1).max(60), password: z.string().min(1).max(200) });
 
 export const passwordSchema = z.string().min(8).max(200);
 
