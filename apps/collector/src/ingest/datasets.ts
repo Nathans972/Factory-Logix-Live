@@ -3,7 +3,7 @@
  * Every write is idempotent by natural key, so overlap re-pulls and backfill are harmless.
  */
 import type { DatasetName, MappingConfig } from '@fld/shared';
-import { bulkUpsert, q, q1, tx, type Pool, type PoolClient } from '../db.js';
+import { bulkUpsert, q, q1, toMs, tx, type Pool, type PoolClient } from '../db.js';
 import type { Logger } from '../logger.js';
 import { extractRecord, num, str, bool, type TimestampResolver } from '../mapping/extract.js';
 import { upsertOperators, upsertProducts, upsertRoutesDerived, upsertRoutesMapped, type RouteEntry } from './derive.js';
@@ -19,6 +19,14 @@ export interface IngestOutcome {
 }
 
 const EMPTY: IngestOutcome = { received: 0, ingested: 0, skipped: 0, touched: [] };
+
+/**
+ * How far either side of a page's times `deleteMovedRows` looks for stale copies. Fixing the
+ * timestamp mode or plant time zone moves a time by at most 26 hours. The bound keeps the delete
+ * to the chunks around the page instead of every chunk of the hypertable, old compressed ones
+ * included; a time corrected in FactoryLogix by more than this keeps its old copy.
+ */
+const MOVED_ROW_WINDOW_MS = 2 * 86_400_000;
 
 export interface IngestorDeps {
   pool: Pool;
@@ -220,6 +228,7 @@ export class Ingestor {
       const withSeq = await this.hasOperationSeqColumn(client);
 
       const stepRows: unknown[][] = [];
+      const keys: StoredKey[] = [];
       const products: { product_number: string; name: string | null }[] = [];
       const operators: { operator_id: string; display_name: string | null }[] = [];
       const routes: RouteEntry[] = [];
@@ -248,6 +257,7 @@ export class Ingestor {
         ];
         if (withSeq) stepRow.push(s.operation_seq === null ? null : Math.trunc(s.operation_seq));
         stepRows.push(stepRow);
+        keys.push({ natural_key: s.natural_key, at: s.start_ts });
         products.push({ product_number: product, name: null });
         operators.push({ operator_id: s.operator_id, display_name: null });
         routes.push({ product_number: product, operation_id: operationId, sequence: s.operation_seq });
@@ -265,6 +275,7 @@ export class Ingestor {
 
       await upsertProducts(client, products);
       await upsertOperators(client, operators);
+      out.touched.push(...(await deleteMovedRows(client, 'unit_steps', 'start_ts', keys, ['start_ts', 'complete_ts'])));
       await bulkUpsert(client, {
         table: 'unit_steps',
         columns: [
@@ -356,6 +367,7 @@ export class Ingestor {
         client,
       );
       const defectRows: unknown[][] = [];
+      const keys: StoredKey[] = [];
       const operators: { operator_id: string; display_name: string | null }[] = [];
       for (const s of staged) {
         const operationId = operationIds.get(s.operation);
@@ -375,11 +387,13 @@ export class Ingestor {
           s.modified_at === null ? null : new Date(s.modified_at),
           s.natural_key,
         ]);
+        keys.push({ natural_key: s.natural_key, at: s.found_ts });
         if (s.operator_id) operators.push({ operator_id: s.operator_id, display_name: null });
         out.touched.push(s.found_ts);
         out.ingested += 1;
       }
       await upsertOperators(client, operators);
+      out.touched.push(...(await deleteMovedRows(client, 'defects', 'found_ts', keys, ['found_ts'])));
       await bulkUpsert(client, {
         table: 'defects',
         columns: [
@@ -520,6 +534,47 @@ export class Ingestor {
     });
     return out;
   }
+}
+
+/** A row about to be upserted into unit_steps / defects: its natural key and its time column. */
+interface StoredKey {
+  natural_key: string;
+  at: number;
+}
+
+/**
+ * unit_steps and defects are hypertables, so the unique key the upsert relies on must include the
+ * time column: (natural_key, start_ts / found_ts). A record read again with a different parsed
+ * time (timestamp mode or plant time zone fixed, time corrected in FactoryLogix) does not conflict
+ * with its stored row and would become a second one. Delete the stored copies of these keys at
+ * other times (within MOVED_ROW_WINDOW_MS of the page) and return their `instants`, so the hours
+ * they were counted in get recomputed.
+ */
+async function deleteMovedRows(
+  db: PoolClient,
+  table: 'unit_steps' | 'defects',
+  time: 'start_ts' | 'found_ts',
+  keys: StoredKey[],
+  instants: string[],
+): Promise<number[]> {
+  // A key whose fields were all empty identifies nothing: leave those rows alone.
+  const keyed = keys.filter((k) => /[^|]/.test(k.natural_key));
+  if (keyed.length === 0) return [];
+  const ats = keyed.map((k) => k.at);
+  const deleted = await q<Record<string, Date | null>>(
+    db,
+    `DELETE FROM ${table}
+      WHERE natural_key = ANY($1::text[]) AND ${time} BETWEEN $3 AND $4
+        AND (natural_key, ${time}) NOT IN (SELECT * FROM unnest($1::text[], $2::timestamptz[]))
+      RETURNING ${instants.join(', ')}`,
+    [
+      keyed.map((k) => k.natural_key),
+      ats.map((at) => new Date(at)),
+      new Date(Math.min(...ats) - MOVED_ROW_WINDOW_MS),
+      new Date(Math.max(...ats) + MOVED_ROW_WINDOW_MS),
+    ],
+  );
+  return deleted.flatMap((row) => instants.map((column) => toMs(row[column])).filter((ms): ms is number => ms !== null));
 }
 
 function tsOrNull(ms: number | null): Date | null {

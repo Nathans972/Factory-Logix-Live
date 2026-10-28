@@ -59,6 +59,23 @@ function memoryDb() {
       for (let i = 0; i < params.length; i += 3) changed.push({ source: params[i], natural_key: params[i + 1] });
       return ok(changed);
     }
+    // Stored copies of the page's keys at other times ($1/$2 are the page's key/time pairs, $3..$4 the window).
+    const del =
+      /^DELETE FROM (\w+) WHERE natural_key = ANY\(\$1::text\[\]\) AND (\w+) BETWEEN \$3 AND \$4 AND \(natural_key, \2\) NOT IN \(SELECT \* FROM unnest\(\$1::text\[\], \$2::timestamptz\[\]\)\) RETURNING (.+)$/.exec(
+        text,
+      );
+    if (del) {
+      const [, name, time, returning] = del;
+      const [keys, ats, from, to] = params as [string[], Date[], Date, Date];
+      const stale = (r: Row): boolean =>
+        keys.includes(r.natural_key as string) &&
+        (r[time] as Date) >= from &&
+        (r[time] as Date) <= to &&
+        !keys.some((k, i) => k === r.natural_key && same(ats[i], r[time]));
+      const gone = table(name).filter(stale);
+      tables[name] = table(name).filter((r) => !stale(r));
+      return ok(gone.map((r) => Object.fromEntries(returning.split(', ').map((c) => [c, r[c]]))));
+    }
     const insert = /^INSERT INTO (\w+) \(([^)]+)\) VALUES (.+?)(?: ON CONFLICT \(([^)]+)\) DO (NOTHING|UPDATE SET (.+?)))?$/.exec(text);
     if (!insert) throw new Error(`unexpected SQL: ${text}`);
     const [, name, columnList, , conflictList, action, assignments] = insert;

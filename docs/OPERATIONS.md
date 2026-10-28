@@ -216,7 +216,7 @@ standards now") or from a product's page ("Recompute now" for just that product)
 
 `retention_days_raw_events` (default `null` = keep forever) controls how long the raw
 FactoryLogix payloads in `raw_events` are kept. Normalized data (`unit_steps`, `defects`,
-`work_orders`, `hour_cells`, `standards`, etc.) is never deleted automatically in v1 — only the
+`work_orders`, `hour_cells`, `standards`, etc.) is never trimmed by age in v1 — only the
 raw payload table has an optional retention window, applied once a day by the collector.
 
 `raw_events` stores a payload only when it is new or changed. The overlap window, the hourly
@@ -230,6 +230,13 @@ unchanged re-read is still skipped (the normalized tables already have that data
 Upserts into `unit_steps`, `defects` and `work_orders` likewise leave a row untouched when none
 of its mapped values changed, so `updated_at` on those tables means "last changed", not "last
 seen". The nightly standards recompute uses it to find new and changed rows.
+
+A unit step or defect that comes back with a different time (the timestamp mode or plant time
+zone was fixed, or the time was corrected in FactoryLogix) keeps its natural key, so the
+collector deletes the copy stored at the old time, if it is within two days of the new one, and
+recomputes the hours that copy was counted in. Rows stored before such a fix are corrected as
+they are read again: the hourly late-data re-pull covers the last `late_data_hours`, and "Run
+backfill now" covers older history.
 
 ## Disk sizing
 
@@ -249,7 +256,7 @@ that volume, plus OS, images, and backups.
 | `docker compose logs api` shows `SSE stream limit reached`; some TVs only refresh once a minute | 1,000 live-update streams are open at once, far more than the site's TVs and browser tabs: something is holding streams open | Find the address with many connections (`docker compose exec web netstat -tn`) and block it on the network. Streams are let in again as others close; `docker compose restart api` closes them all, and TVs reconnect by themselves |
 | "Data delayed since HH:MM" banner | The collector cannot reach FactoryLogix, or its last successful poll is older than 3x the poll interval | Check Admin > Sync for the last error; confirm the FactoryLogix server and the Report Scheduler Service are up and reachable on port 6065 |
 | Sync status stuck at `never` | FactoryLogix connection and/or field mapping have not been completed yet | Finish Admin > Connection and Admin > Mapping (or the first-run wizard) |
-| Hour labels look shifted, or a shift's numbers don't line up with the wall clock | Wrong `plant_timezone`, or `fl_timestamp_mode` mismatched with how FactoryLogix serializes timestamps | Fix the time zone and timestamp mode in Admin > Connection; see `docs/MAPPING.md` |
+| Hour labels look shifted, or a shift's numbers don't line up with the wall clock | Wrong `plant_timezone`, or `fl_timestamp_mode` mismatched with how FactoryLogix serializes timestamps | Fix the time zone and timestamp mode in Admin > Connection; see `docs/MAPPING.md`. The last `late_data_hours` are corrected within the hour; "Run backfill now" corrects older history (see [Retention](#retention)) |
 | No colors on hour cells / StdHr shows a dash | No standard has been computed yet for that product/operation (not enough history) and no FactoryLogix StdHr is mapped as a fallback | Wait for backfill + the nightly recompute, or run Admin > Standards > Recompute now; consider mapping the `standards` dataset for an interim fallback |
 | API or collector fails to start with an `ENCRYPTION_KEY` error | `ENCRYPTION_KEY` is missing, is not exactly 64 hex characters, or is still the all-zero placeholder from `.env.example` | Generate a correct key with `openssl rand -hex 32` and set it in `.env`, then `docker compose up -d` again. If the FactoryLogix password was saved under the old key, `docker compose logs collector` then says it could not decrypt it: enter the password again in Admin > Connection. The all-zero key is public, so change that password in FactoryLogix too |
 | API fails to start with a `SESSION_SECRET` error | `SESSION_SECRET` is missing, shorter than 32 characters, or still the placeholder from `.env.example` | Generate one with `openssl rand -hex 32` and set it in `.env`, then `docker compose up -d` again. Everyone has to log in again |
