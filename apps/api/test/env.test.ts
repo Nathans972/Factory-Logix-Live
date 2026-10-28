@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { EnvError, buildDatabaseUrl, loadEnv } from '../src/env.js';
 
 const KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+/** Exactly the 32-character minimum. */
+const SECRET = 'fedcba9876543210fedcba9876543210';
 
 const base = {
   DATABASE_URL: 'postgres://fld:test@localhost:5432/fld',
-  SESSION_SECRET: 'secret',
+  SESSION_SECRET: SECRET,
   ENCRYPTION_KEY: KEY,
 } as NodeJS.ProcessEnv;
 
@@ -37,6 +39,15 @@ describe('loadEnv', () => {
     expect(() => loadEnv({ ...base, ENCRYPTION_KEY: 'too-short' })).toThrow(/64 hex/);
     expect(() => loadEnv({ ...base, PLANT_TIMEZONE: 'Mars/Olympus' })).toThrow(/IANA/);
     expect(loadEnv({ ...base, PLANT_TIMEZONE: 'America/New_York' }).plantTimezone).toBe('America/New_York');
+  });
+
+  it('refuses the public .env.example placeholders and a short session secret', () => {
+    expect(loadEnv({ ...base }).sessionSecret).toBe(SECRET);
+    expect(() => loadEnv({ ...base, SESSION_SECRET: 'change-me-64-random-characters' })).toThrow(/still the placeholder/);
+    expect(() => loadEnv({ ...base, SESSION_SECRET: SECRET.slice(1) })).toThrow(/at least 32 characters/);
+    for (const key of ['0'.repeat(64), 'f'.repeat(64), 'aA'.repeat(32)]) {
+      expect(() => loadEnv({ ...base, ENCRYPTION_KEY: key }), key).toThrow(/ENCRYPTION_KEY is a placeholder/);
+    }
   });
 
   it('reads TRUSTED_PROXIES as a list of addresses and ranges', () => {

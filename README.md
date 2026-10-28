@@ -96,8 +96,10 @@ openssl rand -hex 32   # use once for SESSION_SECRET
 openssl rand -hex 32   # use once for ENCRYPTION_KEY
 ```
 
-`ENCRYPTION_KEY` must be exactly 64 hex characters (32 bytes) — the app validates this at
-startup and refuses to start otherwise. Also set `POSTGRES_PASSWORD` and `PLANT_TIMEZONE`.
+`ENCRYPTION_KEY` must be exactly 64 hex characters (32 bytes) and `SESSION_SECRET` at least
+32 characters — the app validates both at startup and refuses to start otherwise, or while
+either is still the public placeholder from `.env.example`. Also set `POSTGRES_PASSWORD` and
+`PLANT_TIMEZONE`.
 
 ```bash
 docker compose up -d

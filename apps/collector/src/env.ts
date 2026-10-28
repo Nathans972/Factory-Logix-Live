@@ -31,6 +31,12 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   if (!/^[0-9a-fA-F]{64}$/.test(encryptionKey)) {
     throw new Error('ENCRYPTION_KEY must be set to 64 hex characters (32 bytes). Generate with: openssl rand -hex 32');
   }
+  // .env.example ships 64 zeros, and that file is public. No generated key is one character repeated.
+  if (/^(.)\1*$/.test(encryptionKey.toLowerCase())) {
+    throw new Error(
+      'ENCRYPTION_KEY is a placeholder like the all-zero key in .env.example. Generate a real one with: openssl rand -hex 32',
+    );
+  }
   const nodeEnv = source.NODE_ENV ?? 'development';
   return {
     databaseUrl: buildDatabaseUrl(source),

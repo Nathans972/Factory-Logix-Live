@@ -72,6 +72,10 @@ cd Factory-Logix-Live
 cp .env.example .env
 ```
 
+Then replace the placeholder `POSTGRES_PASSWORD`, `SESSION_SECRET` and `ENCRYPTION_KEY` with
+values of your own (`openssl rand -hex 32` makes one for each). The `.env.example` values are
+public, so the app refuses to start while `SESSION_SECRET` or `ENCRYPTION_KEY` still has them.
+
 Every variable in `.env.example`:
 
 | Variable | Purpose |
@@ -79,8 +83,8 @@ Every variable in `.env.example`:
 | `POSTGRES_DB` | Database name used by the `db`, `api`, and `collector` containers. Default `fld`. |
 | `POSTGRES_USER` | Postgres role used by the app. Default `fld`. |
 | `POSTGRES_PASSWORD` | Postgres password. **Required** — Compose refuses to start without it. Use a strong, unique password. |
-| `SESSION_SECRET` | Signs the login session cookie (`fld_session`). Any long random string. Generate with `openssl rand -hex 32`. **Required.** |
-| `ENCRYPTION_KEY` | AES-256-GCM key used to encrypt the FactoryLogix password at rest. Must be **exactly 64 hex characters** (32 bytes). Generate with `openssl rand -hex 32`. **Required** — the API and collector both refuse to start if this is missing or the wrong length. |
+| `SESSION_SECRET` | Signs the login session cookie (`fld_session`). **At least 32** random characters. Generate with `openssl rand -hex 32`. **Required** — the API refuses to start if this is missing, too short, or still the `.env.example` placeholder. |
+| `ENCRYPTION_KEY` | AES-256-GCM key used to encrypt the FactoryLogix password at rest. Must be **exactly 64 hex characters** (32 bytes). Generate with `openssl rand -hex 32`. **Required** — the API and collector both refuse to start if this is missing, the wrong length, or still the all-zero `.env.example` placeholder. |
 | `PLANT_TIMEZONE` | IANA time zone used to seed settings on first start (e.g. `America/New_York`). Can be changed later in Admin > Settings. |
 | `WEB_PORT` | Host port published by the `web` (nginx) container. Default `8080`. This is the only port you need to expose. |
 | `LOG_LEVEL` | Log verbosity for `api` and `collector`: `trace` \| `debug` \| `info` \| `warn` \| `error`. Default `info`. |
