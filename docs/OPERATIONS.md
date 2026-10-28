@@ -341,9 +341,18 @@ On first run (and whenever run manually), the collector backfills `backfill_days
   re-colored), so a collector restart picks up at the next day of whichever phase it was in
   rather than starting over. The day that was in progress when the collector stopped is done
   again; that is harmless because every write is idempotent.
-- **Running it again:** "Run backfill now" on a backfill that is `done` or `error` starts a new
-  one from scratch (new range, counters reset). On one that is still in progress it only lifts
-  the off-shift window.
+- **Failures:** a day (or a recoloring step) that fails is tried again after the pause. After
+  `breaker_failure_threshold` (default 3) failures in a row the backfill shows status `error`
+  and backs off as the poll's circuit breaker does: the next try waits 2x the poll interval,
+  then 4x, doubling up to `breaker_max_backoff_minutes` (default 10 minutes), and still only
+  inside the off-shift window unless it was run now. "Error" on the Sync and Connection pages
+  says what failed, how many times in a row, and when the collector tries again. Nothing is
+  skipped: the backfill stays on that day, and once it goes through the backfill goes on at its
+  usual pace.
+- **Running it again:** "Run backfill now" on a backfill that is `done` starts a new one from
+  scratch (new range, counters reset). On one that is still in progress it lifts the off-shift
+  window, and on one in `error` it also tries the failed day again at once, from where it
+  stopped, instead of waiting out the backoff.
 
 ## Standards nightly recompute
 
@@ -411,6 +420,7 @@ at about 1 GB in total (see [Logs](#logs)).
 | "Data delayed since HH:MM" banner | The collector cannot reach FactoryLogix, or its last successful poll is older than 3x the poll interval | Check Admin > Sync for the last error; confirm the FactoryLogix server and the Report Scheduler Service are up and reachable on port 6065 |
 | Admin > Sync says `could not recompute the hour cells of N hours` | The database refused to rewrite them (deadlock, lock timeout, disk full) or the calculation failed on one of their rows. The TVs and portal show those hours as they were before | Wait a poll or two: the collector tries again after every poll, and the error clears once they go through. If it stays, `docker compose logs collector` shows each `hour cell recompute failed`, and `docker compose logs db` and the free disk space show whether the database is the cause. A restarted collector no longer knows which hours to redo: the last `late_data_hours` are recomputed within the hour, older ones by "Run backfill now" |
 | Admin > Sync says `could not recompute the standards` | The nightly standards recompute failed: the database refused its writes (deadlock, lock or statement timeout, disk full) or the calculation failed on one product/operation. StdHr is not updated, so new products and operations show a dash and no colors | Wait for the retry the error names. If it keeps failing, `docker compose logs collector` shows each `standards recompute failed`, and `docker compose logs db` and the free disk space show whether the database is the cause. Once the cause is fixed, Admin > Standards > "Recompute all standards now" clears the error at once |
+| The backfill shows `error` in Admin > Sync or Admin > Connection | The same backfill day (or recoloring step) failed `breaker_failure_threshold` times in a row: FactoryLogix did not answer or refused the request, or the database refused a row of that day. The backfill stays on that day and backs off, so FactoryLogix is not asked for it every few seconds | Wait for the retry the error names. If it keeps failing, `docker compose logs collector` shows each `backfill day failed` (or `backfill re-color failed`, `standards recompute after backfill failed`) with the day and the cause. Once the cause is fixed, Admin > Connection > "Run backfill now" tries again at once, from where it stopped |
 | Test connection or Admin > Sync still says `certificate not trusted` after `FACTORYLOGIX_CA_CERT` was set | The containers could not use the file, it is not the CA that issued FactoryLogix's certificate, or they have not been restarted since the file was replaced | `docker compose logs api collector \| grep FACTORYLOGIX_CA_CERT` shows whether each read it and, if not, why (no such file, not readable, DER instead of PEM). Check that the certificate's issuer is the CA in the file. After replacing the file, run `docker compose restart api collector`. See `docs/INSTALL.md`, section 10 |
 | Sync status stuck at `never` | FactoryLogix connection and/or field mapping have not been completed yet, or what is saved cannot be used: Admin > Sync then shows why under "Last error" | Finish Admin > Connection and Admin > Mapping (or the first-run wizard), or fix what the last error names |
 | After a restore, Admin > Connection asks for the password again, or Admin > Sync shows `could not decrypt the FactoryLogix password` | The database came from an install with another `ENCRYPTION_KEY`. The key is in `.env`, not in the backup, so the saved password cannot be decrypted here | Type the FactoryLogix password in Admin > Connection and save. Or put the old install's `ENCRYPTION_KEY` in `.env` and run `docker compose up -d` (see [Restore](#restore)) |

@@ -35,7 +35,10 @@ export interface SourceSyncState {
 }
 
 export interface BackfillProgress {
-  /** `recoloring`: the download finished; standards are recomputed and hour cells re-colored day by day. */
+  /**
+   * `recoloring`: the download finished; standards are recomputed and hour cells re-colored day by day.
+   * `error`: `breaker_failure_threshold` chunks in a row failed; the backfill waits until `retry_at`, then tries again.
+   */
   status: 'idle' | 'scheduled' | 'running' | 'paused' | 'recoloring' | 'done' | 'error';
   requested_now: boolean;
   days_total: number;
@@ -47,6 +50,10 @@ export interface BackfillProgress {
   standards_done?: boolean;
   /** Days whose hour cells were recomputed with standards (recoloring phase). */
   recolor_days_done?: number;
+  /** Chunks that failed in a row, in either phase; one that goes through resets it. Absent in older saved progress. */
+  failures?: number;
+  /** No chunk before this time: the backfill backs off after failed chunks, as the poll's breaker does. */
+  retry_at?: UtcMs | null;
   started_at: UtcMs | null;
   finished_at: UtcMs | null;
   error: string | null;

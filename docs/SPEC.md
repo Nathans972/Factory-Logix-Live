@@ -261,6 +261,7 @@ Rules:
 - The first day of the range is saved when the backfill starts and every chunk counts from it, so a backfill that runs across midnight processes every day exactly once.
 - When the download completes, standards are computed, then the hour cells of every backfilled day are recomputed one day per chunk (status `recoloring`, same window and pause rules) so the history gets standards and colors.
 - Progress (days downloaded, the saved first day, the recoloring counters) is persisted, so after a restart the backfill resumes at the next day of the phase it was in.
+- A chunk that fails is tried again after the pause. After `settings.breaker_failure_threshold` failed chunks in a row the backfill has its own breaker: status `error`, with the error, the count and the time of the next try, and the next try after 2× the poll interval, then 4×, up to `settings.breaker_max_backoff_minutes` (persisted, like the poll's breaker, and still inside the window unless run now). A chunk that goes through resets it. "Run backfill now" on a backfill in `error` tries the failed chunk again at once and keeps its progress; on a `done` one it starts a new backfill.
 
 ### 4.8 Field mapping
 

@@ -7,12 +7,17 @@
  * no standards exist yet, so the cells have no color). Recoloring: run the standards recompute
  * once, then recompute the hour cells of every backfilled day again, one day per chunk, so the
  * history gets standards and colors.
+ *
+ * A chunk that fails is tried again after the pause, but not for ever: after
+ * `breaker_failure_threshold` failures in a row the backfill shows `error` and backs off as the
+ * poll's breaker does (spec 4.6), until a chunk goes through or an admin runs it now.
  */
-import { addDays, inLocalWindow, localDateString, localToUtc } from '@fld/engine';
+import { addDays, inLocalWindow, localDateString, localToUtc, nextLocalTime, utcToLocalParts } from '@fld/engine';
 import type { BackfillProgress, MappingConfig, Settings } from '@fld/shared';
 import type { Pool } from '../db.js';
-import type { Logger } from '../logger.js';
+import { errorMessage, type Logger } from '../logger.js';
 import type { Recomputer } from '../engine/recompute.js';
+import { backoffMs } from './breaker.js';
 import type { Poller } from './poller.js';
 import { loadBackfillProgress, saveBackfillProgress } from './state.js';
 
@@ -43,6 +48,8 @@ export function emptyProgress(daysTotal: number): BackfillProgress {
     first_day: null,
     standards_done: false,
     recolor_days_done: 0,
+    failures: 0,
+    retry_at: null,
   };
 }
 
@@ -60,6 +67,18 @@ function hoursOf(tz: string, day: string): number[] {
   const hours: number[] = [];
   for (let h = from; h < to; h += HOUR_MS) hours.push(h);
   return hours;
+}
+
+/** HH:MM in `tz`. */
+function clockTime(utcMs: number, tz: string): string {
+  const { hour, minute } = utcToLocalParts(utcMs, tz);
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+/** A chunk went through: the failed attempts before it no longer count. */
+function clearFailures(progress: BackfillProgress): void {
+  progress.failures = 0;
+  progress.retry_at = null;
 }
 
 export class Backfill {
@@ -97,22 +116,30 @@ export class Backfill {
     return this.progress;
   }
 
+  /** Not finished yet. `error` is too: it tries the failed chunk again once its backoff is over. */
   isActive(): boolean {
     const status = this.progress?.status;
-    return status === 'scheduled' || status === 'running' || status === 'paused' || status === 'recoloring';
+    return status === 'scheduled' || status === 'running' || status === 'paused' || status === 'recoloring' || status === 'error';
   }
 
   /** True when the backfill may process a chunk right now. */
   shouldRun(settings: Settings, now: number): boolean {
     if (!this.isActive()) return false;
+    // Backing off after failed chunks (`failed`), even when an admin ran it now.
+    const retryAt = this.progress?.retry_at;
+    if (retryAt && now < retryAt) return false;
     if (this.progress?.requested_now) return true;
     return inLocalWindow(settings.plant_timezone, now, settings.backfill_window.start, settings.backfill_window.end);
   }
 
+  /**
+   * "Run backfill now": a finished backfill starts over; one in progress goes on outside the
+   * window, and one backing off after failed chunks (`error`) tries the failed chunk again at once.
+   */
   async requestNow(): Promise<void> {
     if (!this.progress) await this.load();
     if (!this.progress) return;
-    if (this.progress.status === 'done' || this.progress.status === 'error') {
+    if (this.progress.status === 'done') {
       this.progress = {
         ...this.progress,
         status: 'scheduled',
@@ -122,8 +149,12 @@ export class Backfill {
         first_day: null,
         standards_done: false,
         recolor_days_done: 0,
+        failures: 0,
       };
+    } else if (this.progress.status === 'error') {
+      this.progress.status = 'scheduled';
     }
+    this.progress.retry_at = null;
     this.progress.requested_now = true;
     await saveBackfillProgress(this.pool, this.progress);
   }
@@ -132,9 +163,12 @@ export class Backfill {
     if (this.progress) await saveBackfillProgress(this.pool, this.progress);
   }
 
-  /** Mark as paused when we are outside the window (spec 4.7). The next tick resumes the right phase. */
+  /**
+   * Mark as paused when we are outside the window (spec 4.7). The next tick resumes the right phase.
+   * A backfill backing off after failed chunks keeps showing `error` while it waits.
+   */
   async pause(): Promise<void> {
-    if (!this.progress || this.progress.status === 'paused' || !this.isActive()) return;
+    if (!this.progress || this.progress.status === 'paused' || this.progress.status === 'error' || !this.isActive()) return;
     this.progress.status = 'paused';
     await this.persist();
   }
@@ -193,6 +227,7 @@ export class Backfill {
       await this.recomputer.recomputeHours(hoursOf(tz, day), settings, now);
 
       progress.days_done += 1;
+      clearFailures(progress);
       if (progress.days_done >= progress.days_total) {
         progress.status = 'recoloring';
         progress.current_day = null;
@@ -202,13 +237,44 @@ export class Backfill {
       await this.persist();
       this.log.info({ day, days_done: progress.days_done, days_total: progress.days_total }, 'backfill day complete');
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      progress.error = message;
-      await this.persist();
-      this.log.error({ day, err: message }, 'backfill day failed');
+      await this.failed(err, settings, 'backfill day failed', { day });
       return { worked: true, finished: false, error: err };
     }
     return { worked: true, finished: false };
+  }
+
+  /**
+   * A chunk failed: the next pass tries it again after the pause, but not for ever. Each attempt
+   * downloads the day again from FactoryLogix (or recomputes the standards again), so after
+   * `breaker_failure_threshold` failures in a row the backfill shows `error` and backs off as the
+   * poll's breaker does (spec 4.6): the next attempt after 2x the poll interval, then 4x, up to
+   * `breaker_max_backoff_minutes`, still only inside the window unless an admin ran it now.
+   */
+  private async failed(err: unknown, settings: Settings, what: string, context: Record<string, unknown> = {}): Promise<void> {
+    const progress = this.progress as BackfillProgress;
+    const message = errorMessage(err);
+    const failures = (progress.failures ?? 0) + 1;
+    progress.failures = failures;
+    progress.error = message;
+    progress.retry_at = null;
+    if (failures >= settings.breaker_failure_threshold) {
+      const tz = settings.plant_timezone;
+      const { start, end } = settings.backfill_window;
+      const retryAt =
+        Date.now() +
+        backoffMs(failures, {
+          threshold: settings.breaker_failure_threshold,
+          maxBackoffMinutes: settings.breaker_max_backoff_minutes,
+          intervalMs: settings.poll_interval_seconds * 1_000,
+        });
+      // Outside the window the next try waits for it to open, unless an admin ran the backfill now.
+      const nextTry = progress.requested_now || inLocalWindow(tz, retryAt, start, end) ? retryAt : nextLocalTime(tz, start, retryAt);
+      progress.status = 'error';
+      progress.retry_at = retryAt;
+      progress.error = `${message} (failed ${failures} times in a row); the collector tries again at ${clockTime(nextTry, tz)}, or at once on "Run backfill now"`;
+    }
+    await this.persist();
+    this.log.error({ ...context, err: message, failures, retry_at: progress.retry_at ? new Date(progress.retry_at).toISOString() : null }, what);
   }
 
   /** Recoloring phase: standards first, then one day of hour cells per chunk. */
@@ -226,13 +292,11 @@ export class Backfill {
         await this.runStandards(settings, mapping, now);
         progress.standards_done = true;
         progress.recolor_days_done = done;
+        clearFailures(progress);
         await this.persist();
         this.log.info('standards recomputed after backfill; re-coloring backfilled days');
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        progress.error = message;
-        await this.persist();
-        this.log.error({ err: message }, 'standards recompute after backfill failed');
+        await this.failed(err, settings, 'standards recompute after backfill failed');
       }
       return { worked: true, finished: false };
     }
@@ -245,13 +309,11 @@ export class Backfill {
     try {
       await this.recomputer.recomputeHours(hoursOf(settings.plant_timezone, day), settings, now);
       progress.recolor_days_done = done + 1;
+      clearFailures(progress);
       await this.persist();
       this.log.info({ day, recolor_days_done: done + 1, days_total: progress.days_total }, 'backfill day re-colored');
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      progress.error = message;
-      await this.persist();
-      this.log.error({ day, err: message }, 'backfill re-color failed');
+      await this.failed(err, settings, 'backfill re-color failed', { day });
       return { worked: true, finished: false };
     }
 
