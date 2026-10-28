@@ -224,8 +224,10 @@ anything across different operations, so roll-ups use **earned hours** instead:
 - `charged_hours = charged_minutes / 60`.
 - `efficiency = (sum of earned_hours) / (sum of charged_hours)` across the rows being rolled
   up. 100% means the group produced exactly at standard overall. It is colored with the same
-  70/90/105 bands as pace. Rows with no StdHr are left out of the efficiency number and flagged
-  in the UI rather than silently treated as zero.
+  70/90/105 bands as pace. Rows with no StdHr are left out of the efficiency number (both their
+  output and their charged hours) and flagged in the UI rather than silently treated as zero;
+  they still count in the units and charged-hours totals. Efficiency is a dash only when no row
+  in the group has a StdHr.
 
 **Worked example (spec scenario 13):** two rows in a shift — 60 units at StdHr 30 with 60
 charged minutes, and 10 units at StdHr 12 with 60 charged minutes.
@@ -235,6 +237,18 @@ earned = 60/30 + 10/12 = 2.0 + 0.833 = 2.833 hours
 charged = 60/60 + 60/60 = 1.0 + 1.0 = 2.0 hours
 efficiency = 2.833 / 2.0 = 1.42  ->  blue (142%, well above the 105% blue threshold)
 ```
+
+**Worked example (a row without a standard):** Weld ran 30 units at StdHr 30 in 60 charged
+minutes; Pack, a new operation with no StdHr yet, ran 12 units in 60 charged minutes.
+
+```
+earned = 30/30 = 1.0 hour (Pack has no StdHr, so no earned hours)
+charged = 60/60 = 1.0 hour (Pack's hour is left out)
+efficiency = 1.0 / 1.0 = 1.00  ->  green
+```
+
+The shift view still shows 42 units and 2.0 charged hours, and "Rows without standard: 1" with
+"1.0 h excluded from efficiency".
 
 ## More worked examples
 
@@ -284,7 +298,8 @@ one. A row on the shift view or the operator page adds its hours up: its target 
 each hour's own target, and its pace is earned hours over charged hours — the same arithmetic
 as the job efficiency, so the two always agree for the same work (with a single standard it is
 simply units / target). The StdHr column shows the latest standard. If part of the row ran with
-no standard at all, the row is left unjudged, just like the job efficiency.
+no standard at all, those hours are left out of its pace, just like the job efficiency; the row
+is left unjudged only when none of it had a standard.
 
 **Why is StdHr a dash?**
 There is not yet enough sampled history for that product/operation (fewer than the configured

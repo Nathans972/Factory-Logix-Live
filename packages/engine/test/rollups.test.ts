@@ -50,19 +50,31 @@ describe('computeRollups', () => {
     expect(r.by_operator[1]!.efficiency).toBeNull();
   });
 
-  it('flags rows without a standard and suppresses efficiency', () => {
+  it('flags rows without a standard and leaves them out of efficiency (spec 7.11)', () => {
     const cells = [
       hourCell({ hour: HOUR_A, operator: 'OP1', units: 30, charged: 60, std: 30 }),
       hourCell({ hour: HOUR_A, operator: 'OP2', op: 'Test', units: 5, charged: 60, std: null }),
     ];
     const r = computeRollups(cells, settings);
     expect(r.overall.rows_without_std).toBe(1);
-    expect(r.overall.efficiency).toBeNull();
-    expect(r.overall.color).toBe('neutral');
-    // the Weld operation on its own still has an efficiency
+    // the row still counts in units and charged time, and its charged hour is reported
+    expect(r.overall.units).toBe(35);
+    expect(r.overall.charged_hours).toBe(2);
+    expect(r.overall.charged_hours_without_std).toBe(1);
+    // 1 earned hour over the 1 charged hour that has a standard, not over both
+    expect(r.overall.earned_hours).toBe(1);
+    expect(r.overall.efficiency).toBe(1);
+    expect(r.overall.color).toBe('green');
     const weld = r.by_operation.find((x) => x.key === 'Weld')!;
     expect(weld.efficiency).toBe(1);
     expect(weld.rows_without_std).toBe(0);
+    expect(weld.charged_hours_without_std).toBe(0);
+    // a group with no standard at all has nothing to judge
+    const test = r.by_operation.find((x) => x.key === 'Test')!;
+    expect(test.rows_without_std).toBe(1);
+    expect(test.charged_hours_without_std).toBe(1);
+    expect(test.efficiency).toBeNull();
+    expect(test.color).toBe('neutral');
   });
 
   it('groups by job, operation, operator and job+operation, sorted by key', () => {

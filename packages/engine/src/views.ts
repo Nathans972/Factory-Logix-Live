@@ -136,32 +136,32 @@ function aggregateColor(
  * computed, so a standard changed mid-range gives one row several: the target is the sum of the cells'
  * own targets and the pace is earned hours over charged hours, the arithmetic of computeRollups, so the
  * row agrees with the efficiency of the same cells (with a single StdHr that is units / target). A cell
- * without a StdHr leaves the row unjudged, as it does a roll-up.
+ * without a StdHr is left out of the pace and its colour, as it is out of a roll-up's efficiency.
  */
 interface RowTotals {
   charged_minutes: number;
+  /** charged minutes of the cells with a StdHr: the time the pace judges */
+  std_charged_minutes: number;
   target_units: number;
   earned_hours: number;
-  cells_without_std: number;
 }
 
 function newRowTotals(): RowTotals {
-  return { charged_minutes: 0, target_units: 0, earned_hours: 0, cells_without_std: 0 };
+  return { charged_minutes: 0, std_charged_minutes: 0, target_units: 0, earned_hours: 0 };
 }
 
 function addToRow(t: RowTotals, c: HourCell): void {
   t.charged_minutes += c.charged_minutes;
   if (c.std_hr !== null && c.std_hr > 0) {
+    t.std_charged_minutes += c.charged_minutes;
     t.target_units += (c.std_hr * c.charged_minutes) / 60;
     t.earned_hours += c.units / c.std_hr;
-  } else {
-    t.cells_without_std += 1;
   }
 }
 
 function rowPace(t: RowTotals): number | null {
-  const charged_hours = t.charged_minutes / 60;
-  return charged_hours > 0 && t.cells_without_std === 0 ? t.earned_hours / charged_hours : null;
+  const std_charged_hours = t.std_charged_minutes / 60;
+  return std_charged_hours > 0 ? t.earned_hours / std_charged_hours : null;
 }
 
 /**
@@ -476,7 +476,7 @@ export function buildShiftView(input: ShiftViewInput): ShiftView {
             charged_minutes: acc.totals.charged_minutes,
             target_units: acc.totals.target_units,
             pace: p,
-            color: aggregateColor(std_hr, acc.totals.charged_minutes, p, settings),
+            color: aggregateColor(std_hr, acc.totals.std_charged_minutes, p, settings),
             eligible: true,
             visitor: false,
           });
@@ -510,7 +510,7 @@ export function buildShiftView(input: ShiftViewInput): ShiftView {
         charged_minutes,
         target_units,
         pace,
-        color: aggregateColor(std_hr, charged_minutes, pace, settings),
+        color: aggregateColor(std_hr, totals.std_charged_minutes, pace, settings),
         operators,
       });
     }
@@ -534,6 +534,7 @@ export function buildShiftView(input: ShiftViewInput): ShiftView {
       earned_hours: jobRollups.overall.earned_hours,
       efficiency: jobRollups.overall.efficiency,
       color: jobRollups.overall.color,
+      charged_hours_without_std: jobRollups.overall.charged_hours_without_std,
       operations,
     });
   }
@@ -556,6 +557,7 @@ export function buildShiftView(input: ShiftViewInput): ShiftView {
       active_jobs: jobs.length,
       eligible_operators: eligibleOperators.size,
       rows_without_std: rollups.overall.rows_without_std,
+      charged_hours_without_std: rollups.overall.charged_hours_without_std,
     },
     jobs,
     rollups,
@@ -745,7 +747,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
         units: r.units,
         target_units: r.totals.target_units,
         pace,
-        color: aggregateColor(std_hr, r.totals.charged_minutes, pace, settings),
+        color: aggregateColor(std_hr, r.totals.std_charged_minutes, pace, settings),
         eligible_hours: r.eligible_hours,
         visitor_hours: r.visitor_hours,
         pinned: activePin(r.job, r.op),
@@ -825,6 +827,7 @@ export function buildJobDetail(input: JobDetailInput): JobDetail {
       earned_hours: r.earned_hours,
       efficiency: r.efficiency,
       color: r.color,
+      charged_hours_without_std: r.charged_hours_without_std,
     });
   }
 

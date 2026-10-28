@@ -138,6 +138,8 @@ export function ShiftPage() {
 
   const products = v ? new Set(v.jobs.map((j) => j.product_number)).size : 0;
   const visitorUnits = v?.rollups.overall.visitor_units ?? 0;
+  // counted in charged hours but left out of efficiency (spec 7.11)
+  const noStdHours = v?.summary.charged_hours_without_std ?? 0;
 
   return (
     <>
@@ -184,7 +186,7 @@ export function ShiftPage() {
               label="Shift efficiency"
               value={formatPct(v.summary.efficiency)}
               accent={cellAccent(v.summary.color)}
-              hint={`${formatHours(v.summary.total_earned_hours, 1)} earned / ${formatHours(v.summary.total_charged_hours, 1)} charged`}
+              hint={`${formatHours(v.summary.total_earned_hours, 1)} earned / ${formatHours(v.summary.total_charged_hours - noStdHours, 1)} charged${noStdHours > 0 ? ' with a StdHr' : ''}`}
             />
             <KpiTile
               label="Units completed"
@@ -206,7 +208,7 @@ export function ShiftPage() {
               label="Rows without standard"
               value={v.summary.rows_without_std}
               accent={v.summary.rows_without_std > 0 ? 'amber' : 'none'}
-              hint={v.summary.rows_without_std > 0 ? 'Excluded from efficiency' : 'Every operation has a StdHr'}
+              hint={v.summary.rows_without_std > 0 ? `${formatHours(noStdHours, 1)} excluded from efficiency` : 'Every operation has a StdHr'}
             />
           </KpiRow>
 

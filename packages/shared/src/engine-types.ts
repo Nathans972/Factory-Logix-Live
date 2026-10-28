@@ -83,12 +83,17 @@ export interface RollupRow {
   charged_minutes: number;
   charged_hours: number;
   earned_hours: number;
-  /** null when any contributing row has no StdHr (flag in UI) */
+  /**
+   * earned_hours over the charged hours of the cells with a StdHr (the others are left out);
+   * null when those have no charged time
+   */
   efficiency: number | null;
   color: CellColor;
   eligible_operators: number;
-  /** count of contributing cells with null std_hr */
+  /** count of contributing cells with null std_hr (flag in UI) */
   rows_without_std: number;
+  /** charged hours of those cells: part of charged_hours, left out of efficiency */
+  charged_hours_without_std: number;
 }
 
 export interface Rollups {
@@ -257,6 +262,8 @@ export interface ShiftJobSection {
   earned_hours: number;
   efficiency: number | null;
   color: CellColor;
+  /** charged hours without a StdHr, left out of efficiency (RollupRow) */
+  charged_hours_without_std: number;
   operations: ShiftOperationRow[];
 }
 
@@ -272,6 +279,7 @@ export interface ShiftView {
     active_jobs: number;
     eligible_operators: number;
     rows_without_std: number;
+    charged_hours_without_std: number;
   };
   jobs: ShiftJobSection[];
   rollups: Rollups;
@@ -371,6 +379,8 @@ export interface JobShiftHistoryRow {
   earned_hours: number;
   efficiency: number | null;
   color: CellColor;
+  /** charged hours without a StdHr, left out of efficiency (RollupRow) */
+  charged_hours_without_std: number;
 }
 
 export interface JobOperatorTotal {

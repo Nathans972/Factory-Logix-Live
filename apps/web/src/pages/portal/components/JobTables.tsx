@@ -47,6 +47,7 @@ export function JobShiftHistoryTable({
   exportName: string;
 }) {
   const inProgress = (r: JobShiftHistoryRow) => now >= r.shift.start_utc && now < r.shift.end_utc;
+  const hasMissingStd = rows.some((r) => r.charged_hours_without_std > 0);
   const columns: Column<JobShiftHistoryRow>[] = [
     {
       key: 'shift',
@@ -74,6 +75,25 @@ export function JobShiftHistoryTable({
       value: (r) => r.efficiency,
       render: (r) => <ColorChip color={r.color}>{formatPct(r.efficiency)}</ColorChip>,
     },
+    ...(hasMissingStd
+      ? [
+          {
+            key: 'no_std',
+            header: 'No StdHr',
+            align: 'right' as const,
+            value: (r: JobShiftHistoryRow) => r.charged_hours_without_std,
+            render: (r: JobShiftHistoryRow) =>
+              r.charged_hours_without_std > 0 ? (
+                <span className="badge badge-warn" title="Charged hours excluded from efficiency">
+                  <span className="dot" />
+                  {formatHours(r.charged_hours_without_std, 1)}
+                </span>
+              ) : (
+                ''
+              ),
+          },
+        ]
+      : []),
   ];
   return (
     <DataTable

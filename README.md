@@ -194,8 +194,8 @@ pnpm typecheck                # TypeScript project-wide typecheck
 ## Known issues and roadmap
 
 Known gaps and planned improvements (the hourly late-data re-pull's load, keyset paging,
-which extra fields `raw_events` keeps, shift efficiency with missing standards, and TV and
-cookie hardening) are listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+which extra fields `raw_events` keeps, and TV and cookie hardening) are listed in
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Further reading
 

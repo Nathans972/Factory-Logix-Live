@@ -20,6 +20,7 @@ export function rollupCsvColumns(kind: RollupKind): CsvColumn<RollupRow>[] {
     { header: 'Efficiency', value: (r) => (r.efficiency == null ? '' : `${Math.round(r.efficiency * 100)}%`) },
     { header: 'Operators', value: (r) => r.eligible_operators },
     { header: 'Rows without standard', value: (r) => r.rows_without_std },
+    { header: 'Charged h without standard', value: (r) => r.charged_hours_without_std.toFixed(2) },
   ];
 }
 

@@ -258,6 +258,7 @@ describe('buildShiftView', () => {
     expect(view.summary.active_jobs).toBe(2);
     expect(view.summary.eligible_operators).toBe(3);
     expect(view.summary.rows_without_std).toBe(0);
+    expect(view.summary.charged_hours_without_std).toBe(0);
     expect(view.generated_at).toBe(SHIFT_NOW);
   });
 
@@ -496,7 +497,7 @@ describe('rows that span a mid-shift standard change', () => {
     expect(shiftView([...cells].reverse()).jobs[0]!.operations[0]!.std_hr).toBe(60);
   });
 
-  it('leaves the row unjudged when part of it ran without a standard, like the job efficiency', () => {
+  it('leaves the hours without a standard out of the row, like the job efficiency', () => {
     const view = shiftView([
       hourCell({ hour: hourAt('08'), units: 30, charged: 60, std: null }),
       hourCell({ hour: hourAt('09'), units: 30, charged: 60, std: null }),
@@ -505,12 +506,31 @@ describe('rows that span a mid-shift standard change', () => {
     ]);
     const job = view.jobs[0]!;
     const op = job.operations[0]!;
-    expect(job.efficiency).toBeNull();
+    // 2 earned hours over the 2 charged hours that had a standard; the other two are flagged
+    expect(job.efficiency).toBe(1);
+    expect(job.charged_hours).toBe(4);
+    expect(job.charged_hours_without_std).toBe(2);
+    expect(view.summary.rows_without_std).toBe(2);
+    expect(view.summary.charged_hours_without_std).toBe(2);
     expect(op.std_hr).toBe(40);
+    expect(op.charged_minutes).toBe(240);
     expect(op.target_units).toBe(80);
-    expect(op.pace).toBeNull();
+    expect(op.pace).toBe(job.efficiency);
+    expect(op.color).toBe('green');
+    expect(op.operators[0]).toMatchObject({ pace: op.pace, color: 'green' });
+  });
+
+  it('judges the colour on the minutes that had a standard', () => {
+    // a standard that arrived with the current hour: three minutes are too few to judge
+    const view = shiftView([
+      hourCell({ hour: hourAt('08'), units: 30, charged: 60, std: null }),
+      hourCell({ hour: hourAt('09'), units: 2, charged: 3, std: 40, provisional: true }),
+    ]);
+    const op = view.jobs[0]!.operations[0]!;
+    expect(op.charged_minutes).toBe(63);
+    expect(op.pace).toBeCloseTo(1, 9);
     expect(op.color).toBe('neutral');
-    expect(op.operators[0]!.pace).toBeNull();
+    expect(op.operators[0]!.color).toBe('neutral');
   });
 
   it('applies the same rules to the operator detail rows and strips', () => {
@@ -583,6 +603,27 @@ describe('buildJobDetail', () => {
     expect(row.charged_hours).toBe(2);
     expect(row.earned_hours).toBeCloseTo(1.8333333, 6);
     expect(row.efficiency).toBeCloseTo(0.9166667, 6);
+    expect(row.color).toBe('green');
+    expect(row.charged_hours_without_std).toBe(0);
+  });
+
+  it('leaves hours without a standard out of a shift efficiency instead of blanking it', () => {
+    const row = buildJobDetail({
+      dashboard_separate: dash,
+      dashboard_grouped: grouped,
+      all_cells: [
+        hourCell({ hour: SH09, job: 'JA', op: 'Weld', operator: 'OP1', units: 30, charged: 60, std: 30 }),
+        hourCell({ hour: SH10, job: 'JA', op: 'Pack', operator: 'OP2', units: 4, charged: 15, std: null }),
+      ],
+      shift_instances: [SHIFT],
+      operator_names: {},
+      displays_showing: [],
+      settings,
+      now: SHIFT_NOW,
+    }).shift_history[0]!;
+    expect(row.charged_hours).toBe(1.25);
+    expect(row.charged_hours_without_std).toBe(0.25);
+    expect(row.efficiency).toBe(1);
     expect(row.color).toBe('green');
   });
 

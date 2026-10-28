@@ -178,7 +178,11 @@ export function JobPage() {
               accent={cellAccent(shiftNow?.color)}
               hint={
                 shiftNow
-                  ? formatNum(shiftNow.earned_hours, 1) + ' h earned / ' + formatNum(shiftNow.charged_hours, 1) + ' h charged'
+                  ? formatNum(shiftNow.earned_hours, 1) +
+                    ' h earned / ' +
+                    formatNum(shiftNow.charged_hours - shiftNow.charged_hours_without_std, 1) +
+                    ' h charged' +
+                    (shiftNow.charged_hours_without_std > 0 ? ' with a StdHr' : '')
                   : 'no shift recorded yet'
               }
             />
