@@ -11,10 +11,12 @@ import { qInt } from '../../util/query.js';
 
 export async function registerAdminOpsRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const admin = { preHandler: requireRole('admin') };
+  const manager = { preHandler: requireRole('manager') };
 
   app.get('/api/admin/sync', admin, async (): Promise<SyncHealth> => buildSyncHealth(ctx.db));
 
-  app.get('/api/admin/sync/log', admin, async (req): Promise<SyncLogEntry[]> => {
+  // Managers can open Sync health (spec 10.9), so they can read the poll log too; every action stays admin-only.
+  app.get('/api/admin/sync/log', manager, async (req): Promise<SyncLogEntry[]> => {
     const query = req.query as Record<string, unknown>;
     const limit = qInt(query.limit, { min: 1, max: 500, fallback: 50 }) ?? 50;
     return listSyncLog(ctx.db, limit);

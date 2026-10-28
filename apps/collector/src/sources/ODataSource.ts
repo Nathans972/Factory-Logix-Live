@@ -1,8 +1,8 @@
 /** OData implementation of the Source abstraction. */
-import type { ODataMetadata } from '@fld/shared';
+import type { FlTimestampMode, ODataMetadata } from '@fld/shared';
 import { ODataClient, type FetchLike } from '../odata/client.js';
 import { edmTypeOf } from '../odata/metadata.js';
-import { formatLiteral, type LiteralValue } from '../odata/literals.js';
+import { formatLiteral, type LiteralValue, type TimestampLiteralOptions } from '../odata/literals.js';
 import type { Source, SourcePage, SourceRequest } from './Source.js';
 
 const METADATA_TTL_MS = 6 * 60 * 60 * 1000;
@@ -25,6 +25,7 @@ export class ODataSource implements Source {
   private readonly onMetadataError?: (err: unknown) => void;
   private metadata: ODataMetadata | null = null;
   private metadataAt = 0;
+  private timestampOpts: TimestampLiteralOptions = {};
 
   constructor(opts: ODataSourceOptions) {
     this.client = new ODataClient({
@@ -39,6 +40,11 @@ export class ODataSource implements Source {
 
   setTimeoutSeconds(seconds: number): void {
     this.client.timeoutSeconds = seconds;
+  }
+
+  /** `fl_timestamp_mode` + plant zone, so `local_no_offset` filters use plant wall-clock time. */
+  setTimestampMode(mode: FlTimestampMode, timezone: string): void {
+    this.timestampOpts = { mode, timezone };
   }
 
   async init(force = false): Promise<void> {
@@ -68,7 +74,7 @@ export class ODataSource implements Source {
   }
 
   literal(entitySet: string, field: string, value: LiteralValue): string {
-    return formatLiteral(value, this.edmType(entitySet, field), this.version());
+    return formatLiteral(value, this.edmType(entitySet, field), this.version(), this.timestampOpts);
   }
 
   describe(req: SourceRequest): string {

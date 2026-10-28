@@ -18,7 +18,78 @@ import {
   readStoredDeviceToken,
   resolveDeviceToken,
   TV_STYLE_VARS,
+  nextDashboard,
+  tvScreen,
 } from './tvLogic';
+import type { Display, TvDashboard, TvState } from '@fld/shared';
+
+function tvStateWith(over: Partial<TvState>, display: Partial<Display> = {}): TvState {
+  return {
+    status: 'assigned',
+    device_token: 'tok-12345678',
+    pairing_code: '4821',
+    display: {
+      id: 1,
+      pairing_code: '4821',
+      name: 'Line 3',
+      claimed_at: 1,
+      job_number: 'J-100',
+      group_operators: false,
+      show_std_day: true,
+      show_gauge: true,
+      shift_length_hours: 12,
+      last_seen_at: 1,
+      created_at: 1,
+      online: true,
+      ...display,
+    },
+    dashboard: null,
+    job_status: 'ok',
+    sync: { status: 'ok', delayed: false, delayed_since: null, last_success_at: 1 },
+    server_time: 1,
+    plant_timezone: 'UTC',
+    admin_url: 'http://plant/admin',
+    ...over,
+  };
+}
+const dash = (job: string) => ({ job: { job_number: job } }) as unknown as TvDashboard;
+const titles = (s: ReturnType<typeof tvScreen>) => (s.kind === 'message' ? s.lines.map((l) => l.text) : ['<dashboard>']);
+
+describe('tvScreen', () => {
+  const base = { dashboard: null, loading: false, token: 'tok-12345678' };
+
+  it('says "Waiting for data for job …" when the assigned job is not ingested yet', () => {
+    const screen = tvScreen({ ...base, state: tvStateWith({ job_status: 'not_found' }) });
+    expect(titles(screen)).toEqual(['Waiting for data for job J-100', 'Line 3']);
+  });
+
+  it('keeps "No job assigned" for an unassigned display', () => {
+    const screen = tvScreen({ ...base, state: tvStateWith({ status: 'unassigned', job_status: null }, { job_number: null }) });
+    expect(titles(screen)).toEqual(['No job assigned', 'Line 3', 'Code 4821']);
+  });
+
+  it('names the job when its dashboard could not be built', () => {
+    const screen = tvScreen({ ...base, state: tvStateWith({ job_status: 'error' }) });
+    expect(titles(screen)).toEqual(['Dashboard unavailable for job J-100', 'Line 3']);
+  });
+
+  it('shows the dashboard, the pairing code and the connecting states', () => {
+    expect(tvScreen({ ...base, state: tvStateWith({ dashboard: dash('J-100') }) }).kind).toBe('dashboard');
+    expect(titles(tvScreen({ ...base, state: tvStateWith({ status: 'unclaimed', job_status: null }) }))).toContain('4821');
+    expect(titles(tvScreen({ ...base, state: null, loading: true }))).toEqual(['Connecting…']);
+    expect(titles(tvScreen({ ...base, state: null }))).toEqual(['Dashboard unavailable', 'Device tok-1234']);
+  });
+});
+
+describe('nextDashboard', () => {
+  it('follows the server, except that a build error on the same job keeps the last dashboard', () => {
+    expect(nextDashboard(dash('J-100'), tvStateWith({ dashboard: dash('J-200') }))?.job.job_number).toBe('J-200');
+    expect(nextDashboard(dash('J-100'), tvStateWith({ job_status: 'error' }))?.job.job_number).toBe('J-100');
+    expect(nextDashboard(dash('J-100'), tvStateWith({ job_status: 'error' }, { job_number: 'J-200' }))).toBeNull();
+    expect(nextDashboard(dash('J-100'), tvStateWith({ job_status: 'not_found' }))).toBeNull();
+    expect(nextDashboard(dash('J-100'), tvStateWith({ status: 'unassigned', job_status: null }, { job_number: null }))).toBeNull();
+  });
+});
 
 describe('resolveDeviceToken', () => {
   const generate = () => 'generated-uuid';

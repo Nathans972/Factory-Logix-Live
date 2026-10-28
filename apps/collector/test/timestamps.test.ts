@@ -36,11 +36,32 @@ describe('fl_timestamp_mode: utc', () => {
 });
 
 describe('JSON /Date(...)/ values', () => {
-  it('reads the epoch milliseconds, with or without a trailing offset', () => {
+  it('reads the epoch milliseconds as UTC, with or without a trailing offset, in utc and offset_present modes', () => {
+    for (const mode of ['utc', 'offset_present'] as const) {
+      const r = new TimestampResolver({ mode, timezone: 'America/New_York' });
+      expect(r.parse('/Date(1735689600000)/')).toBe(1735689600000);
+      expect(r.parse('/Date(1735689600000+0300)/')).toBe(1735689600000);
+      expect(r.parse('/Date(-10000)/')).toBe(-10000);
+    }
+  });
+
+  it('local_no_offset: reads an offset-less /Date(ms)/ as plant wall-clock time', () => {
     const r = new TimestampResolver({ mode: 'local_no_offset', timezone: 'America/New_York' });
-    expect(r.parse('/Date(1735689600000)/')).toBe(1735689600000);
+    // 2025-01-01 00:00 wall clock in New York (EST, UTC-5).
+    expect(r.parse('/Date(1735689600000)/')).toBe(Date.parse('2025-01-01T05:00:00Z'));
+    // A trailing offset means the milliseconds already are the UTC instant.
     expect(r.parse('/Date(1735689600000+0300)/')).toBe(1735689600000);
-    expect(r.parse('/Date(-10000)/')).toBe(-10000);
+    expect(r.parse('/Date(-10000)/')).toBe(-10000 + 5 * 3_600_000);
+  });
+
+  it('local_no_offset: /Date(ms)/ on daylight saving dates', () => {
+    const r = new TimestampResolver({ mode: 'local_no_offset', timezone: 'America/New_York' });
+    // Spring forward 2025-03-09: 01:30 is EST (UTC-5), 03:30 is EDT (UTC-4).
+    expect(r.parse(`/Date(${Date.UTC(2025, 2, 9, 1, 30)})/`, 'unit_steps')).toBe(Date.parse('2025-03-09T06:30:00Z'));
+    expect(r.parse(`/Date(${Date.UTC(2025, 2, 9, 3, 30)})/`, 'unit_steps')).toBe(Date.parse('2025-03-09T07:30:00Z'));
+    // Fall back 2025-11-02: 01:45 then 01:05 (40 minutes back) is the second, EST occurrence.
+    expect(r.parse(`/Date(${Date.UTC(2025, 10, 2, 1, 45)})/`, 'defects')).toBe(Date.parse('2025-11-02T05:45:00Z'));
+    expect(r.parse(`/Date(${Date.UTC(2025, 10, 2, 1, 5)})/`, 'defects')).toBe(Date.parse('2025-11-02T06:05:00Z'));
   });
 });
 

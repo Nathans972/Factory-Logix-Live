@@ -35,11 +35,18 @@ export interface SourceSyncState {
 }
 
 export interface BackfillProgress {
-  status: 'idle' | 'scheduled' | 'running' | 'paused' | 'done' | 'error';
+  /** `recoloring`: the download finished; standards are recomputed and hour cells re-colored day by day. */
+  status: 'idle' | 'scheduled' | 'running' | 'paused' | 'recoloring' | 'done' | 'error';
   requested_now: boolean;
   days_total: number;
   days_done: number;
   current_day: string | null;
+  /** First plant-local day (YYYY-MM-DD) of the range, fixed when the backfill starts. Absent in older saved progress. */
+  first_day?: string | null;
+  /** Standards were recomputed after the download (recoloring phase). */
+  standards_done?: boolean;
+  /** Days whose hour cells were recomputed with standards (recoloring phase). */
+  recolor_days_done?: number;
   started_at: UtcMs | null;
   finished_at: UtcMs | null;
   error: string | null;
@@ -66,6 +73,10 @@ export interface SyncLogEntry {
   started_at: UtcMs;
   finished_at: UtcMs | null;
   rows: number | null;
+  /** Rows written to the normalized tables; null while running or for pulls logged before migration 0005. */
+  ingested: number | null;
+  /** Rows dropped (required field missing, product or operation unresolved); null as for `ingested`. */
+  skipped: number | null;
   status: 'ok' | 'error' | 'running';
   error: string | null;
 }
@@ -115,6 +126,8 @@ export interface SetupAdminRequest {
 
 export type TvStatus = 'unclaimed' | 'unassigned' | 'assigned';
 
+export type TvJobStatus = 'ok' | 'not_found' | 'error';
+
 export interface TvRegisterRequest {
   device_token: string;
 }
@@ -125,6 +138,12 @@ export interface TvState {
   pairing_code: string;
   display: Display | null;
   dashboard: TvDashboard | null;
+  /**
+   * Why `dashboard` is null for an assigned display: `not_found` = the job is not ingested yet
+   * (the TV says "Waiting for data for job …"), `error` = the dashboard could not be built.
+   * `ok` when the dashboard was built; null when no job is assigned.
+   */
+  job_status: TvJobStatus | null;
   sync: Pick<SyncHealth, 'status' | 'delayed' | 'delayed_since' | 'last_success_at'>;
   server_time: UtcMs;
   plant_timezone: string;

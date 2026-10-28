@@ -41,40 +41,62 @@ export async function listMigrationFiles(dir: string): Promise<string[]> {
   return entries.filter((f) => f.toLowerCase().endsWith('.sql')).sort((a, b) => a.localeCompare(b));
 }
 
-export async function runMigrations(db: Db, dir: string, log: MigrationLogger): Promise<string[]> {
-  await db.query(
-    'CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())',
-  );
-  await db.query('SELECT pg_advisory_lock($1)', [LOCK_ID]);
-  const applied: string[] = [];
-  try {
-    const files = await listMigrationFiles(dir);
-    const { rows } = await db.query<{ name: string }>('SELECT name FROM schema_migrations');
-    const done = new Set(rows.map((r) => r.name));
+/** What the runner needs from a pool: one dedicated connection. */
+export interface MigrationPool {
+  connect(): Promise<Db & { release(err?: Error | boolean): void }>;
+}
 
-    for (const file of files) {
-      if (done.has(file)) continue;
-      const sql = await readFile(path.join(dir, file), 'utf8');
-      log.info(`applying migration ${file}`);
-      await db.query(sql);
-      await db.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [file]);
-      applied.push(file);
+/**
+ * Session advisory locks belong to a connection, so the lock, every migration and the unlock run
+ * on one client taken from the pool (through the pool they could land on different connections
+ * and the unlock would miss).
+ */
+export async function runMigrations(pool: MigrationPool, dir: string, log: MigrationLogger): Promise<string[]> {
+  const db = await pool.connect();
+  let broken: Error | undefined;
+  try {
+    await db.query(
+      'CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())',
+    );
+    await db.query('SELECT pg_advisory_lock($1)', [LOCK_ID]);
+    const applied: string[] = [];
+    try {
+      const files = await listMigrationFiles(dir);
+      const { rows } = await db.query<{ name: string }>('SELECT name FROM schema_migrations');
+      const done = new Set(rows.map((r) => r.name));
+
+      for (const file of files) {
+        if (done.has(file)) continue;
+        const sql = await readFile(path.join(dir, file), 'utf8');
+        log.info(`applying migration ${file}`);
+        await db.query(sql);
+        await db.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [file]);
+        applied.push(file);
+      }
+    } finally {
+      try {
+        await db.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]);
+      } catch (err) {
+        // Could not unlock: destroy the connection instead of returning it to the pool, which
+        // also releases the lock.
+        broken = err instanceof Error ? err : new Error(String(err));
+      }
     }
+    return applied;
   } finally {
-    await db.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]);
+    db.release(broken);
   }
-  return applied;
 }
 
 /** Convenience wrapper used at boot: resolves the directory and applies pending migrations. */
-export async function migrate(db: Db, explicitDir: string | null, log: MigrationLogger): Promise<string[]> {
+export async function migrate(pool: MigrationPool, explicitDir: string | null, log: MigrationLogger): Promise<string[]> {
   const dir = resolveMigrationsDir(explicitDir);
   if (!dir) {
     log.warn('no db/migrations directory found (set MIGRATIONS_DIR); skipping migrations');
     return [];
   }
   log.info(`migrations directory: ${dir}`);
-  const applied = await runMigrations(db, dir, log);
+  const applied = await runMigrations(pool, dir, log);
   log.info(applied.length > 0 ? `applied ${applied.length} migration(s)` : 'database schema up to date');
   return applied;
 }

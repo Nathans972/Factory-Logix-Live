@@ -95,7 +95,19 @@ The `web` service's logs are nginx's standard access/error logs.
 - `docker compose ps` — container-level health (the `db` and `api` services have Docker
   healthchecks; `api`'s checks `GET /api/health`).
 - **Admin > Sync** in the portal shows the same information as `/api/health/sync` in a UI,
-  refreshed every 10 seconds, plus recent `sync_log` entries per data source.
+  refreshed every 10 seconds, plus recent `sync_log` entries per data source. Managers can open
+  it too (read-only); every action stays admin-only.
+- **Rows, Ingested, Skipped** in the recent-polls table: `Rows` is what FactoryLogix returned,
+  `Ingested` what reached the normalized tables, and `Skipped` what was dropped because a
+  required field was missing or the product or operation could not be resolved (for example a
+  unit step whose work order has not arrived yet and no product number mapped). Pulls with
+  skipped rows are highlighted. A few skipped rows that disappear on the next poll are normal;
+  a steady count usually means a mapping problem (check the field mapping and the collector
+  logs). Pulls logged before migration `0005` show a dash.
+- The hourly late-data re-pull reports as source `late_data`. If it fails, the error and the
+  failure count show on that row; the next attempt waits an hour, doubling after each further
+  failure up to 6 hours. Nothing is lost while it waits, because every re-pull covers the whole
+  `late_data_hours` window, and it never counts against the main circuit breaker.
 
 ## The circuit breaker and "Data delayed" banner
 
@@ -129,9 +141,23 @@ On first run (and whenever run manually), the collector backfills `backfill_days
   to 05:00 plant time) so it does not compete with live polling load during production hours.
 - **Run now:** Admin > Connection > "Run backfill now" (or the setup wizard's backfill step)
   overrides the window and runs immediately.
-- **Resume:** progress is persisted (`sync_state` for source `backfill`), so a collector
-  restart mid-backfill picks up where it left off rather than starting over.
-- Standards are (re)computed once the backfill finishes.
+- **Fixed range:** the first day of the range is saved when the backfill starts, and every
+  later chunk counts from it, so a backfill that runs across midnight (or over several nights)
+  still processes every day exactly once.
+- **Recoloring:** while days download, their hour cells get counts but no colors, because no
+  standards exist yet. When the download finishes, the backfill shows status `recoloring`: it
+  recomputes standards once, then recomputes the hour cells of every backfilled day again, one
+  day per chunk with the same pause and window rules, so the history gets standards and colors.
+  The Sync and Connection pages show "Recoloring X of Y days". The status becomes `done` after
+  the last day.
+- **Resume:** progress is persisted (`sync_state` for source `backfill`: days downloaded, the
+  saved first day, and for the recoloring phase whether standards ran and how many days were
+  re-colored), so a collector restart picks up at the next day of whichever phase it was in
+  rather than starting over. The day that was in progress when the collector stopped is done
+  again; that is harmless because every write is idempotent.
+- **Running it again:** "Run backfill now" on a backfill that is `done` or `error` starts a new
+  one from scratch (new range, counters reset). On one that is still in progress it only lifts
+  the off-shift window.
 
 ## Standards nightly recompute
 
@@ -146,6 +172,18 @@ standards now") or from a product's page ("Recompute now" for just that product)
 FactoryLogix payloads in `raw_events` are kept. Normalized data (`unit_steps`, `defects`,
 `work_orders`, `hour_cells`, `standards`, etc.) is never deleted automatically in v1 — only the
 raw payload table has an optional retention window, applied once a day by the collector.
+
+`raw_events` stores a payload only when it is new or changed. The overlap window, the hourly
+late-data re-pull and the backfill read many rows again; the collector keeps the sha256 of the
+last payload stored per (data source, natural key) in `raw_event_hashes` (migration `0004`)
+and skips rows whose payload is identical. So `raw_events` holds one row per version of a
+FactoryLogix record, not one row per read. `raw_event_hashes` is one small row per natural key
+and is not trimmed by the retention window; after retention removes an old payload, an
+unchanged re-read is still skipped (the normalized tables already have that data).
+
+Upserts into `unit_steps`, `defects` and `work_orders` likewise leave a row untouched when none
+of its mapped values changed, so `updated_at` on those tables means "last changed", not "last
+seen". The nightly standards recompute uses it to find new and changed rows.
 
 ## Disk sizing
 

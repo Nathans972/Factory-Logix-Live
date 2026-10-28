@@ -65,17 +65,25 @@ export async function recordSyncSuccess(
   );
 }
 
-export async function recordSyncFailure(db: Queryable, source: string, error: string, durationMs: number): Promise<void> {
+/** `opts.watermark` also replaces the stored watermark (the late-data re-pull stores its attempt time). */
+export async function recordSyncFailure(
+  db: Queryable,
+  source: string,
+  error: string,
+  durationMs: number,
+  opts: { watermark?: string | null } = {},
+): Promise<void> {
   await exec(
     db,
-    `INSERT INTO sync_state (source, last_error, consecutive_failures, duration_ms_last_poll, updated_at)
-     VALUES ($1, $2, 1, $3, now())
+    `INSERT INTO sync_state (source, watermark, last_error, consecutive_failures, duration_ms_last_poll, updated_at)
+     VALUES ($1, $4, $2, 1, $3, now())
      ON CONFLICT (source) DO UPDATE SET
+       watermark = COALESCE(EXCLUDED.watermark, sync_state.watermark),
        last_error = EXCLUDED.last_error,
        consecutive_failures = sync_state.consecutive_failures + 1,
        duration_ms_last_poll = EXCLUDED.duration_ms_last_poll,
        updated_at = now()`,
-    [source, error.slice(0, 2000), Math.trunc(durationMs)],
+    [source, error.slice(0, 2000), Math.trunc(durationMs), opts.watermark ?? null],
   );
 }
 
@@ -87,15 +95,14 @@ export async function startSyncLog(db: Queryable, source: string): Promise<numbe
 export async function finishSyncLog(
   db: Queryable,
   id: number | null,
-  opts: { status: 'ok' | 'error'; rows: number; error?: string | null },
+  opts: { status: 'ok' | 'error'; rows: number; ingested: number; skipped: number; error?: string | null },
 ): Promise<void> {
   if (id === null) return;
-  await exec(db, 'UPDATE sync_log SET finished_at = now(), rows = $2, status = $3, error = $4 WHERE id = $1', [
-    id,
-    Math.trunc(opts.rows),
-    opts.status,
-    opts.error ? opts.error.slice(0, 2000) : null,
-  ]);
+  await exec(
+    db,
+    'UPDATE sync_log SET finished_at = now(), rows = $2, status = $3, error = $4, ingested = $5, skipped = $6 WHERE id = $1',
+    [id, Math.trunc(opts.rows), opts.status, opts.error ? opts.error.slice(0, 2000) : null, Math.trunc(opts.ingested), Math.trunc(opts.skipped)],
+  );
 }
 
 export async function saveBackfillProgress(db: Queryable, progress: BackfillProgress): Promise<void> {

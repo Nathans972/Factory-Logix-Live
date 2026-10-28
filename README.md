@@ -1,8 +1,19 @@
 # FactoryLogix Live Production Dashboard and Manager Portal
 
+[![CI](https://github.com/Nathans972/Factory-Logix-Live/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Nathans972/Factory-Logix-Live/actions/workflows/ci.yml)
+
 A standalone, on-premises web application that reads production data out of an Aegis
 FactoryLogix MES installation, stores it in its own database, and serves live TV floor
 dashboards plus a manager portal with shift views, drill-downs, and admin screens.
+
+## Status
+
+- Built against FactoryLogix's documented OData interface.
+- Tested end to end against a simulated FactoryLogix server, not yet against a live
+  installation.
+- The automated tests and the typecheck run in CI on every push and pull request.
+- Field mapping, timestamp mode and licensing are verified on install day (see
+  [`docs/INSTALL.md`](docs/INSTALL.md) and [`docs/MAPPING.md`](docs/MAPPING.md)).
 
 ## What it is
 
@@ -148,7 +159,7 @@ Pages demo), so the numbers you see in the demo and in production come from the 
   db/
     migrations/                 SQL migrations, applied automatically on API start
   .github/workflows/
-    ci.yml                      lint, typecheck, engine tests
+    ci.yml                      install, build the shared packages, typecheck, lint, every test suite, build the demo
     pages.yml                   build the mock bundle and deploy to GitHub Pages
 ```
 
@@ -177,6 +188,12 @@ Checks used in CI:
 pnpm test                    # unit tests across all packages/apps (engine tests cover spec section 7)
 pnpm typecheck                # TypeScript project-wide typecheck
 ```
+
+## Known issues and roadmap
+
+Known gaps and planned improvements (the hourly late-data re-pull's load, keyset paging,
+which extra fields `raw_events` keeps, shift efficiency with missing standards, and TV and
+cookie hardening) are listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Further reading
 

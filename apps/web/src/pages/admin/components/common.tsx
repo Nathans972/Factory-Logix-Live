@@ -197,21 +197,36 @@ const BACKFILL_TONE: Record<BackfillProgress['status'], BadgeTone> = {
   scheduled: 'info',
   running: 'info',
   paused: 'warn',
+  recoloring: 'info',
   done: 'ok',
   error: 'off',
 };
 
+/** Progress text and fraction for the backfill bar: download first, then the recoloring phase. */
+export function backfillReadout(backfill: BackfillProgress): { pct: number; text: string } {
+  const total = backfill.days_total;
+  const downloaded = backfill.status !== 'done' && total > 0 && backfill.days_done >= total;
+  if (downloaded) {
+    const recolored = backfill.recolor_days_done ?? 0;
+    return {
+      pct: Math.min(1, recolored / total),
+      text: backfill.standards_done ? `Recoloring ${recolored} of ${total} days` : 'Recomputing standards before recoloring',
+    };
+  }
+  return { pct: total > 0 ? Math.min(1, backfill.days_done / total) : 0, text: `${backfill.days_done} of ${total} days` };
+}
+
 /** Backfill progress readout shared by the Connection, Sync health and setup pages (spec 10.4 / 10.9). */
 export function BackfillBar({ backfill, tz }: { backfill: BackfillProgress | null; tz: string }) {
   if (!backfill) return <p className="muted">No backfill has been scheduled.</p>;
-  const pct = backfill.days_total > 0 ? Math.min(1, backfill.days_done / backfill.days_total) : 0;
+  const { pct, text } = backfillReadout(backfill);
   return (
     <div className="stack-sm">
       <div className="row">
         <StatusBadge tone={BACKFILL_TONE[backfill.status]}>{backfill.status}</StatusBadge>
         <ProgressBar value={pct} width={220} />
         <span className="muted small">
-          {backfill.days_done} of {backfill.days_total} days
+          {text}
           {backfill.current_day ? ` · working on ${backfill.current_day}` : ''}
         </span>
       </div>

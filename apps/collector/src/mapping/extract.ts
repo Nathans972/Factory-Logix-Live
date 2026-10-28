@@ -25,7 +25,7 @@ export interface NaiveParts {
 
 const NAIVE_RE = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,7}))?)?)?$/;
 const OFFSET_RE = /(?:Z|z|[+-]\d{2}:?\d{2})$/;
-const MS_DATE_RE = /^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/;
+const MS_DATE_RE = /^\/Date\((-?\d+)([+-]\d{4})?\)\/$/;
 
 /** ISO-8601-ish string with an explicit UTC offset? */
 export function hasOffset(value: string): boolean {
@@ -136,7 +136,26 @@ export class TimestampResolver {
     const msDate = MS_DATE_RE.exec(text);
     if (msDate) {
       const ms = Number(msDate[1]);
-      return Number.isFinite(ms) ? ms : null;
+      if (!Number.isFinite(ms)) return null;
+      // OData v2 JSON writes an offset-less Edm.DateTime as its wall-clock value counted as if it
+      // were UTC. In local_no_offset mode that wall clock is plant time; a trailing offset
+      // (`/Date(ms+0300)/`) means the milliseconds are a real UTC instant.
+      if (this.mode === 'local_no_offset' && !msDate[2]) {
+        const d = new Date(ms);
+        return this.resolveNaive(
+          {
+            year: d.getUTCFullYear(),
+            month: d.getUTCMonth() + 1,
+            day: d.getUTCDate(),
+            hour: d.getUTCHours(),
+            minute: d.getUTCMinutes(),
+            second: d.getUTCSeconds(),
+            millisecond: d.getUTCMilliseconds(),
+          },
+          sourceKey,
+        );
+      }
+      return ms;
     }
 
     if (hasOffset(text)) {

@@ -35,6 +35,13 @@ const MAX_PAGES_FULL = 20;
 const MAX_PAGES_WINDOW = 1000;
 const FIRST_RUN_LOOKBACK_MS = 2 * 3_600_000;
 const HOUR_MS = 3_600_000;
+const LATE_PULL_MAX_WAIT_MS = 6 * HOUR_MS;
+
+/** Wait between late-data re-pulls: hourly, doubling after each further failure, capped at 6 h. */
+export function latePullWaitMs(consecutiveFailures: number): number {
+  const extra = Math.max(0, consecutiveFailures - 1);
+  return Math.min(LATE_PULL_MAX_WAIT_MS, HOUR_MS * 2 ** Math.min(extra, 10));
+}
 
 export interface DatasetOutcome {
   dataset: DatasetName;
@@ -227,12 +234,18 @@ export class Poller {
         rows: out.rows,
         durationMs: out.durationMs,
       });
-      await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows });
+      await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows, ingested: out.ingested, skipped: out.skipped });
     } catch (err) {
       out.durationMs = Date.now() - started;
       out.error = err instanceof Error ? err.message : String(err);
       await recordSyncFailure(this.deps.pool, dataset, out.error, out.durationMs);
-      await finishSyncLog(this.deps.pool, logId, { status: 'error', rows: out.rows, error: out.error });
+      await finishSyncLog(this.deps.pool, logId, {
+        status: 'error',
+        rows: out.rows,
+        ingested: out.ingested,
+        skipped: out.skipped,
+        error: out.error,
+      });
       this.deps.log.error({ dataset, err: out.error }, 'poll failed');
     }
     return out;
@@ -241,25 +254,40 @@ export class Poller {
   /**
    * Once per hour re-pull the last `late_data_hours` of unit_steps and defects so that late
    * updates (defect closed later, unit reworked) are not missed (spec 4.5).
+   *
+   * The `late_data` watermark is the last attempt, successful or not. A failure is recorded in
+   * sync_state('late_data') and backs off (see `latePullWaitMs`); nothing is lost because every
+   * re-pull covers the full window. It never fails the regular poll or feeds the main breaker.
    */
   private async latePullIfDue(mapping: MappingConfig, settings: Settings, now: number, touched: number[]): Promise<void> {
     if (settings.late_data_hours <= 0) return;
     const state = await loadSyncState(this.deps.pool, 'late_data');
     const last = state?.watermark ? Date.parse(state.watermark) : null;
-    if (last !== null && !Number.isNaN(last) && now - last < HOUR_MS) return;
+    if (last !== null && !Number.isNaN(last) && now - last < latePullWaitMs(state?.consecutive_failures ?? 0)) return;
 
     const started = Date.now();
     let rows = 0;
-    for (const dataset of ['unit_steps', 'defects'] as const) {
-      const datasetMapping = mapping[dataset];
-      if (!datasetMapping) continue;
-      const result = await this.pullWindow(dataset, datasetMapping, settings, {
-        from: now - settings.late_data_hours * HOUR_MS,
-        to: now + 60_000,
-        logSource: `${dataset}:late`,
-        touched,
-      });
-      rows += result.rows;
+    try {
+      for (const dataset of ['unit_steps', 'defects'] as const) {
+        const datasetMapping = mapping[dataset];
+        if (!datasetMapping) continue;
+        const result = await this.pullWindow(dataset, datasetMapping, settings, {
+          from: now - settings.late_data_hours * HOUR_MS,
+          to: now + 60_000,
+          logSource: `${dataset}:late`,
+          touched,
+        });
+        rows += result.rows;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await recordSyncFailure(this.deps.pool, 'late_data', message, Date.now() - started, { watermark: new Date(now).toISOString() });
+      const failures = (state?.consecutive_failures ?? 0) + 1;
+      this.deps.log.warn(
+        { err: message, failures, retry_in_minutes: latePullWaitMs(failures) / 60_000 },
+        'late-data re-pull failed; backing off',
+      );
+      return;
     }
     await recordSyncSuccess(this.deps.pool, 'late_data', {
       watermark: new Date(now).toISOString(),
@@ -318,11 +346,17 @@ export class Poller {
       );
       out.rows = summary.rows;
       out.truncated = summary.truncated;
-      await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows });
+      await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows, ingested: out.ingested, skipped: out.skipped });
       return out;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await finishSyncLog(this.deps.pool, logId, { status: 'error', rows: out.rows, error: message });
+      await finishSyncLog(this.deps.pool, logId, {
+        status: 'error',
+        rows: out.rows,
+        ingested: out.ingested,
+        skipped: out.skipped,
+        error: message,
+      });
       this.deps.log.error({ dataset, logSource, err: message, durationMs: Date.now() - started }, 'window pull failed');
       throw err;
     }
