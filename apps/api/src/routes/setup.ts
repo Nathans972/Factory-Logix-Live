@@ -57,7 +57,7 @@ export async function registerSetupRoutes(app: FastifyInstance, ctx: AppContext)
       if (!user) throw conflict('setup has already been completed');
       req.auth = user;
       await audit(req, 'setup.admin_created', 'user', user.id, null, { username: user.username, role: user.role });
-      await setSessionCookie(reply, user, ctx.env.sessionSecret);
+      await setSessionCookie(reply, user, 0, ctx.env.sessionSecret); // a new user starts at session version 0
       return { user };
     },
   );

@@ -7,6 +7,11 @@ export const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 export interface SessionPayload {
   userId: number;
   role: Role;
+  /**
+   * The user's `session_version` when the cookie was signed; the cookie only counts while the two still
+   * match. Cookies signed before session versions existed carry none and count as version 0.
+   */
+  sessionVersion?: number;
 }
 
 /** viewer < manager < admin */
@@ -25,7 +30,7 @@ function key(secret: string): Uint8Array {
 }
 
 export async function signSession(payload: SessionPayload, secret: string): Promise<string> {
-  return new SignJWT({ role: payload.role })
+  return new SignJWT({ role: payload.role, sv: payload.sessionVersion })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(String(payload.userId))
     .setIssuedAt()
@@ -38,8 +43,10 @@ export async function verifySession(token: string, secret: string): Promise<Sess
     const { payload } = await jwtVerify(token, key(secret), { algorithms: ['HS256'] });
     const userId = Number(payload.sub);
     const role = payload.role as Role | undefined;
+    const sessionVersion = payload.sv as number | undefined;
     if (!Number.isFinite(userId) || !role || !(role in ROLE_RANK)) return null;
-    return { userId, role };
+    if (sessionVersion !== undefined && !Number.isInteger(sessionVersion)) return null;
+    return { userId, role, sessionVersion };
   } catch {
     return null;
   }

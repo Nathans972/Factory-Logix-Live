@@ -401,7 +401,7 @@ PostgreSQL. Names are suggestions; keep the semantics. `hour_cells`, `unit_steps
 - `key` PK, `value` jsonb, `updated_by`, `updated_at`  (see section 11)
 
 **users**
-- `id`, `username` unique, `password_hash` (argon2 or bcrypt), `role` enum('admin','manager','viewer'), `active`, `created_at`, `last_login_at`
+- `id`, `username` unique, `password_hash` (argon2 or bcrypt), `role` enum('admin','manager','viewer'), `active`, `created_at`, `last_login_at`, `session_version` (bumped by logout, password reset and deactivation to end the user's sessions)
 
 **audit_log**
 - `id`, `at`, `user_id`, `action`, `entity`, `entity_id`, `before` jsonb, `after` jsonb
@@ -750,6 +750,7 @@ Route `/admin`. Admin role only unless noted.
 ### 10.8 Users
 
 - Create/disable users, set roles, reset passwords. First-run setup creates the initial admin.
+- Disabling a user or resetting their password ends every session they have; so does logging out.
 
 ### 10.9 Sync health
 

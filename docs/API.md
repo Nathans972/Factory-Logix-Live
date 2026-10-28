@@ -6,6 +6,8 @@ and `engine-types.ts`). The web app's `DataSource` interface (`apps/web/src/data
 this contract one-to-one so the GitHub Pages demo (mock) and the real backend are interchangeable.
 
 Auth: session cookie (`fld_session`, httpOnly, signed JWT). Roles: `viewer` < `manager` < `admin`.
+The cookie carries the user's session version and only counts while it matches `users.session_version`:
+logging out, an admin password reset and deactivation bump it, which ends every session the user has.
 Unauthenticated requests to protected routes return `401 {error:'unauthorized'}`; insufficient role returns `403`.
 Validation errors return `400 {error:'bad_request', message, issues?}`.
 
@@ -17,7 +19,7 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | GET | `/api/setup/status` | none | | `SetupStatus` |
 | POST | `/api/setup/admin` | none (only while no users exist) | `SetupAdminRequest` | `AuthMe` (logs in; `409` once a user exists; at most 10 a minute per client address, then `429`) |
 | POST | `/api/auth/login` | none | `LoginRequest` | `AuthMe` |
-| POST | `/api/auth/logout` | any | | `OkResponse` |
+| POST | `/api/auth/logout` | any | | `OkResponse` (ends every session of the logged-in user, on every device, not only this browser's cookie) |
 | GET | `/api/auth/me` | none | | `AuthMe` (`user:null` when not logged in) |
 | POST | `/api/tv/register` | none | `TvRegisterRequest` | `TvState` (creates display row w/ pairing code if new: at most 10 new a minute per client address, then `429`; first deletes unclaimed displays not seen for a day, and all but the 1,000 most recently seen) |
 | GET | `/api/tv/:token/state` | none | | `TvState` (also records heartbeat `last_seen_at`) |
