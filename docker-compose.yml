@@ -33,7 +33,13 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3001"
-      DATABASE_URL: postgres://${POSTGRES_USER:-fld}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-fld}
+      # The database login goes in as parts, not as one postgres:// URL: the api builds the URL
+      # itself and percent-encodes the user and password, so a / ? # or @ in the password
+      # (openssl rand -base64, a password manager) cannot break it.
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-fld}
+      POSTGRES_USER: ${POSTGRES_USER:-fld}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
       PLANT_TIMEZONE: ${PLANT_TIMEZONE:-America/New_York}
@@ -59,7 +65,11 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER:-fld}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-fld}
+      # As parts, not as a URL, for the same reason as the api.
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-fld}
+      POSTGRES_USER: ${POSTGRES_USER:-fld}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       PLANT_TIMEZONE: ${PLANT_TIMEZONE:-America/New_York}
       LOG_LEVEL: ${LOG_LEVEL:-info}

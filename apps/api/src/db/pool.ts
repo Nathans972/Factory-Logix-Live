@@ -67,6 +67,26 @@ export async function pingDb(db: Db): Promise<boolean> {
   }
 }
 
+/**
+ * Startup: wait until the database answers. Every failed attempt is logged with its reason, so a
+ * wrong password or host shows up in the log instead of looking like a database still starting.
+ */
+export async function waitForDb(db: Db, log: PoolWarnLogger, attempts = 30, delayMs = 2000): Promise<void> {
+  let reason = '';
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await db.query('SELECT 1');
+      return;
+    } catch (err) {
+      // A refused connection to "localhost" (both ::1 and 127.0.0.1) has a code but no message.
+      reason = err instanceof Error ? err.message || (err as NodeJS.ErrnoException).code || err.name : String(err);
+    }
+    log.warn({ err: reason }, `database not reachable yet (attempt ${attempt}/${attempts})`);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  throw new Error(`database is not reachable: ${reason}`);
+}
+
 /** Postgres unique-violation. */
 export function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505';
