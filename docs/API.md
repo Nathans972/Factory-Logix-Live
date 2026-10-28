@@ -82,6 +82,8 @@ Each message: `event: <type>` + `data: <SseEvent JSON>`. A `heartbeat` is sent e
 The API emits `data_updated` when the collector `NOTIFY`s on Postgres channel `fld_data_updated`
 (payload: JSON `{hours:[...]}`), `display_updated` after any display change, `sync_health` when the
 collector's health state changes, and `settings_updated` after settings/mapping/shift/break changes.
+The stream needs no login, so `display_updated` carries only `display_id`, never a TV's
+`device_token` (the token is the only credential the `/api/tv/*` endpoints check).
 
 ## Collector control (Postgres NOTIFY channel `fld_control`)
 

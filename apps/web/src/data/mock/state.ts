@@ -479,8 +479,8 @@ export class MockStore {
     this.emit({ type: 'data_updated', at: this.now(), hours });
   }
 
-  emitDisplayUpdated(display_id: number, device_token?: string): void {
-    this.emit({ type: 'display_updated', at: this.now(), display_id, device_token });
+  emitDisplayUpdated(display_id: number): void {
+    this.emit({ type: 'display_updated', at: this.now(), display_id });
   }
 
   emitSettingsUpdated(): void {
@@ -753,7 +753,7 @@ export class MockStore {
         };
         this.displays.push(display);
         rec = { device_token, display_id: display.id, registered_at: now, auto_claim: true };
-        this.emitDisplayUpdated(display.id, device_token);
+        this.emitDisplayUpdated(display.id);
       }
       this.devices.set(device_token, rec);
     }
@@ -775,7 +775,7 @@ export class MockStore {
         d.job_number = FEATURED_JOB;
         d.group_operators = false;
         this.audit('claim', 'display', String(d.id), null, d);
-        this.emitDisplayUpdated(d.id, device_token);
+        this.emitDisplayUpdated(d.id);
       }
       rec.auto_claim = false;
     }

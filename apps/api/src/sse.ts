@@ -56,13 +56,9 @@ export function notificationToEvent(channel: string, payload: string | undefined
         delayed: Boolean(data.delayed),
       };
     case 'fld_display_updated': {
+      // Only the id: a device_token in the payload must not reach the unauthenticated stream.
       const id = Number(data.display_id ?? data.id);
-      return {
-        type: 'display_updated',
-        at: now,
-        display_id: Number.isFinite(id) ? id : 0,
-        device_token: typeof data.device_token === 'string' ? data.device_token : undefined,
-      };
+      return { type: 'display_updated', at: now, display_id: Number.isFinite(id) ? id : 0 };
     }
     default:
       return null;

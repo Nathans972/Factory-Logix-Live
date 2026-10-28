@@ -13,7 +13,7 @@ export async function registerTvRoutes(app: FastifyInstance, ctx: AppContext): P
     const row = existing ?? (await insertDisplay(ctx.db, body.device_token));
     if (!existing) {
       ctx.log.info({ display_id: row.id, pairing_code: row.pairing_code }, 'registered new display');
-      ctx.sse.broadcast({ type: 'display_updated', at: Date.now(), display_id: row.id, device_token: row.device_token });
+      ctx.sse.broadcast({ type: 'display_updated', at: Date.now(), display_id: row.id });
     }
     return buildTvState(ctx.db, row, adminUrlFor(req), { touch: Boolean(existing), log: req.log });
   });

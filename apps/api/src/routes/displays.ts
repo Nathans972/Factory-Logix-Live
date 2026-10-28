@@ -33,7 +33,7 @@ export async function registerDisplayRoutes(app: FastifyInstance, ctx: AppContex
     if (!updated) throw notFound('unknown display');
     const display = mapDisplay(updated, settings.poll_interval_seconds);
     await audit(req, 'display.job_changed', 'display', id, before, display);
-    ctx.sse.broadcast({ type: 'display_updated', at: Date.now(), display_id: id, device_token: updated.device_token });
+    ctx.sse.broadcast({ type: 'display_updated', at: Date.now(), display_id: id });
     return display;
   });
 }
