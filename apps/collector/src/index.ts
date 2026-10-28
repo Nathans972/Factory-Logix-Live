@@ -2,8 +2,9 @@
  * Collector service entry point (spec 3.1, 4.x).
  *
  * One async loop: poll FactoryLogix -> ingest -> recompute hour cells -> notify, plus the
- * nightly standards job and the historical backfill. Nothing in here is allowed to kill the
- * process: every iteration is wrapped, errors are logged and the loop continues.
+ * nightly standards job and the historical backfill, which hold up the polls while they run
+ * (see `whileBusy`). Nothing in here is allowed to kill the process: every iteration is
+ * wrapped, errors are logged and the loop continues.
  */
 import { readFileSync } from 'node:fs';
 import { hourStartUtc, nextLocalTime, utcToLocalParts } from '@fld/engine';
@@ -23,7 +24,7 @@ import { ODataError } from './odata/client.js';
 import { connectionSavedAt, loadConfig, loginRefusedMessage, type CollectorConfig } from './settings.js';
 import { ODataSource } from './sources/ODataSource.js';
 import { Backfill } from './sync/backfill.js';
-import { CircuitBreaker, type BreakerSnapshot } from './sync/breaker.js';
+import { CircuitBreaker, isDelayed, type BreakerSnapshot } from './sync/breaker.js';
 import { Poller, type PollOutcome } from './sync/poller.js';
 import { loadSyncState, recordSyncFailure, recordSyncSuccess } from './sync/state.js';
 
@@ -297,6 +298,8 @@ class Collector {
       configured: true,
       force: true,
     });
+    // Counted from this poll: after a standards recompute longer than that, the next poll goes out at once.
+    const nextPollAt = Date.now() + this.breaker.nextDelayMs(breakerOpts);
 
     try {
       await this.maybeRecomputeStandards(settings, mapping);
@@ -307,8 +310,7 @@ class Collector {
 
     // Refused: the next pass waits for the connection to be saved again, with no backfill either.
     if (this.refusedLogin) return;
-    const delay = this.breaker.nextDelayMs(breakerOpts);
-    await this.idle(Date.now() + delay, settings, mapping, intervalMs);
+    await this.idle(nextPollAt, settings, mapping, intervalMs);
   }
 
   /**
@@ -467,13 +469,16 @@ class Collector {
         return;
       case 'recompute_standards': {
         if (!settings) return;
-        const result = await this.standards.run({
-          settings,
-          mapping: this.config?.mapping ?? null,
-          now: Date.now(),
-          productNumber: command.product_number ?? null,
-          since: null,
-        });
+        const activity = command.product_number ? `recomputing the standards of ${command.product_number}` : 'recomputing the standards';
+        const result = await this.whileBusy(activity, () =>
+          this.standards.run({
+            settings,
+            mapping: this.config?.mapping ?? null,
+            now: Date.now(),
+            productNumber: command.product_number ?? null,
+            since: null,
+          }),
+        );
         // last_standards_recompute_at is the nightly job's cutoff: a run limited to one product must
         // not move it, or every other product's rows since the last full run are skipped tonight.
         // Nor does it end a failed nightly run: the other products' StdHr is still stale.
@@ -511,13 +516,15 @@ class Collector {
     let result: StandardsRunResult;
     try {
       const state = await this.health.load();
-      result = await this.standards.run({
-        settings,
-        mapping,
-        now,
-        productNumber: null,
-        since: state?.last_standards_recompute_at ?? null,
-      });
+      result = await this.whileBusy('recomputing the standards', () =>
+        this.standards.run({
+          settings,
+          mapping,
+          now,
+          productNumber: null,
+          since: state?.last_standards_recompute_at ?? null,
+        }),
+      );
       await this.health.setLastStandardsRecompute(now);
     } catch (err) {
       await this.standardsFailed(settings, err, Date.now() - now);
@@ -605,6 +612,46 @@ class Collector {
   }
 
   /**
+   * Run a job that holds up the loop, and with it the polls, for as long as it takes: a standards
+   * recompute or a backfill chunk, many minutes in a large plant. The heartbeat goes on every 30 s
+   * meanwhile: the API calls the collector stopped once it is older than 3 poll intervals.
+   */
+  private async whileBusy<T>(activity: string, job: () => Promise<T>): Promise<T> {
+    let beat: Promise<void> | null = null;
+    const timer = setInterval(() => {
+      beat ??= this.reportBusy(activity)
+        .catch((err) => this.log.error({ err: errorMessage(err) }, 'could not write collector_state heartbeat'))
+        .finally(() => {
+          beat = null;
+        });
+    }, HEARTBEAT_SLICE_MS);
+    try {
+      return await job();
+    } finally {
+      clearInterval(timer);
+      await beat;
+    }
+  }
+
+  /** The heartbeat during `whileBusy`. Once the data is delayed, Sync health also says what holds up the polls. */
+  private async reportBusy(activity: string): Promise<void> {
+    const settings = this.settings;
+    if (!settings) return;
+    const now = Date.now();
+    const intervalMs = settings.poll_interval_seconds * 1_000;
+    const snapshot = this.healthSnapshot();
+    const busy = `the collector is ${activity}; polling resumes when that is done`;
+    await this.health.report({
+      snapshot: isDelayed(snapshot.lastSuccessAt, now, intervalMs) ? { ...snapshot, lastError: joinErrors(snapshot.lastError, busy) } : snapshot,
+      now,
+      intervalMs,
+      threshold: settings.breaker_failure_threshold,
+      configured: this.configured,
+      force: true,
+    });
+  }
+
+  /**
    * Wait until the next poll while keeping the heartbeat alive and using the idle time for
    * backfill chunks (spec 4.7).
    */
@@ -626,7 +673,8 @@ class Collector {
         if (this.backfill.isActive()) {
           if (!refused && this.backfill.shouldRun(settings, now) && until - now > 5_000) {
             // One chunk per pass: a downloaded day, the standards recompute, or a re-colored day.
-            const result = await this.backfill.tick(mapping, settings, Date.now()).catch((err) => {
+            const backfill = this.backfill;
+            const result = await this.whileBusy('processing a backfill chunk', () => backfill.tick(mapping, settings, Date.now())).catch((err) => {
               this.log.error({ err: errorMessage(err) }, 'backfill chunk failed');
               return null;
             });

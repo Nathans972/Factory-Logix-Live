@@ -251,6 +251,7 @@ Rules:
 - After `settings.breaker_failure_threshold` (default 3) consecutive failed polls (HTTP error, timeout), the collector enters backoff: retry after 2× interval, then 4×, up to `settings.breaker_max_backoff_minutes` (default 10). A successful poll resets it.
 - A refused login (HTTP 401, or 403 while nothing else came back that poll) is not retried: it does not heal by itself, and repeated failed logins can lock the FactoryLogix account. The collector stops polling with it (no backfill chunk, no `$metadata` either), says so in Sync health, and polls again once the FactoryLogix connection is saved again (any save, including one that keeps the password) or the collector restarts. A refused backfill chunk stops the backfill until the next poll.
 - Health state (`ok`, `degraded`, `down`, last success time) is exposed by the API and shown in admin and as the "data delayed" banner on TV/portal when the last successful poll is older than 3× the poll interval.
+- No poll goes out while a standards recompute or a backfill chunk runs; the next one goes out as soon as it is done. The collector's heartbeat goes on every 30 s meanwhile, so it is not shown as stopped, and once the data is delayed the health state's last error says what the collector is busy with.
 
 ### 4.7 Historical backfill
 
