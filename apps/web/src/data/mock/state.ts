@@ -3,7 +3,8 @@
  *
  * `MockStore` owns the simulated world (generated lazily on first use), the admin state
  * that reviewers can edit (and that resets on reload), and one synchronous method per
- * `DataSource` operation. `MockDataSource` is a thin async wrapper around it.
+ * `DataSource` operation. `MockDataSource` is a thin async wrapper around it. The displays
+ * are also mirrored to the demo's other open tabs (`./tabs.ts`).
  *
  * Every view is assembled the same way the real API would assemble it: raw records in,
  * engine functions out. No calculation is reimplemented here.
@@ -152,11 +153,17 @@ export function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
-interface DeviceRecord {
+export interface DeviceRecord {
   device_token: string;
   display_id: number;
   registered_at: UtcMs;
   auto_claim: boolean;
+}
+
+/** A display as the demo's tabs share it (`./tabs.ts`): null once deleted, with the TVs bound to it. */
+export interface SharedDisplay {
+  display: Display | null;
+  devices: DeviceRecord[];
 }
 
 export class MockStore {
@@ -211,6 +218,8 @@ export class MockStore {
 
   private listeners = new Set<(e: SseEvent) => void>();
   private lastSyncStatus: 'ok' | 'degraded' = 'ok';
+  /** Set by `./tabs.ts`: told about every display change so the demo's other tabs get it too. */
+  onDisplayChanged: ((display_id: number) => void) | null = null;
 
   readonly cells = new CellCache({
     steps: () => this.steps,
@@ -481,6 +490,7 @@ export class MockStore {
 
   emitDisplayUpdated(display_id: number): void {
     this.emit({ type: 'display_updated', at: this.now(), display_id });
+    this.onDisplayChanged?.(display_id);
   }
 
   emitSettingsUpdated(): void {
@@ -1348,6 +1358,42 @@ export class MockStore {
     }
     this.audit('delete', 'display', String(id), before, null);
     this.emitDisplayUpdated(id);
+  }
+
+  /** One display and the TVs bound to it, for the demo's other tabs (`./tabs.ts`). */
+  sharedDisplay(id: number): SharedDisplay {
+    return {
+      display: this.displayById(id),
+      devices: [...this.devices.values()].filter((r) => r.display_id === id),
+    };
+  }
+
+  get nextDisplayId(): number {
+    return this.nextIds.display ?? 1;
+  }
+
+  /**
+   * Takes on displays another demo tab changed (`./tabs.ts`). Announced to this tab's pages
+   * only, not back to the other tabs: they have them already.
+   */
+  adoptDisplays(changes: (SharedDisplay & { id: number })[], next_display_id: number): void {
+    this.ensureWorld();
+    for (const { id, display, devices } of changes) {
+      const idx = this.displays.findIndex((d) => d.id === id);
+      if (display === null) {
+        if (idx >= 0) this.displays.splice(idx, 1);
+      } else if (idx >= 0) {
+        this.displays[idx] = display;
+      } else {
+        this.displays.push(display);
+      }
+      for (const [token, rec] of this.devices) {
+        if (rec.display_id === id) this.devices.delete(token);
+      }
+      for (const rec of devices) this.devices.set(rec.device_token, rec);
+    }
+    this.nextIds.display = Math.max(this.nextDisplayId, next_display_id);
+    for (const { id } of changes) this.emit({ type: 'display_updated', at: this.now(), display_id: id });
   }
 
   // ------------------------------------------------------------ shifts/breaks

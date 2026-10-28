@@ -10,7 +10,7 @@
  */
 import { hourStartUtc } from '@fld/engine';
 import { DISPLAY_JOB_CHANGE_MS, type MockStore } from '../state';
-import { FEATURED_JOB } from './world';
+import { FEATURED_JOB, SECONDARY_JOB } from './world';
 
 const HOUR = 3_600_000;
 const TICK_MS = 5_000;
@@ -78,11 +78,13 @@ export function startLiveSimulation(store: MockStore): DemoControl {
     unref(hb);
     timers.push(hb);
 
-    // Scripted: display 3 is re-pointed at the featured job ~3 minutes after page load.
+    // Scripted: display 3 is re-pointed at the featured job ~3 minutes after page load. Only from
+    // its seeded job: the displays are shared between tabs (../tabs.ts), so another tab may have
+    // run this already or a reviewer may have picked a job for it since.
     const jobChange = setTimeout(() => {
       try {
         const display = store.displays.find((d) => d.id === 3);
-        if (display && display.job_number !== FEATURED_JOB) {
+        if (display && display.job_number === SECONDARY_JOB) {
           store.updateDisplay(3, { job_number: FEATURED_JOB });
         }
       } catch {
