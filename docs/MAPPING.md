@@ -293,8 +293,9 @@ What each one means:
   can sanity-check they look like real work times (seconds to tens of minutes), not zero or
   wildly large.
 - **Timestamp skew** — the newest mapped timestamp in the sample compared to the server's own
-  clock, in minutes. A large skew usually means the wrong `fl_timestamp_mode` or the wrong
-  plant time zone.
+  clock, in minutes. The sample is read the way the collector reads it, with the saved
+  `fl_timestamp_mode` and plant time zone, so a large skew usually means one of them is wrong;
+  fix it in Admin > Connection, save, and run the preview again.
 
 Warnings you may see, and what to do about them:
 

@@ -2,6 +2,7 @@
  * OData helpers: `$metadata` (EDMX) parsing, preview query building and the derived checks shown by
  * the mapping wizard (spec 10.7 step 4).
  */
+import { localToUtc } from '@fld/engine';
 import { XMLParser } from 'fast-xml-parser';
 import {
   DATASET_SPECS,
@@ -9,6 +10,7 @@ import {
   edmTypeToKind,
   type DatasetMapping,
   type DatasetName,
+  type FlTimestampMode,
   type MappingPreviewResult,
   type ODataEntityField,
   type ODataEntitySet,
@@ -252,13 +254,53 @@ export function buildPreviewUrl(baseUrl: string, dataset: DatasetName, mapping: 
   return joinUrl(baseUrl, buildPreviewPath(dataset, mapping, top));
 }
 
-function parseTs(value: unknown): number | null {
+/**
+ * `fl_timestamp_mode` + plant zone (spec 5.5), so the checks read FactoryLogix timestamps the way the
+ * collector does: an offset-less value is plant wall-clock time in `local_no_offset` mode, else UTC.
+ */
+export interface PreviewTimestampOptions {
+  mode?: FlTimestampMode;
+  timezone?: string;
+}
+
+const NAIVE_RE = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,7}))?)?)?$/;
+const OFFSET_RE = /(?:Z|z|[+-]\d{2}:?\d{2})$/;
+
+/** The instant an offset-less value names; `wallMs` is its wall-clock time counted as if it were UTC. */
+function wallClockToUtc(wallMs: number, opts: PreviewTimestampOptions): number | null {
+  if (opts.mode !== 'local_no_offset' || !opts.timezone) return wallMs;
+  const d = new Date(wallMs);
+  if (Number.isNaN(d.getTime())) return null;
+  const local = {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+    second: d.getUTCSeconds(),
+  };
+  return localToUtc(opts.timezone, local) + d.getUTCMilliseconds();
+}
+
+function parseTs(value: unknown, opts: PreviewTimestampOptions): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return value;
-  const raw = String(value);
-  // OData v2/v3 "/Date(1700000000000)/"
+  const raw = String(value).trim();
+  // OData v2/v3 "/Date(1700000000000)/"; with no offset the number is the wall clock counted as if it were UTC
   const legacy = /^\/Date\((-?\d+)([+-]\d+)?\)\/$/.exec(raw);
-  if (legacy) return Number(legacy[1]);
+  if (legacy) return legacy[2] ? Number(legacy[1]) : wallClockToUtc(Number(legacy[1]), opts);
+  if (OFFSET_RE.test(raw)) {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  // Not Date.parse: it reads an offset-less date-time in the API process's own zone.
+  const naive = NAIVE_RE.exec(raw);
+  if (naive) {
+    const [, year, month, day, hour = '0', minute = '0', second = '0', frac = ''] = naive;
+    const ms = frac ? Number(frac.padEnd(3, '0').slice(0, 3)) : 0;
+    const wallMs = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), ms);
+    return wallClockToUtc(wallMs, opts);
+  }
   const parsed = Date.parse(raw);
   return Number.isNaN(parsed) ? null : parsed;
 }
@@ -278,6 +320,7 @@ export function computePreviewChecks(
   mapping: DatasetMapping,
   rows: Record<string, unknown>[],
   now: number,
+  timestamps: PreviewTimestampOptions = {},
 ): MappingPreviewResult['checks'] {
   const warnings: string[] = [];
   const f = mapping.fields ?? {};
@@ -310,8 +353,8 @@ export function computePreviewChecks(
       const completeRaw = completeField ? row[completeField] : null;
       if (isPresent(startRaw)) startPresent += 1;
       if (isPresent(completeRaw)) completePresent += 1;
-      const start = parseTs(startRaw);
-      const complete = parseTs(completeRaw);
+      const start = parseTs(startRaw, timestamps);
+      const complete = parseTs(completeRaw, timestamps);
       if (start !== null && complete !== null && complete >= start && sample_durations_minutes.length < 20) {
         sample_durations_minutes.push(Math.round(((complete - start) / 60_000) * 100) / 100);
       }
@@ -335,7 +378,7 @@ export function computePreviewChecks(
     for (const row of rows) {
       const v = row[tsField];
       if (!isPresent(v)) continue;
-      const ms = parseTs(v);
+      const ms = parseTs(v, timestamps);
       if (ms === null) {
         unparsed += 1;
         continue;
@@ -380,6 +423,7 @@ export async function runPreview(
   creds: ODataCredentials,
   dataset: DatasetName,
   mapping: DatasetMapping,
+  timestamps: PreviewTimestampOptions,
   timeoutMs = 20_000,
   now = Date.now(),
 ): Promise<MappingPreviewResult> {
@@ -416,6 +460,6 @@ export async function runPreview(
     error,
     query: url,
     rows,
-    checks: computePreviewChecks(dataset, mapping, rows, now),
+    checks: computePreviewChecks(dataset, mapping, rows, now, timestamps),
   };
 }

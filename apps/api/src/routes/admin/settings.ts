@@ -128,6 +128,8 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
     const datasetMapping = parseWith(datasetMappingSchema, mappingRecord[dataset]);
     const creds = await getCredentials(ctx.db);
     if (!creds) throw badRequest('no FactoryLogix connection is configured');
-    return runPreview(creds, dataset, datasetMapping, await timeoutMs());
+    const { fl_timestamp_mode, plant_timezone } = await getSettings(ctx.db);
+    const timestamps = { mode: fl_timestamp_mode, timezone: plant_timezone };
+    return runPreview(creds, dataset, datasetMapping, timestamps, await timeoutMs());
   });
 }

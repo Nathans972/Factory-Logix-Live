@@ -1,4 +1,4 @@
-import { EXAMPLE_MAPPING, type DatasetMapping } from '@fld/shared';
+import { EXAMPLE_MAPPING, type DatasetMapping, type FlTimestampMode } from '@fld/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildPreviewPath,
@@ -252,5 +252,41 @@ describe('computePreviewChecks', () => {
     expect(checks.distinct_operators).toBeNull();
     expect(checks.start_present_pct).toBeNull();
     expect(checks.complete_present_pct).toBeNull();
+  });
+
+  describe('reads timestamps per fl_timestamp_mode and the plant zone, whatever the process zone', () => {
+    // 11:30Z, half an hour before "now", is 07:30 in New York (EDT).
+    const checksFor = (value: string, mode: FlTimestampMode) =>
+      computePreviewChecks('work_orders', EXAMPLE_MAPPING.work_orders, [{ ModifiedDate: value }], now, {
+        mode,
+        timezone: 'America/New_York',
+      });
+    const skewWarned = (checks: ReturnType<typeof computePreviewChecks>) => checks.warnings.some((w) => w.includes('timestamp mode'));
+
+    it('local_no_offset: an offset-less value is plant wall-clock time', () => {
+      for (const value of ['2024-05-01T07:30:00', '2024-05-01 07:30:00.000', `/Date(${Date.UTC(2024, 4, 1, 7, 30)})/`]) {
+        const checks = checksFor(value, 'local_no_offset');
+        expect(checks.timestamp_skew_minutes, value).toBe(30);
+        expect(skewWarned(checks), value).toBe(false);
+      }
+    });
+
+    it('utc and offset_present: an offset-less value is UTC, so plant wall-clock time is flagged', () => {
+      for (const mode of ['utc', 'offset_present'] as const) {
+        for (const value of ['2024-05-01T07:30:00', `/Date(${Date.UTC(2024, 4, 1, 7, 30)})/`]) {
+          const checks = checksFor(value, mode);
+          expect(checks.timestamp_skew_minutes, `${mode} ${value}`).toBe(270);
+          expect(skewWarned(checks), `${mode} ${value}`).toBe(true);
+        }
+      }
+    });
+
+    it('a value with an offset is the instant it names in every mode', () => {
+      for (const mode of ['utc', 'offset_present', 'local_no_offset'] as const) {
+        for (const value of ['2024-05-01T07:30:00-04:00', '2024-05-01T11:30:00Z', `/Date(${Date.UTC(2024, 4, 1, 11, 30)}+0000)/`]) {
+          expect(checksFor(value, mode).timestamp_skew_minutes, `${mode} ${value}`).toBe(30);
+        }
+      }
+    });
   });
 });
