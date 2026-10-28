@@ -3,10 +3,52 @@
  * hard request timeout, tolerant response parsing (v4 `value`, v2/v3 `d.results` / `d`)
  * and `@odata.nextLink` / `__next` server-driven paging.
  */
+import http from 'node:http';
+import https from 'node:https';
 import { describeFetchError, type ODataMetadata } from '@fld/shared';
 import { parseEdmx } from './metadata.js';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * `fetch`, but it also reaches the ports fetch turns down. Node's fetch keeps the Fetch standard's "bad port"
+ * list (1, 5060, 6000, 6665-6669, 10080 and about 70 more, a browser's guard against cross-protocol requests)
+ * and rejects them at once with "fetch failed", cause "bad port", without connecting: a FactoryLogix on one
+ * could never be polled, and one that is down there would never read as refused. Those requests go out
+ * through node:http(s) instead (the GETs here have no body; a redirect is not followed and shows as its HTTP
+ * status), and fail the way fetch does: with the signal's reason when it fires, else a "fetch failed" with
+ * Node's error as `cause`, which describeFetchError reads.
+ */
+async function fetchAnyPort(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if (!(err instanceof TypeError) || (err.cause as Error | undefined)?.message !== 'bad port') throw err;
+  }
+  const signal = init.signal ?? undefined;
+  try {
+    const target = new URL(url);
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      // The body is read as it comes, so ask for it without a content coding (fetch would undo one).
+      const headers = { ...Object.fromEntries(new Headers(init.headers)), 'accept-encoding': 'identity' };
+      const client = target.protocol === 'https:' ? https : http;
+      const req = client.request(target, { method: init.method ?? 'GET', headers, signal }, resolve);
+      req.on('error', reject);
+      req.end();
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of res) chunks.push(chunk as Buffer);
+    const headers = new Headers();
+    for (let i = 0; i + 1 < res.rawHeaders.length; i += 2) headers.append(res.rawHeaders[i], res.rawHeaders[i + 1]);
+    const status = res.statusCode ?? 0;
+    // A Response with one of these statuses may not have a body, even an empty one.
+    const body = status === 204 || status === 205 || status === 304 ? null : Buffer.concat(chunks);
+    return new Response(body, { status, statusText: res.statusMessage, headers });
+  } catch (err) {
+    if (signal?.aborted) throw signal.reason;
+    throw new TypeError('fetch failed', { cause: err });
+  }
+}
 
 export interface ODataClientOptions {
   baseUrl: string;
@@ -106,7 +148,7 @@ export class ODataClient {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
     this.authHeader = `Basic ${Buffer.from(`${opts.username}:${opts.password}`, 'utf8').toString('base64')}`;
     this.timeoutSeconds = opts.timeoutSeconds;
-    this.fetchImpl = opts.fetchImpl ?? ((input, init) => fetch(input, init));
+    this.fetchImpl = opts.fetchImpl ?? fetchAnyPort;
     this.userAgent = opts.userAgent ?? 'fld-collector/1.0';
   }
 
