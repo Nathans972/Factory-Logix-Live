@@ -160,6 +160,16 @@ class Collector {
     this.warnedUnconfigured = false;
 
     const mapping = this.config?.mapping as MappingConfig;
+
+    // A restart must not reset the backoff: when the hydrated breaker is still open, the first
+    // poll waits until it closes (heartbeat and health reports keep going meanwhile).
+    if (this.pollCount === 0 && this.breaker.isOpen(Date.now())) {
+      const until = this.breaker.openUntil as number;
+      this.log.info({ open_until: new Date(until).toISOString() }, 'circuit breaker still open after restart; waiting before the first poll');
+      await this.idle(until, settings, mapping, intervalMs);
+      return;
+    }
+
     const now = Date.now();
     await this.source?.init();
 
