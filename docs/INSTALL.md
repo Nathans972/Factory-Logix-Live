@@ -95,8 +95,8 @@ settings, and the FactoryLogix connection itself) is configured later in the adm
 docker compose up -d
 ```
 
-This builds and starts four containers: `db` (PostgreSQL 16 + TimescaleDB), `api`, `collector`,
-and `web`. The API applies database migrations automatically on start; there is nothing to run
+This builds and starts four containers: `db` (PostgreSQL 16 + TimescaleDB 2.31.0, pinned in
+`docker-compose.yml` as `timescale/timescaledb:2.31.0-pg16`), `api`, `collector`, and `web`. The API applies database migrations automatically on start; there is nothing to run
 by hand.
 
 ## 7. Verify it is healthy

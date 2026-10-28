@@ -45,7 +45,7 @@ export async function listPins(
   }
   if (filter.activeOnly) clauses.push('(p.expires_at IS NULL OR p.expires_at > now())');
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-  const { rows } = await db.query<PinRow>(`${PIN_SQL} ${where} ORDER BY p.created_at DESC, p.id DESC`, params as any[]);
+  const { rows } = await db.query<PinRow>(`${PIN_SQL} ${where} ORDER BY p.created_at DESC, p.id DESC`, params);
   return rows.map(mapPin);
 }
 

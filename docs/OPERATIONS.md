@@ -71,6 +71,41 @@ there is no separate migration step to run by hand. Check `docker compose logs a
 upgrade to confirm migrations applied cleanly (`applying migration ...` / `database schema up
 to date`).
 
+### The database image
+
+The `db` service is pinned to an exact TimescaleDB release, `timescale/timescaledb:2.31.0-pg16`
+(TimescaleDB 2.31.0 on PostgreSQL 16), so a routine upgrade never changes the database version
+on its own. Until October 2026 it was `latest-pg16`; an install from before then may be running
+an older 2.x until it is upgraded as below.
+
+To move to a newer TimescaleDB release:
+
+1. Read the TimescaleDB release notes for the target version. Releases that aren't patch
+   releases can list extra steps.
+2. Take a backup (see [Backups](#backups)).
+3. In `docker-compose.yml`, change the tag to the new exact `2.x.y-pg16` tag from Docker Hub.
+   Keep `-pg16`: moving to a new PostgreSQL major version is a different, bigger upgrade.
+4. Pull the new image and restart the database on the same data volume:
+
+   ```bash
+   docker compose pull db
+   docker compose up -d db
+   ```
+
+5. Update the extension in each database that has it. The image installs it in your database,
+   `postgres` and `template1`. Use `psql -X`, so no `.psqlrc` loads TimescaleDB first:
+
+   ```bash
+   docker compose exec db sh -c 'for db in "$POSTGRES_DB" postgres template1; do psql -X -U "$POSTGRES_USER" -d "$db" -c "ALTER EXTENSION timescaledb UPDATE;"; done'
+   ```
+
+6. Check the version, then start the rest of the stack:
+
+   ```bash
+   docker compose exec db sh -c 'psql -X -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dx timescaledb"'
+   docker compose up -d
+   ```
+
 ## Logs
 
 ```bash

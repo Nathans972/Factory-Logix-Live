@@ -97,7 +97,6 @@ describe('simulated world', () => {
     const cold = new MockStore();
     cold.ensureWorld();
     const bootMs = Date.now() - t0;
-    // eslint-disable-next-line no-console
     console.log(
       `[demo] history: ${world.steps.length} steps, ${world.defects.length} defects, ` +
         `${world.generation_ms} ms generation, ${bootMs} ms cold boot ` +
@@ -140,7 +139,6 @@ describe('standards', () => {
       expect(std!.computed_std_hr, `${product} ${operation} computed`).not.toBeNull();
       const base = BASE_RATES[operation]!;
       const got = std!.computed_std_hr!;
-      // eslint-disable-next-line no-console
       console.log(`[demo] std ${product} ${operation}: ${got} (base ${base})`);
       expect(got).toBeGreaterThan(base * 0.65);
       expect(got).toBeLessThan(base * 1.35);

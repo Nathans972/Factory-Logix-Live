@@ -127,7 +127,7 @@ export async function updateDisplayRow(db: Db, id: number, patch: DisplayPatch):
   params.push(id);
   const { rows } = await db.query<DisplayRow>(
     `UPDATE displays SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING ${COLUMNS}`,
-    params as any[],
+    params,
   );
   return rows[0] ?? null;
 }

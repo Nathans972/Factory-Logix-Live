@@ -112,7 +112,7 @@ export async function updateUser(
   params.push(id);
   const { rows } = await db.query<UserRow>(
     `UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING ${PUBLIC_COLUMNS}`,
-    params as any[],
+    params,
   );
   return rows.length > 0 ? mapUser(rows[0]) : null;
 }

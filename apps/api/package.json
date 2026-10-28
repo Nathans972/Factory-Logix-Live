@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "echo no-lint-for-api",
+    "lint": "eslint .",
     "test": "vitest run --passWithNoTests",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
