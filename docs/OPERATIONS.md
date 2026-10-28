@@ -251,7 +251,9 @@ Then run `docker compose up -d`: a container takes its log settings when it is c
   failure up to 6 hours. Nothing is lost while it waits, because every re-pull covers the whole
   `late_data_hours` window, and it never counts against the main circuit breaker. It re-pulls
   only the data sources whose regular poll succeeded that cycle, so a failing defects data
-  source does not hold up the re-pull of unit steps.
+  source does not hold up the re-pull of unit steps. A window of more rows than one pull reads
+  (1,000 pages of `poll_page_size`) is read in several passes; one that cannot be read whole
+  counts as a failed re-pull, not a short one.
 
 ## The circuit breaker and "Data delayed" banner
 
@@ -324,6 +326,10 @@ On first run (and whenever run manually), the collector backfills `backfill_days
 - **Fixed range:** the first day of the range is saved when the backfill starts, and every
   later chunk counts from it, so a backfill that runs across midnight (or over several nights)
   still processes every day exactly once.
+- **Busy days:** a day with more rows than one pull reads (1,000 pages of `poll_page_size`) is
+  read in several passes, each from where the last one stopped, and counts as downloaded only
+  once all of it is read. A day that cannot be read whole (more rows with one timestamp than a
+  pass reads) shows the error on the backfill and is tried again; raise `poll_page_size`.
 - **Recoloring:** while days download, their hour cells get counts but no colors, because no
   standards exist yet. When the download finishes, the backfill shows status `recoloring`: it
   recomputes standards once, then recomputes the hour cells of every backfilled day again, one

@@ -198,7 +198,7 @@ describe('rows that change while a pull pages through them', () => {
       changed = true;
     });
 
-    const result = await poller.pullWindow('work_orders', workOrders as MappingConfig['work_orders'], settings, {
+    await poller.pullWindow('work_orders', workOrders as MappingConfig['work_orders'], settings, {
       from: firstDay,
       to: null,
       logSource: 'work_orders:backfill',
@@ -208,6 +208,5 @@ describe('rows that change while a pull pages through them', () => {
     expect(requests.every((r) => !(r.filter ?? '').includes(' lt '))).toBe(true);
     expect(read().has('J-0500')).toBe(true);
     expect(read().size).toBe(1200);
-    expect(result.truncated).toBe(false);
   });
 });

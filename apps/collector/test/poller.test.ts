@@ -381,6 +381,6 @@ describe('a data source with no watermark or timestamp', () => {
 
     const result = await pollerFor(source).pullWindow('work_orders', workOrders, settings, { from, to: from + 3 * 86_400_000, logSource: 'work_orders:backfill' });
 
-    expect(result).toMatchObject({ rows: 12_000, truncated: false });
+    expect(result).toMatchObject({ rows: 12_000 });
   });
 });

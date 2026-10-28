@@ -452,6 +452,9 @@ export class Poller {
    * moved up, so the resumed pull first looks for the last row the pass read. Found unchanged
    * within the first two pages, nothing behind it is stepped over; otherwise (more than a page of
    * rows ahead of it changed, or that row did) the pull reads again from the start of `req`.
+   *
+   * `complete` says the pull read to the end of its rows: no page cap stopped it and no rows were
+   * left moving. Otherwise the rest starts at the watermark it returns.
    */
   private async pullOrdered(
     keyFields: string[],
@@ -459,7 +462,7 @@ export class Poller {
     order: PullOrder,
     onRows: (rows: Record<string, unknown>[]) => Promise<void>,
     resume: ResumePoint | null = null,
-  ): Promise<PullSummary & { watermark: string | null; resume: ResumePoint | null }> {
+  ): Promise<PullSummary & { watermark: string | null; resume: ResumePoint | null; complete: boolean }> {
     let filter = resume ? resume.filter : (req.filter ?? null);
     let skip = resume?.skip ?? 0;
     /** The row a resumed pull must find again before it reads on; null once found. */
@@ -516,11 +519,11 @@ export class Poller {
           summary.truncated && summary.nextSkip !== null && last
             ? { filter, skip: Math.max(0, summary.nextSkip - req.pageSize), ...last }
             : null;
-        return { ...summary, rows, pages, watermark: tracker.serialize(), resume: stopped };
+        return { ...summary, rows, pages, watermark: tracker.serialize(), resume: stopped, complete: !summary.truncated };
       }
       if (again === from || pages >= req.maxPages) {
         this.deps.log.warn({ source: order.source, from: again }, 'rows kept moving during the pull; the next poll reads again from where they were');
-        return { ...summary, rows, pages, watermark: again, resume: null };
+        return { ...summary, rows, pages, watermark: again, resume: null, complete: false };
       }
       this.deps.log.info({ source: order.source, from: again }, 'rows moved during the pull; reading again from where they were');
       from = again;
@@ -651,21 +654,26 @@ export class Poller {
 
   /**
    * Pull one time window on a data source's primary timestamp (used by the late-data re-pull
-   * and by the backfill). A data source that carries no timestamp at all is pulled whole, under
-   * the same page cap as a window: unlike a poll's full pull, no later pull goes on from where it
-   * stopped. `to: null` leaves the window open at the end. `now` is the poll time when the window
-   * reaches the present.
+   * and by the backfill). A data source that carries no timestamp at all is pulled whole. `to:
+   * null` leaves the window open at the end. `now` is the poll time when the window reaches the
+   * present.
+   *
+   * No later pull goes on from where this one stops, so the page cap ends a pass, not the pull:
+   * the next pass reads on from the watermark the last one stopped at (a whole data source: from
+   * the row after the last one read), until the window is read to its end. A pass that gets no
+   * further (more rows with one timestamp than a pass reads; for a whole data source, a service
+   * that ignores `$skip`) fails the pull, so a window that was not read whole never counts as read.
    */
   async pullWindow(
     dataset: DatasetName,
     mapping: DatasetMapping,
     settings: Settings,
     opts: { from: number; to: number | null; now?: number; logSource?: string; touched?: number[] },
-  ): Promise<{ rows: number; ingested: number; skipped: number; truncated: boolean }> {
+  ): Promise<{ rows: number; ingested: number; skipped: number }> {
     const logSource = opts.logSource ?? `${dataset}:window`;
     const logId = await startSyncLog(this.deps.pool, logSource);
     const started = Date.now();
-    const out = { rows: 0, ingested: 0, skipped: 0, truncated: false };
+    const out = { rows: 0, ingested: 0, skipped: 0 };
     const plan = this.plan(dataset, mapping);
 
     try {
@@ -703,9 +711,47 @@ export class Poller {
         out.skipped += ingested.skipped;
         if (opts.touched) opts.touched.push(...ingested.touched);
       };
-      const summary = order ? await this.pullOrdered(mapping.key, pull, order, ingest) : await pullPages(this.source, pull, ingest);
-      out.rows = summary.rows;
-      out.truncated = summary.truncated;
+      const cap = `the page cap (${MAX_PAGES_WINDOW} pages of ${settings.poll_page_size})`;
+      if (order) {
+        /** The watermark the last pass stopped at; null for the first pass. */
+        let stoppedAt: string | null = null;
+        for (;;) {
+          const passFilter = stoppedAt === null ? filter : order.filterFrom(stoppedAt);
+          const summary = await this.pullOrdered(mapping.key, { ...pull, filter: passFilter }, order, ingest);
+          out.rows += summary.rows;
+          if (summary.complete) break;
+          const next = summary.watermark;
+          if (next === null) {
+            throw new Error(`${dataset}: ${cap} stopped the window pull, and no row it read has a ${order.field} to read on from`);
+          }
+          if (stoppedAt !== null && Date.parse(next) <= Date.parse(stoppedAt)) {
+            throw new Error(
+              `${dataset}: the window pull cannot get past ${order.field} ${stoppedAt}: more rows have it than ${cap} reads in one pass. Raise poll_page_size`,
+            );
+          }
+          this.deps.log.info({ dataset, logSource, from: next }, 'page cap reached; reading on from where the window pull stopped');
+          stoppedAt = next;
+        }
+      } else {
+        let skip = 0;
+        /** The first row of the last pass, as JSON: a service that ignores `$skip` sends it again. */
+        let lastFirst: string | null = null;
+        for (;;) {
+          let first = null as string | null;
+          const summary = await pullPages(this.source, { ...pull, startSkip: skip }, async (rows, page) => {
+            if (page === 0) {
+              first = JSON.stringify(rows[0] ?? null);
+              if (first === lastFirst) throw new Error(`${dataset}: ${cap} stopped the pull, and the next pass got the same rows again (the service ignores $skip)`);
+            }
+            await ingest(rows);
+          });
+          out.rows += summary.rows;
+          if (!summary.truncated || summary.nextSkip === null) break;
+          this.deps.log.info({ dataset, logSource, from_row: summary.nextSkip }, 'page cap reached; reading on from where the window pull stopped');
+          lastFirst = first;
+          skip = summary.nextSkip;
+        }
+      }
       await finishSyncLog(this.deps.pool, logId, { status: 'ok', rows: out.rows, ingested: out.ingested, skipped: out.skipped });
       return out;
     } catch (err) {

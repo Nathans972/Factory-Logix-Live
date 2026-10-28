@@ -172,13 +172,12 @@ describe('server-driven paging that honours $top', () => {
     const timestamps = new TimestampResolver({ mode: 'offset_present', timezone: 'UTC' });
     const poller = new Poller({ pool: db.pool, log, ingestor, timestamps }, source);
 
-    const result = await poller.pullWindow('unit_steps', unitSteps, settings, {
+    await poller.pullWindow('unit_steps', unitSteps, settings, {
       from: dayStart,
       to: dayStart + 86_400_000,
       logSource: 'unit_steps:backfill',
     });
 
-    expect(result.truncated).toBe(false);
     expect(seen.unit_steps?.length ?? 0).toBe(1200);
   });
 
