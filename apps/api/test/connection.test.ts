@@ -5,7 +5,7 @@ import type { AppContext } from '../src/context.js';
 import { signSession } from '../src/auth/session.js';
 import { decrypt, encrypt } from '../src/crypto.js';
 import { basicAuthHeader } from '../src/odata.js';
-import { sameServer } from '../src/services/connection.js';
+import { sameConnection } from '../src/services/connection.js';
 import { SseHub } from '../src/sse.js';
 
 vi.mock('../src/db/repo/settings.js', async (importOriginal) => ({
@@ -69,21 +69,27 @@ async function adminApi(db: ReturnType<typeof fakeDb>) {
   return (method: 'POST' | 'PUT', url: string, payload: Record<string, unknown>) => app.inject({ method, url, headers, payload });
 }
 
-describe('sameServer', () => {
-  it('compares scheme, host and port, not the path', () => {
-    expect(sameServer(STORED_URL, 'http://FactoryLogix.plant.local:6065/odata/v2/')).toBe(true);
-    expect(sameServer('http://fl.plant.local/odata', ' http://fl.plant.local:80/other ')).toBe(true);
-    expect(sameServer(STORED_URL, 'https://factorylogix.plant.local:6065/odata')).toBe(false);
-    expect(sameServer(STORED_URL, 'http://factorylogix.plant.local:6066/odata')).toBe(false);
-    expect(sameServer(STORED_URL, 'http://factorylogix.plant.local.attacker.example:6065/odata')).toBe(false);
-    expect(sameServer(STORED_URL, 'http://factorylogix.plant.local:6065@attacker.example/odata')).toBe(false);
-    expect(sameServer(STORED_URL, 'http://attacker.example\\@factorylogix.plant.local:6065/odata')).toBe(false);
+describe('sameConnection', () => {
+  const saved = { base_url: STORED_URL, username: 'svc-dashboard' };
+
+  it('matches the saved URL and user name, ignoring surrounding spaces', () => {
+    expect(sameConnection(saved, { base_url: ` ${STORED_URL} `, username: ' svc-dashboard ' })).toBe(true);
   });
 
-  it('never matches a URL without a network origin or one that does not parse', () => {
-    expect(sameServer('file:///srv/odata', 'file:///srv/odata')).toBe(false);
-    expect(sameServer(STORED_URL, 'not a url')).toBe(false);
-    expect(sameServer('', '')).toBe(false);
+  it('does not match any other URL or user name, even on the saved server', () => {
+    for (const base_url of [
+      'http://factorylogix.plant.local:6065/odata/v2',
+      'http://factorylogix.plant.local:6065/odata/../other-app',
+      'https://factorylogix.plant.local:6065/odata',
+      'http://factorylogix.plant.local:6066/odata',
+      'http://factorylogix.plant.local.attacker.example:6065/odata',
+      'http://factorylogix.plant.local:6065@attacker.example/odata',
+      'http://attacker.example\\@factorylogix.plant.local:6065/odata',
+      OTHER_URL,
+    ]) {
+      expect(sameConnection(saved, { base_url, username: 'svc-dashboard' }), base_url).toBe(false);
+    }
+    expect(sameConnection(saved, { base_url: STORED_URL, username: 'svc-other' })).toBe(false);
   });
 });
 
@@ -96,18 +102,23 @@ describe('POST /api/admin/connection/test', () => {
     ]);
   });
 
-  it('keeps using the saved password on the saved server when only the path or user name changed', async () => {
+  it('uses the saved password while the form still holds the saved URL and user name', async () => {
     const api = await adminApi(fakeDb(savedRow()));
-    const res = await api('POST', '/api/admin/connection/test', {
-      base_url: 'http://factorylogix.plant.local:6065/odata/v2',
-      username: 'svc-other',
-    });
+    const res = await api('POST', '/api/admin/connection/test', { base_url: STORED_URL, username: 'svc-dashboard' });
     expect(res.statusCode).toBe(200);
     expect(outgoing).toEqual([
-      {
-        url: 'http://factorylogix.plant.local:6065/odata/v2/$metadata',
-        authorization: basicAuthHeader('svc-other', STORED_PASSWORD),
-      },
+      { url: `${STORED_URL}/$metadata`, authorization: basicAuthHeader('svc-dashboard', STORED_PASSWORD) },
+    ]);
+  });
+
+  it('does not send the saved password once the path or the user name changed, even on the saved server', async () => {
+    const api = await adminApi(fakeDb(savedRow()));
+    const otherPath = 'http://factorylogix.plant.local:6065/other-app';
+    await api('POST', '/api/admin/connection/test', { base_url: otherPath, username: 'svc-dashboard' });
+    await api('POST', '/api/admin/connection/test', { base_url: STORED_URL, username: 'svc-other' });
+    expect(outgoing).toEqual([
+      { url: `${otherPath}/$metadata`, authorization: basicAuthHeader('svc-dashboard', '') },
+      { url: `${STORED_URL}/$metadata`, authorization: basicAuthHeader('svc-other', '') },
     ]);
   });
 
@@ -129,7 +140,7 @@ describe('PUT /api/admin/connection', () => {
     const api = await adminApi(db);
     const res = await api('PUT', '/api/admin/connection', { base_url: OTHER_URL, username: 'svc-dashboard' });
     expect(res.statusCode).toBe(400);
-    expect(res.json().message).toMatch(/enter the password for the new server/);
+    expect(res.json().message).toMatch(/enter the password again/);
     expect(db.state.row).toBe(before);
     expect(db.state.notified).toBe(0);
   });
@@ -144,20 +155,27 @@ describe('PUT /api/admin/connection', () => {
     expect(decrypt(String(db.state.row?.password_enc), KEY_HEX)).toBe('new-one');
   });
 
-  it('keeps the saved password while the URL stays on the same server', async () => {
+  it('refuses to keep the saved password when only the path or the user name changed', async () => {
     const db = fakeDb(savedRow());
-    const passwordEnc = db.state.row?.password_enc;
+    const before = db.state.row;
     const api = await adminApi(db);
-    const res = await api('PUT', '/api/admin/connection', {
-      base_url: 'http://factorylogix.plant.local:6065/odata/v2',
-      username: 'svc-other',
-    });
+    for (const body of [
+      { base_url: 'http://factorylogix.plant.local:6065/odata/v2', username: 'svc-dashboard' },
+      { base_url: STORED_URL, username: 'svc-other' },
+    ]) {
+      expect((await api('PUT', '/api/admin/connection', body)).statusCode).toBe(400);
+    }
+    expect(db.state.row).toBe(before);
+    expect(db.state.notified).toBe(0);
+  });
+
+  it('keeps the saved password when the same URL and user name are saved again', async () => {
+    const db = fakeDb(savedRow());
+    const before = { ...db.state.row };
+    const api = await adminApi(db);
+    const res = await api('PUT', '/api/admin/connection', { base_url: STORED_URL, username: 'svc-dashboard' });
     expect(res.statusCode).toBe(200);
-    expect(db.state.row).toEqual({
-      base_url: 'http://factorylogix.plant.local:6065/odata/v2',
-      username: 'svc-other',
-      password_enc: passwordEnc,
-    });
+    expect(db.state.row).toEqual(before);
   });
 
   it('lets the URL move without a password while none is saved', async () => {

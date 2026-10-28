@@ -22,14 +22,9 @@ function urlError(v: string): string | null {
   }
 }
 
-/** Same scheme, host and port. The API only sends the stored password to the server it was saved for. */
-function sameServer(a: string, b: string): boolean {
-  try {
-    const origin = new URL(a.trim()).origin;
-    return origin !== 'null' && origin === new URL(b.trim()).origin;
-  } catch {
-    return false;
-  }
+/** Same URL and user name as saved. The API only sends the stored password with those. */
+function sameConnection(baseUrl: string, username: string, saved: FlConnection): boolean {
+  return baseUrl.trim() === saved.base_url.trim() && username.trim() === saved.username.trim();
 }
 
 /** "Connected in 155 ms" + version + entity sets, exactly as in docs/design/setup.html. */
@@ -117,11 +112,11 @@ export function ConnectionForm({
   const urlErr = touched ? urlError(baseUrl) : null;
   const userErr = touched && !username.trim() ? 'Required' : null;
   const canSubmit = !urlError(baseUrl) && !!username.trim();
-  const keepsPassword = !!saved?.has_password && sameServer(baseUrl, saved.base_url);
+  const keepsPassword = !!saved?.has_password && sameConnection(baseUrl, username, saved);
   const passwordHint = keepsPassword
     ? 'A password is stored — leave blank to keep it.'
     : saved?.has_password
-      ? 'The stored password is only sent to the saved server. Enter the password for this one.'
+      ? 'The stored password is only sent with the saved URL and user name. Enter the password again to change them.'
       : 'Stored encrypted at rest.';
 
   return (

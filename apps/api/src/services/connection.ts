@@ -1,8 +1,8 @@
 /**
  * FactoryLogix connection settings. Stored as the `fl_connection` row of `settings`:
  * `{ base_url, username, password_enc }` where password_enc is `enc:v1:...` (see src/crypto.ts).
- * The password never leaves the server, and the stored one is only sent to the server it was saved
- * for (see sameServer).
+ * The password never leaves the server, and the stored one is only sent with the URL and user name
+ * it was saved with (see sameConnection).
  */
 import type { FlConnection } from '@fld/shared';
 import { decryptIfNeeded, encrypt } from '../crypto.js';
@@ -39,17 +39,16 @@ export function toPublicConnection(stored: StoredConnection | null): FlConnectio
 }
 
 /**
- * Same scheme, host and port. A URL typed into the form for any other server (test or save) needs
- * the password typed too: otherwise pointing the URL at a machine you control would read the stored
- * password off the Authorization header.
+ * Same URL and user name, character for character once trimmed: the requests the collector makes
+ * with the stored password. Any other URL or user name typed into the form (test or save) needs the
+ * password typed too. Otherwise pointing the URL at a machine you control, or at another path or
+ * account on the same server, would get the stored password sent there in the Authorization header.
  */
-export function sameServer(a: string, b: string): boolean {
-  try {
-    const origin = new URL(a.trim()).origin;
-    return origin !== 'null' && origin === new URL(b.trim()).origin;
-  } catch {
-    return false;
-  }
+export function sameConnection(
+  a: { base_url: string; username: string },
+  b: { base_url: string; username: string },
+): boolean {
+  return a.base_url.trim() === b.base_url.trim() && a.username.trim() === b.username.trim();
 }
 
 export async function saveConnection(
@@ -60,14 +59,15 @@ export async function saveConnection(
   const existing = await getStoredConnection(db);
   const password = typeof input.password === 'string' ? input.password : '';
   const base_url = input.base_url.trim();
-  if (password.length === 0 && existing?.password_enc && !sameServer(base_url, existing.base_url)) {
+  const username = input.username.trim();
+  if (password.length === 0 && existing?.password_enc && !sameConnection({ base_url, username }, existing)) {
     throw badRequest(
-      'enter the password for the new server: the saved password is only sent to the server it was saved for',
+      'enter the password again: the saved password is only sent with the server URL and user name it was saved with',
     );
   }
   const next: StoredConnection = {
     base_url,
-    username: input.username.trim(),
+    username,
     password_enc: password.length > 0 ? encrypt(password) : (existing?.password_enc ?? null),
   };
   await setSettingValue(db, FL_CONNECTION_KEY, next, updatedBy);
@@ -76,8 +76,8 @@ export async function saveConnection(
 
 /**
  * Decrypted credentials for outbound calls; null when nothing usable is configured. An override
- * (unsaved form values) without a password only gets the stored one while its URL is on the saved
- * server; elsewhere the password is empty.
+ * (unsaved form values) without a password only gets the stored one while its URL and user name are
+ * the saved ones; otherwise the password is empty.
  */
 export async function getCredentials(
   db: Db,
@@ -90,7 +90,7 @@ export async function getCredentials(
   let password = '';
   if (override && typeof override.password === 'string' && override.password.length > 0) {
     password = override.password;
-  } else if (stored?.password_enc && sameServer(base_url, stored.base_url)) {
+  } else if (stored?.password_enc && sameConnection({ base_url, username }, stored)) {
     password = decryptIfNeeded(stored.password_enc) ?? '';
   }
   return { base_url, username, password };
