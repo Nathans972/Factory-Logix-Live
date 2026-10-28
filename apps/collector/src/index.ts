@@ -57,7 +57,7 @@ class Collector {
 
   constructor(private readonly env: Env) {
     this.log = createLogger({ level: env.logLevel, pretty: !env.isProduction });
-    this.pool = createPool(env.databaseUrl);
+    this.pool = createPool(env.databaseUrl, this.log);
     this.health = new HealthReporter(this.pool, this.log);
     this.operations = new OperationCache(this.pool);
     this.timestamps = new TimestampResolver({

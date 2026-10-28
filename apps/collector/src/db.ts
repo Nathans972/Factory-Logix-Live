@@ -14,14 +14,26 @@ export type Queryable = Pool | PoolClient;
 /** Max rows per multi-row INSERT statement (spec: batched upserts, <= 500 rows). */
 export const BATCH_SIZE = 500;
 
-export function createPool(connectionString: string): Pool {
-  return new PgPool({
+export interface PoolWarnLogger {
+  warn(obj: object, msg: string): void;
+}
+
+export function createPool(connectionString: string, log?: PoolWarnLogger): Pool {
+  const pool = new PgPool({
     connectionString,
     max: 6,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
     application_name: 'fld-collector',
   });
+  // An idle client dying (e.g. the database restarting) emits 'error' on the pool; without a
+  // listener Node treats it as unhandled and the process exits. The pool drops that client and
+  // the next query opens a fresh one, so a warning is all that is needed.
+  pool.on('error', (err) => {
+    if (log) log.warn({ err: err.message }, 'idle database connection lost');
+    else console.warn(`idle database connection lost: ${err.message}`);
+  });
+  return pool;
 }
 
 export async function q<T extends QueryResultRow = QueryResultRow>(

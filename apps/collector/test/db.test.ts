@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BATCH_SIZE, bulkUpsert, chunk, toMs, type Queryable } from '../src/db.js';
+import { BATCH_SIZE, bulkUpsert, chunk, createPool, toMs, type Queryable } from '../src/db.js';
 import { parseControlPayload } from '../src/control.js';
 
 function fakeDb(): { db: Queryable; calls: { sql: string; params: unknown[] }[] } {
@@ -72,6 +72,17 @@ describe('bulkUpsert', () => {
     const { db, calls } = fakeDb();
     await bulkUpsert(db, { table: 't', columns: ['a'], rows: [], conflict: ['a'], update: ['a'] });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('createPool', () => {
+  it('listens for idle-client errors so a database restart does not crash the collector', async () => {
+    const warnings: string[] = [];
+    const pool = createPool('postgres://localhost:1/none', { warn: (_obj, msg) => warnings.push(msg) });
+    expect(pool.listenerCount('error')).toBe(1);
+    pool.emit('error', new Error('terminating connection due to administrator command'), {} as never);
+    expect(warnings).toEqual(['idle database connection lost']);
+    await pool.end();
   });
 });
 
