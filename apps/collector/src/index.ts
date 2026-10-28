@@ -20,7 +20,7 @@ import { loadEnv, type Env } from './env.js';
 import { createLogger, errorMessage, type Logger } from './logger.js';
 import { TimestampResolver } from './mapping/extract.js';
 import { ODataError } from './odata/client.js';
-import { configError, connectionSavedAt, loadConfig, loginRefusedMessage, type CollectorConfig } from './settings.js';
+import { connectionSavedAt, loadConfig, loginRefusedMessage, type CollectorConfig } from './settings.js';
 import { ODataSource } from './sources/ODataSource.js';
 import { Backfill } from './sync/backfill.js';
 import { CircuitBreaker, type BreakerSnapshot } from './sync/breaker.js';
@@ -40,6 +40,15 @@ const STANDARDS_RETRY_MAX_MS = 2 * 3_600_000;
 /** One `last_error` for a pass that went wrong more than one way, in the order it did. */
 function joinErrors(...errors: (string | null)[]): string {
   return errors.filter(Boolean).join('; ');
+}
+
+/**
+ * Why the saved connection or mapping cannot be used, from what `loadConfig` reports, for Sync
+ * health while the collector waits. Null when nothing is saved yet, or everything saved is usable.
+ */
+function configError(config: CollectorConfig | null): string | null {
+  const mapping = config?.mapping_error ? `the saved field mapping is invalid, fix it in Admin > Mapping: ${config.mapping_error}` : null;
+  return joinErrors(config?.connection_error ?? null, mapping) || null;
 }
 
 /** A failed nightly standards recompute is tried again after 10 minutes, then 20, 40 ... at most every 2 hours. */

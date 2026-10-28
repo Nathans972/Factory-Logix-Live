@@ -123,15 +123,3 @@ export function loginRefusedMessage(error: string): string {
     'disabled, or no rights to the OData service), then save Admin > Connection again to resume polling'
   );
 }
-
-/**
- * Why the saved connection or mapping cannot be used, for Sync health while the collector waits.
- * Null when nothing is saved yet, or everything saved is usable.
- */
-export function configError(config: CollectorConfig | null): string | null {
-  const problems = [
-    config?.connection_error,
-    config?.mapping_error && `the saved field mapping is invalid, fix it in Admin > Mapping: ${config.mapping_error}`,
-  ];
-  return problems.filter(Boolean).join('; ') || null;
-}

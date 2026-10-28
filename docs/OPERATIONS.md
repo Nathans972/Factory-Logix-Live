@@ -299,7 +299,7 @@ Sync status values you will see in Admin > Sync:
 | `ok` | Last poll succeeded and data is current. |
 | `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in, while hour cells cannot be recomputed, or while the nightly standards recompute keeps failing; the last error names it. |
 | `down` | The breaker is open (threshold reached, or FactoryLogix refused the login) and the last success is older than 3x the poll interval. |
-| `never` | The collector has never completed a poll — either FactoryLogix connection/mapping has not been configured yet, or every attempt so far has failed. |
+| `never` | The collector is not polling: the FactoryLogix connection or field mapping has not been configured yet, or what is saved cannot be used (for example a password saved under another `ENCRYPTION_KEY`, or a mapping that is no longer valid), in which case "Last error" says why. It also shows until the very first poll has finished. |
 
 ## Backfill
 
