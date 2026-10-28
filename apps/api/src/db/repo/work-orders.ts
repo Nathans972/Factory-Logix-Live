@@ -34,6 +34,38 @@ export async function getWorkOrder(db: Db, job: string): Promise<WorkOrder | nul
   return rows.length > 0 ? mapWorkOrder(rows[0]) : null;
 }
 
+/**
+ * Stand-in for a job that has activity but no work_orders row. unit_steps and hour_cells have no
+ * foreign key to work_orders, so a job is on the floor, shift and operator pages before its work
+ * order is ingested (or when the work order is older than the backfill window). The stand-in takes
+ * the product of the job's latest activity and has no quantities or status. Null without activity.
+ */
+export async function getWorkOrderFromActivity(db: Db, job: string): Promise<WorkOrder | null> {
+  const { rows } = await db.query<{ product_number: string; product_name: string | null }>(
+    `SELECT a.product_number, p.name AS product_name
+     FROM (
+       SELECT c.product_number, c.hour_start_utc AS seen_at FROM hour_cells c WHERE c.job_number = $1
+       UNION ALL
+       SELECT s.product_number, s.start_ts AS seen_at FROM unit_steps s WHERE s.job_number = $1
+     ) a
+     LEFT JOIN products p ON p.product_number = a.product_number
+     ORDER BY a.seen_at DESC
+     LIMIT 1`,
+    [job],
+  );
+  if (rows.length === 0) return null;
+  return {
+    job_number: job,
+    product_number: rows[0].product_number,
+    product_name: rows[0].product_name ?? null,
+    qty_released: 0,
+    qty_complete: null,
+    status: null,
+    fl_created_at: null,
+    fl_modified_at: null,
+  };
+}
+
 export async function getWorkOrders(db: Db, jobs: string[]): Promise<WorkOrder[]> {
   if (jobs.length === 0) return [];
   const { rows } = await db.query<WorkOrderRow>(

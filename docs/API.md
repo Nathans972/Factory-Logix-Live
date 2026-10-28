@@ -30,8 +30,8 @@ Validation errors return `400 {error:'bad_request', message, issues?}`.
 | GET | `/api/portal/operators?q=` | viewer | | `OperatorListItem[]` |
 | GET | `/api/portal/operators/:id?from=&to=` or `?date=&shift_id=` | viewer | default: last 12 hours | `OperatorDetail` |
 | GET | `/api/portal/jobs?q=&active=` | viewer | | `JobListResponse` (active = activity in last 7 days, sorted by last activity) |
-| GET | `/api/portal/jobs/:job` | viewer | | `JobDetail` |
-| GET | `/api/portal/dashboard/:job?grouped=&shift_length_hours=&show_std_day=` | viewer | | `TvDashboard` |
+| GET | `/api/portal/jobs/:job` | viewer | | `JobDetail` (a job with activity but no work order yet takes the product of its activity and 0 released; `404` only when it has neither) |
+| GET | `/api/portal/dashboard/:job?grouped=&shift_length_hours=&show_std_day=` | viewer | | `TvDashboard` (same fallback for a job without a work order; a TV assigned to it shows this dashboard) |
 | GET | `/api/portal/products?q=` | viewer | | `ProductListItem[]` |
 | GET | `/api/portal/products/:z` | viewer | | `ProductView` |
 | POST | `/api/portal/products/:z/adjustments` | manager | `CreateAdjustmentRequest` (scope product or product_operation) | `StandardAdjustment` |
