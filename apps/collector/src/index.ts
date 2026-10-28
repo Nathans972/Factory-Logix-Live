@@ -6,13 +6,13 @@
  * process: every iteration is wrapped, errors are logged and the loop continues.
  */
 import { readFileSync } from 'node:fs';
-import { hourStartUtc, nextLocalTime } from '@fld/engine';
+import { hourStartUtc, nextLocalTime, utcToLocalParts } from '@fld/engine';
 import { checkExtraCaFile, type MappingConfig, type Settings } from '@fld/shared';
 import { ControlListener, type ControlCommand } from './control.js';
 import { createPool, exec, type Pool } from './db.js';
 import { Recomputer } from './engine/recompute.js';
 import { HOUR_MS, hoursInRange, mergeHourRanges } from './engine/hours.js';
-import { StandardsRecomputer } from './engine/standards.js';
+import { StandardsRecomputer, type StandardsRunResult } from './engine/standards.js';
 import { HealthReporter } from './health.js';
 import { Ingestor } from './ingest/datasets.js';
 import { OperationCache } from './ingest/operations.js';
@@ -23,16 +23,34 @@ import { ODataError } from './odata/client.js';
 import { configError, connectionSavedAt, loadConfig, loginRefusedMessage, type CollectorConfig } from './settings.js';
 import { ODataSource } from './sources/ODataSource.js';
 import { Backfill } from './sync/backfill.js';
-import { CircuitBreaker } from './sync/breaker.js';
+import { CircuitBreaker, type BreakerSnapshot } from './sync/breaker.js';
 import { Poller, type PollOutcome } from './sync/poller.js';
+import { loadSyncState, recordSyncFailure, recordSyncSuccess } from './sync/state.js';
 
 const IDLE_WHEN_UNCONFIGURED_MS = 30_000;
 const HEARTBEAT_SLICE_MS = 30_000;
 const CONFIG_RELOAD_EVERY_POLLS = 10;
+/** sync_state row of the standards recomputes of every product: nightly, "Recompute all standards now", after a backfill. */
+const STANDARDS_SOURCE = 'standards_recompute';
+/** The start of what a failed nightly standards recompute adds to `last_error` (see `healthSnapshot`). */
+const STANDARDS_ERROR = 'could not recompute the standards';
+const STANDARDS_RETRY_MS = 10 * 60_000;
+const STANDARDS_RETRY_MAX_MS = 2 * 3_600_000;
 
 /** One `last_error` for a pass that went wrong more than one way, in the order it did. */
 function joinErrors(...errors: (string | null)[]): string {
   return errors.filter(Boolean).join('; ');
+}
+
+/** A failed nightly standards recompute is tried again after 10 minutes, then 20, 40 ... at most every 2 hours. */
+function standardsRetryMs(failures: number): number {
+  return Math.min(STANDARDS_RETRY_MS * 2 ** Math.min(failures - 1, 10), STANDARDS_RETRY_MAX_MS);
+}
+
+/** HH:MM in `tz`. */
+function clockTime(utcMs: number, tz: string): string {
+  const { hour, minute } = utcToLocalParts(utcMs, tz);
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
 class Collector {
@@ -71,6 +89,13 @@ class Collector {
   private pollCount = 0;
   private reloadRequested = true;
   private nextStandardsAt: number | null = null;
+  /**
+   * The nightly standards recompute failed, and no recompute of every product has gone through
+   * since: StdHr is going stale. Admin > Sync shows it (`healthSnapshot`, the `standards_recompute`
+   * row), and it is tried again at `retryAt` (`standardsRetryMs`), or tonight if that is sooner.
+   * Read back from that row after a restart.
+   */
+  private standardsFailure: { error: string; failures: number; retryAt: number } | null = null;
   private lastRetentionRunAt = 0;
   private stopping = false;
   private wake: (() => void) | null = null;
@@ -118,6 +143,12 @@ class Collector {
           lastError: state.last_error,
           openUntil: state.breaker_open_until,
         });
+      }
+      // A nightly standards recompute that was failing before the restart still is, until one goes through.
+      const standards = await loadSyncState(this.pool, STANDARDS_SOURCE);
+      if (standards && standards.consecutive_failures > 0) {
+        const failures = standards.consecutive_failures;
+        this.standardsFailure = { error: standards.last_error ?? 'unknown error', failures, retryAt: Date.now() + standardsRetryMs(failures) };
       }
       await this.operations.preload();
     } catch (err) {
@@ -190,7 +221,7 @@ class Collector {
 
     if (await this.loginStillRefused()) {
       await this.health.report({
-        snapshot: this.breaker.snapshot(),
+        snapshot: this.healthSnapshot(),
         now: Date.now(),
         intervalMs,
         threshold: settings.breaker_failure_threshold,
@@ -250,7 +281,7 @@ class Collector {
     }
 
     await this.health.report({
-      snapshot: this.breaker.snapshot(),
+      snapshot: this.healthSnapshot(),
       now: Date.now(),
       intervalMs,
       threshold: settings.breaker_failure_threshold,
@@ -379,6 +410,7 @@ class Collector {
       this.backfill = new Backfill(this.pool, this.log, this.poller, this.recomputer, async (settings, mapping, now) => {
         const result = await this.standards.run({ settings, mapping, now, productNumber: null, since: null });
         await this.health.setLastStandardsRecompute(Date.now());
+        await this.standardsRecomputed(settings, result);
         this.log.info(result, 'standards recomputed after backfill');
       });
     }
@@ -387,7 +419,7 @@ class Collector {
     if (this.nextStandardsAt === null) {
       try {
         const state = await this.health.load();
-        this.nextStandardsAt = nextLocalTime(config.settings.plant_timezone, config.settings.std_recompute_time, Date.now());
+        this.nextStandardsAt = this.standardsDueAt(config.settings);
         this.log.info(
           { next_standards_at: new Date(this.nextStandardsAt).toISOString(), last: state?.last_standards_recompute_at },
           'standards schedule set',
@@ -435,7 +467,11 @@ class Collector {
         });
         // last_standards_recompute_at is the nightly job's cutoff: a run limited to one product must
         // not move it, or every other product's rows since the last full run are skipped tonight.
-        if (!command.product_number) await this.health.setLastStandardsRecompute(Date.now());
+        // Nor does it end a failed nightly run: the other products' StdHr is still stale.
+        if (!command.product_number) {
+          await this.health.setLastStandardsRecompute(Date.now());
+          await this.standardsRecomputed(settings, result);
+        }
         await this.recomputer.recomputeCurrentHours(settings, Date.now());
         this.log.info({ ...result, product: command.product_number ?? 'all' }, 'on-demand standards recompute finished');
         return;
@@ -459,22 +495,84 @@ class Collector {
     }
   }
 
-  /** Nightly standards recompute at `std_recompute_time` plant time (spec 7.1). */
+  /** Nightly standards recompute at `std_recompute_time` plant time (spec 7.1), or the retry of a failed one. */
   private async maybeRecomputeStandards(settings: Settings, mapping: MappingConfig): Promise<void> {
     const now = Date.now();
     if (this.nextStandardsAt === null || now < this.nextStandardsAt) return;
-    const state = await this.health.load();
-    const result = await this.standards.run({
-      settings,
-      mapping,
-      now,
-      productNumber: null,
-      since: state?.last_standards_recompute_at ?? null,
+    let result: StandardsRunResult;
+    try {
+      const state = await this.health.load();
+      result = await this.standards.run({
+        settings,
+        mapping,
+        now,
+        productNumber: null,
+        since: state?.last_standards_recompute_at ?? null,
+      });
+      await this.health.setLastStandardsRecompute(now);
+    } catch (err) {
+      await this.standardsFailed(settings, err, Date.now() - now);
+      return;
+    }
+    await this.standardsRecomputed(settings, result);
+    this.nextStandardsAt = this.standardsDueAt(settings);
+    // The standards are in: the next poll recomputes these two hours again if this fails.
+    await this.recomputer.recomputeCurrentHours(settings, Date.now()).catch((err) => {
+      this.log.error({ err: errorMessage(err) }, 'hour cell recompute failed');
     });
-    await this.health.setLastStandardsRecompute(now);
-    await this.recomputer.recomputeCurrentHours(settings, Date.now());
-    this.nextStandardsAt = nextLocalTime(settings.plant_timezone, settings.std_recompute_time, Date.now());
     this.log.info({ ...result, next: new Date(this.nextStandardsAt).toISOString() }, 'nightly standards recompute finished');
+  }
+
+  /** The standards of every product were recomputed: a failed nightly run is over, and so is its retry. */
+  private async standardsRecomputed(settings: Settings, result: StandardsRunResult): Promise<void> {
+    if (this.standardsFailure) {
+      this.standardsFailure = null;
+      this.nextStandardsAt = this.standardsDueAt(settings);
+    }
+    try {
+      await recordSyncSuccess(this.pool, STANDARDS_SOURCE, { watermark: null, rows: result.computed, durationMs: result.durationMs });
+    } catch (err) {
+      this.log.warn({ err: errorMessage(err) }, 'could not record the standards recompute in sync_state');
+    }
+  }
+
+  /**
+   * The nightly standards recompute failed: StdHr stays as it was. It is tried again with a backoff
+   * (`standardsRetryMs`), not after every poll: each attempt holds up the next poll for as long as
+   * it runs.
+   */
+  private async standardsFailed(settings: Settings, err: unknown, durationMs: number): Promise<void> {
+    const error = errorMessage(err);
+    const failures = (this.standardsFailure?.failures ?? 0) + 1;
+    this.standardsFailure = { error, failures, retryAt: Date.now() + standardsRetryMs(failures) };
+    this.nextStandardsAt = this.standardsDueAt(settings);
+    this.log.error({ err: error, failures, retry_at: new Date(this.nextStandardsAt).toISOString() }, 'standards recompute failed');
+    try {
+      await recordSyncFailure(this.pool, STANDARDS_SOURCE, error, durationMs);
+    } catch (recordErr) {
+      this.log.warn({ err: errorMessage(recordErr) }, 'could not record the failed standards recompute in sync_state');
+    }
+  }
+
+  /** When the next standards recompute of every product runs: tonight's, or the retry of a failed one if sooner. */
+  private standardsDueAt(settings: Settings): number {
+    const tonight = nextLocalTime(settings.plant_timezone, settings.std_recompute_time, Date.now());
+    return this.standardsFailure ? Math.min(tonight, this.standardsFailure.retryAt) : tonight;
+  }
+
+  /**
+   * The breaker's state for the sync health, with a failed nightly standards recompute added to
+   * `lastError` until a recompute of every product goes through: the data is current (no backoff,
+   * not delayed), but the status stays degraded and says StdHr is going stale.
+   */
+  private healthSnapshot(): BreakerSnapshot {
+    const snapshot = this.breaker.snapshot();
+    const failure = this.standardsFailure;
+    // Read back after a restart, `lastError` may still say so until the first poll replaces it.
+    if (!failure || snapshot.lastError?.includes(STANDARDS_ERROR)) return snapshot;
+    const retryAt = clockTime(this.nextStandardsAt ?? failure.retryAt, this.settings?.plant_timezone ?? this.env.plantTimezone);
+    const standards = `${STANDARDS_ERROR} (${failure.error}); StdHr stays as last computed, the collector tries again at ${retryAt}`;
+    return { ...snapshot, lastError: joinErrors(snapshot.lastError, standards) };
   }
 
   /** retention_days_raw_events (spec 6.4): keep raw payloads only for as long as configured. */
@@ -507,7 +605,7 @@ class Collector {
     while (!this.stopping && Date.now() < until) {
       const now = Date.now();
       await this.health.report({
-        snapshot: this.breaker.snapshot(),
+        snapshot: this.healthSnapshot(),
         now,
         intervalMs,
         threshold: settings.breaker_failure_threshold,

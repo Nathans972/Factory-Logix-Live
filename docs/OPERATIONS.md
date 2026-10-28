@@ -297,7 +297,7 @@ Sync status values you will see in Admin > Sync:
 | Status | Meaning |
 |---|---|
 | `ok` | Last poll succeeded and data is current. |
-| `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in, or while hour cells cannot be recomputed; the last error names it. |
+| `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in, while hour cells cannot be recomputed, or while the nightly standards recompute keeps failing; the last error names it. |
 | `down` | The breaker is open (threshold reached, or FactoryLogix refused the login) and the last success is older than 3x the poll interval. |
 | `never` | The collector has never completed a poll — either FactoryLogix connection/mapping has not been configured yet, or every attempt so far has failed. |
 
@@ -338,6 +338,15 @@ a backfill; Admin > Standards shows it as "Last recompute"). You can also trigge
 demand from Admin > Standards ("Recompute all standards now") or from a product's page
 ("Recompute now" for just that product). A single product's recompute does not move that
 cutoff, so the other products' new units are still picked up that night.
+
+When the nightly recompute fails (a database error, or a product the calculation fails on), StdHr
+stays as it was last computed. Admin > Sync then shows `degraded`, with `could not recompute the
+standards (...)` under "Last error" and the time of the next attempt; the TVs keep showing current
+data, with no banner. The `standards_recompute` row under "Sources" shows the last recompute of all
+products that went through and how many attempts failed since. The collector tries again 10
+minutes later, then after 20, 40 and 80 minutes, then every 2 hours, and the error clears once a
+recompute of all products goes through: a retry, "Recompute all standards now" or the one after a
+backfill. A restarted collector reads the failure back and keeps retrying.
 
 ## Retention
 
@@ -385,6 +394,7 @@ at about 1 GB in total (see [Logs](#logs)).
 | `docker compose logs api` shows `SSE stream limit reached`; some TVs only refresh once a minute | 1,000 live-update streams are open at once, far more than the site's TVs and browser tabs: something is holding streams open | Find the address with many connections (`docker compose exec web netstat -tn`) and block it on the network. Streams are let in again as others close; `docker compose restart api` closes them all, and TVs reconnect by themselves |
 | "Data delayed since HH:MM" banner | The collector cannot reach FactoryLogix, or its last successful poll is older than 3x the poll interval | Check Admin > Sync for the last error; confirm the FactoryLogix server and the Report Scheduler Service are up and reachable on port 6065 |
 | Admin > Sync says `could not recompute the hour cells of N hours` | The database refused to rewrite them (deadlock, lock timeout, disk full) or the calculation failed on one of their rows. The TVs and portal show those hours as they were before | Wait a poll or two: the collector tries again after every poll, and the error clears once they go through. If it stays, `docker compose logs collector` shows each `hour cell recompute failed`, and `docker compose logs db` and the free disk space show whether the database is the cause. A restarted collector no longer knows which hours to redo: the last `late_data_hours` are recomputed within the hour, older ones by "Run backfill now" |
+| Admin > Sync says `could not recompute the standards` | The nightly standards recompute failed: the database refused its writes (deadlock, lock or statement timeout, disk full) or the calculation failed on one product/operation. StdHr is not updated, so new products and operations show a dash and no colors | Wait for the retry the error names. If it keeps failing, `docker compose logs collector` shows each `standards recompute failed`, and `docker compose logs db` and the free disk space show whether the database is the cause. Once the cause is fixed, Admin > Standards > "Recompute all standards now" clears the error at once |
 | Test connection or Admin > Sync still says `certificate not trusted` after `FACTORYLOGIX_CA_CERT` was set | The containers could not use the file, it is not the CA that issued FactoryLogix's certificate, or they have not been restarted since the file was replaced | `docker compose logs api collector \| grep FACTORYLOGIX_CA_CERT` shows whether each read it and, if not, why (no such file, not readable, DER instead of PEM). Check that the certificate's issuer is the CA in the file. After replacing the file, run `docker compose restart api collector`. See `docs/INSTALL.md`, section 10 |
 | Sync status stuck at `never` | FactoryLogix connection and/or field mapping have not been completed yet, or what is saved cannot be used: Admin > Sync then shows why under "Last error" | Finish Admin > Connection and Admin > Mapping (or the first-run wizard), or fix what the last error names |
 | After a restore, Admin > Connection asks for the password again, or Admin > Sync shows `could not decrypt the FactoryLogix password` | The database came from an install with another `ENCRYPTION_KEY`. The key is in `.env`, not in the backup, so the saved password cannot be decrypted here | Type the FactoryLogix password in Admin > Connection and save. Or put the old install's `ENCRYPTION_KEY` in `.env` and run `docker compose up -d` (see [Restore](#restore)) |

@@ -458,6 +458,7 @@ Operators sometimes scan several boards in, work them, then scan several out, wh
 
 **Scheduling**
 - Nightly at `settings.std_recompute_time` (default 02:00 plant time), recompute every (Z, operation) that received new completed units since the last run. Also on demand from admin (single product or all). Write to `standards` and append to `standards_history`.
+- A nightly run that fails is tried again after 10 minutes, doubling up to every 2 hours, until a recompute of all products goes through. Until then the sync health (4.6) is `degraded` and its last error says the standards could not be recomputed. `sync_state` (source `standards_recompute`) keeps the last recompute of all products that went through, and how many nightly attempts have failed since.
 
 ### 7.2 Effective standard (adjustments and overrides)
 

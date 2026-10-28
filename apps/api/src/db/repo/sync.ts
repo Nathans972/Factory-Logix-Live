@@ -13,6 +13,8 @@ export interface CollectorState {
 }
 
 export const BACKFILL_SOURCE = 'backfill';
+/** The collector's standards recomputes of every product (nightly, on demand, after a backfill): not a poll. */
+export const STANDARDS_SOURCE = 'standards_recompute';
 
 export async function getCollectorState(db: Db): Promise<CollectorState> {
   const { rows } = await db.query<{
