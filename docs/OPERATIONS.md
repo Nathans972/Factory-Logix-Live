@@ -71,17 +71,50 @@ can be empty: check those too.
 
 ## Restore
 
-**From a `pg_dump` file:**
+**From a `pg_dump` file:** a dump of a TimescaleDB database restores correctly only into a new,
+empty database, between `SELECT timescaledb_pre_restore()` and
+`SELECT timescaledb_post_restore()`. Without them TimescaleDB's background jobs and hooks run
+during the restore, and a `pg_restore --clean` over the running database also tries to drop the
+extension: the restore ends with errors, and the hypertables (`unit_steps`, `defects`,
+`raw_events`, `hour_cells`) can come back incomplete.
+
+A dump also has to be restored on the TimescaleDB release it was made on. If you have moved the
+`db` image to a newer release since the dump was made (see
+[The database image](#the-database-image)), don't restore it with these commands: they can stop
+with errors in `_timescaledb_catalog` tables after deleting the database you have now.
+
+In the project directory, stop the api and collector, copy the dump into the `db` container and
+restore it:
 
 ```bash
 docker compose stop api collector
-docker compose cp ./backups/fld-YYYYMMDD-HHMM.dump db:/tmp/fld.dump
-docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/fld.dump'
-docker compose up -d
+docker compose cp ./backups/fld-YYYYMMDD-HHMM.dump db:/tmp/fld-restore.dump && \
+docker compose exec -T db sh -c 'set -e
+  pg_restore -f /dev/null /tmp/fld-restore.dump
+  dropdb --if-exists -U "$POSTGRES_USER" "$POSTGRES_DB"
+  createdb -U "$POSTGRES_USER" "$POSTGRES_DB"
+  psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS timescaledb" -c "SELECT timescaledb_pre_restore()"
+  pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" /tmp/fld-restore.dump
+  psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT timescaledb_post_restore()"
+  rm /tmp/fld-restore.dump
+  echo restore finished'
 ```
 
 Keep the single quotes: inside them the `db` container fills in `POSTGRES_USER` and
 `POSTGRES_DB` from your `.env`. Your own shell doesn't have them, and would pass empty values.
+
+It first reads the whole dump without touching the database; only then does it delete the
+database you have now and restore the dump into a new one. It stops at the first step that
+fails. Start the stack again only when its last line is `restore finished`:
+
+```bash
+docker compose up -d
+```
+
+If it stops with an error instead, the database is incomplete: leave the stack stopped, fix the
+cause and run the commands again. Each run starts over with a new, empty database. A dump file
+that is missing, cut short or unreadable stops them before anything is deleted, so the database
+you had is still there.
 
 **From a volume tarball:** in the project directory, first check that the archive holds a
 database:
