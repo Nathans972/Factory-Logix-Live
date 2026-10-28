@@ -6,6 +6,7 @@ export async function registerEventRoutes(app: FastifyInstance, ctx: AppContext)
   app.get('/api/events', (req, reply) => {
     reply.hijack();
     const id = ctx.sse.addClient(reply.raw);
+    if (id === null) return; // the hub is full and has already closed the response
     const drop = (): void => ctx.sse.removeClient(id);
     req.raw.on('close', drop);
     req.raw.on('error', drop);

@@ -84,6 +84,10 @@ The API emits `data_updated` when the collector `NOTIFY`s on Postgres channel `f
 collector's health state changes, and `settings_updated` after settings/mapping/shift/break changes.
 The stream needs no login, so `display_updated` carries only `display_id`, never a TV's
 `device_token` (the token is the only credential the `/api/tv/*` endpoints check).
+A client that stops reading is disconnected once 128 KB is waiting for it, instead of the API
+keeping every later message in memory; EventSource reconnects by itself. At most 1,000 streams are
+open at once: past that a new stream gets only `retry: 60000` and is closed, so the browser tries
+again a minute later (on an error status EventSource would give up for good).
 
 ## Collector control (Postgres NOTIFY channel `fld_control`)
 
