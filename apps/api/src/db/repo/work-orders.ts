@@ -82,9 +82,21 @@ export interface JobRowWithActivity {
 
 const CLOSED_STATUSES = ['Closed', 'Complete', 'Completed', 'Cancelled'];
 
+/** The jobs list search on work orders `w`; $1 is the ILIKE pattern. */
+const SEARCH_MATCHES = '(w.job_number ILIKE $1 OR w.product_number ILIKE $1 OR w.product_name ILIKE $1)';
+
+/** A job whose last activity is older than this is never active (isJobActive). */
+const ACTIVE_SINCE = "now() - interval '30 days'";
+
 /**
  * Work orders with their last unit_step activity. A single aggregate over unit_steps is joined to
  * work_orders so ordering by activity does not need one query per job.
+ *
+ * The aggregate reads only the steps the list can use. With a search, those of the jobs it matches.
+ * For active jobs, those started in the last 30 days, a bound on the hypertable's partition column
+ * that lets TimescaleDB skip the older chunks, plus older ones completed in the last 30 days, found
+ * by complete_ts. An active job's last activity is always among these. Only "all jobs" without a
+ * search reads every step.
  */
 export async function listJobsWithActivity(
   db: Db,
@@ -92,20 +104,38 @@ export async function listJobsWithActivity(
 ): Promise<JobRowWithActivity[]> {
   const like = opts.q ? `%${opts.q}%` : null;
   const limit = opts.limit ?? 200;
-  const { rows } = await db.query<WorkOrderRow & { last_activity_at: Date | null }>(
-    `WITH activity AS (
-       SELECT s.job_number, GREATEST(max(s.start_ts), max(s.complete_ts)) AS last_activity_at
+  const searched = like ? [`s.job_number IN (SELECT w.job_number FROM work_orders w WHERE ${SEARCH_MATCHES})`] : [];
+  const where = (clauses: string[]) => (clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '');
+  // Active: the steps started in the last 30 days, then those that started earlier and completed in
+  // them, whose activity is their completion.
+  const activity = opts.active
+    ? `SELECT x.job_number, max(x.last_activity_at) AS last_activity_at
+       FROM (
+         SELECT s.job_number, GREATEST(max(s.start_ts), max(s.complete_ts)) AS last_activity_at
+         FROM unit_steps s
+         ${where([`s.start_ts >= ${ACTIVE_SINCE}`, ...searched])}
+         GROUP BY s.job_number
+         UNION ALL
+         SELECT s.job_number, max(s.complete_ts)
+         FROM unit_steps s
+         ${where([`s.start_ts < ${ACTIVE_SINCE}`, `s.complete_ts >= ${ACTIVE_SINCE}`, ...searched])}
+         GROUP BY s.job_number
+       ) x
+       GROUP BY x.job_number`
+    : `SELECT s.job_number, GREATEST(max(s.start_ts), max(s.complete_ts)) AS last_activity_at
        FROM unit_steps s
-       GROUP BY s.job_number
-     )
+       ${where(searched)}
+       GROUP BY s.job_number`;
+  const { rows } = await db.query<WorkOrderRow & { last_activity_at: Date | null }>(
+    `WITH activity AS (${activity})
      SELECT ${WO_COLUMNS}, a.last_activity_at
      FROM work_orders w
      LEFT JOIN activity a ON a.job_number = w.job_number
-     WHERE ($1::text IS NULL OR w.job_number ILIKE $1 OR w.product_number ILIKE $1 OR w.product_name ILIKE $1)
+     WHERE ($1::text IS NULL OR ${SEARCH_MATCHES})
        AND (
          $2::boolean IS NOT TRUE
          OR a.last_activity_at >= now() - interval '7 days'
-         OR (COALESCE(w.status, '') <> ALL($3::text[]) AND a.last_activity_at >= now() - interval '30 days')
+         OR (COALESCE(w.status, '') <> ALL($3::text[]) AND a.last_activity_at >= ${ACTIVE_SINCE})
        )
      ORDER BY a.last_activity_at DESC NULLS LAST, w.job_number DESC
      LIMIT $4`,

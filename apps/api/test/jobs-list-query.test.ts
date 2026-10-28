@@ -17,6 +17,20 @@ function enclosingGroupAfter(sql: string, marker: string): string {
   return sql.slice(start + marker.length);
 }
 
+/** The one statement listJobsWithActivity sends for `opts`. */
+async function statementFor(opts: Parameters<typeof listJobsWithActivity>[1]): Promise<string> {
+  const statements: string[] = [];
+  const db = {
+    query: async (text: string) => {
+      statements.push(text);
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  await listJobsWithActivity(db as never, opts);
+  expect(statements).toHaveLength(1);
+  return statements[0]!;
+}
+
 describe('listJobsWithActivity (Jobs page, TV job picker)', () => {
   it('does not aggregate every row of unit_steps when only the active jobs are wanted', async () => {
     const statements: string[] = [];
@@ -34,5 +48,19 @@ describe('listJobsWithActivity (Jobs page, TV job picker)', () => {
     expect(statements).toHaveLength(1);
     const unitStepsSubquery = enclosingGroupAfter(statements[0]!, 'FROM unit_steps');
     expect(unitStepsSubquery).toMatch(/\bWHERE\b/i);
+  });
+
+  it('still counts a step that started before the 30 days and was completed in them', async () => {
+    // Its job's last activity is that completion, so the job is active although no step of it
+    // started in the window.
+    const sql = await statementFor({ q: null, active: true });
+    expect(sql).toMatch(/s\.start_ts < now\(\) - interval '30 days' AND s\.complete_ts >= now\(\) - interval '30 days'/);
+  });
+
+  it('reads only the steps of the jobs a search matches (the Job page asks for its job on every data update)', async () => {
+    const sql = await statementFor({ q: 'J-1001', active: false });
+    expect(enclosingGroupAfter(sql, 'FROM unit_steps')).toMatch(
+      /\bWHERE s\.job_number IN \(SELECT w\.job_number FROM work_orders w WHERE \(w\.job_number ILIKE \$1\b/,
+    );
   });
 });
