@@ -154,7 +154,7 @@ This product replaces the floor dashboard and gives managers a single live view,
 
 1. Collector polls FactoryLogix OData on an interval (default 90 seconds).
 2. Each poll pulls only rows changed since the last watermark for each data source, with an overlap margin, and upserts them into normalized tables. The raw JSON payload is stored alongside.
-3. After each successful poll, the engine recomputes hour cells for the affected time range (current hour and previous hour, plus any older hours touched by late-arriving rows).
+3. After each successful poll, the engine recomputes hour cells for the affected time range (current hour and previous hour, plus any older hours touched by late-arriving rows). Hours whose recompute fails are recomputed again after the next poll, and until they are the poll does not count as successful for the health state (4.6).
 4. The API pushes a "data updated" event over SSE. TV pages and portal views refetch their data.
 5. Nightly (configurable time), the engine recomputes standards for every (Z-number, operation) that received new data.
 

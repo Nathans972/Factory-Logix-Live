@@ -11,7 +11,7 @@ import { checkExtraCaFile, type MappingConfig, type Settings } from '@fld/shared
 import { ControlListener, type ControlCommand } from './control.js';
 import { createPool, exec, type Pool } from './db.js';
 import { Recomputer } from './engine/recompute.js';
-import { HOUR_MS } from './engine/hours.js';
+import { HOUR_MS, hoursInRange, mergeHourRanges } from './engine/hours.js';
 import { StandardsRecomputer } from './engine/standards.js';
 import { HealthReporter } from './health.js';
 import { Ingestor } from './ingest/datasets.js';
@@ -29,6 +29,11 @@ import { Poller, type PollOutcome } from './sync/poller.js';
 const IDLE_WHEN_UNCONFIGURED_MS = 30_000;
 const HEARTBEAT_SLICE_MS = 30_000;
 const CONFIG_RELOAD_EVERY_POLLS = 10;
+
+/** One `last_error` for a pass that went wrong more than one way, in the order it did. */
+function joinErrors(...errors: (string | null)[]): string {
+  return errors.filter(Boolean).join('; ');
+}
 
 class Collector {
   private readonly log: Logger;
@@ -56,6 +61,12 @@ class Collector {
    * only add failed logins towards an account lockout. In memory: a restarted collector tries once.
    */
   private refusedLogin: { connection: string; savedAt: number | null } | null = null;
+  /**
+   * Hours whose cells could not be recomputed, tried again with every poll until they are (see
+   * `recomputeTouched`): the watermarks have moved past their rows, so no later poll touches them.
+   * In memory only: after a restart they wait for the late-data re-pull (`late_data_hours`).
+   */
+  private readonly staleHours = new Set<number>();
   private mappingFingerprint = '';
   private pollCount = 0;
   private reloadRequested = true;
@@ -214,30 +225,28 @@ class Collector {
     }
     this.pollCount += 1;
 
+    // Recompute whatever came in, even when another data source failed: the watermarks have
+    // already moved past those rows. A failed recompute does not stop ingestion, but the numbers
+    // on screen stop changing, so it goes into the sync health with the poll's own outcome.
+    const notRecomputed =
+      outcome.requiredOk || outcome.touched.length > 0 || this.staleHours.size > 0
+        ? await this.recomputeTouched(outcome.touched, settings)
+        : null;
+
     if (outcome.requiredOk) {
       // An optional data source failing (defects, operators, routes, standards) leaves the numbers
       // current: no backoff and no "Data delayed", but the status shows degraded with its error.
-      this.breaker.recordSuccess(Date.now(), outcome.error);
+      if (notRecomputed) this.breaker.recordNotRecomputed(joinErrors(outcome.error, notRecomputed));
+      else this.breaker.recordSuccess(Date.now(), outcome.error);
       if (outcome.ok) this.log.info({ rows: outcome.rows, ms: outcome.durationMs }, 'poll ok');
       else this.log.warn({ rows: outcome.rows, ms: outcome.durationMs, err: outcome.error }, 'poll ok except an optional data source');
     } else if (outcome.loginRefused) {
-      this.breaker.recordLoginRefused(loginRefusedMessage(outcome.loginRefused));
+      this.breaker.recordLoginRefused(joinErrors(loginRefusedMessage(outcome.loginRefused), notRecomputed));
       this.refusedLogin = { connection: this.connectionFingerprint, savedAt: await connectionSavedAt(this.pool) };
       this.log.error({ err: outcome.loginRefused }, 'FactoryLogix refused the login; polling stops until Admin > Connection is saved again');
     } else {
-      this.breaker.recordFailure(Date.now(), outcome.error ?? 'poll failed', breakerOpts);
+      this.breaker.recordFailure(Date.now(), joinErrors(outcome.error ?? 'poll failed', notRecomputed), breakerOpts);
       this.log.warn({ err: outcome.error, failures: this.breaker.consecutiveFailures }, 'poll failed');
-    }
-
-    // Recompute whatever came in, even when another data source failed: the watermarks have
-    // already moved past those rows.
-    if (outcome.requiredOk || outcome.touched.length > 0) {
-      // A recompute failure must not stop ingestion: the next poll recomputes the same hours.
-      try {
-        await this.recomputeTouched(outcome.touched, settings);
-      } catch (err) {
-        this.log.error({ err: errorMessage(err) }, 'hour cell recompute failed');
-      }
     }
 
     await this.health.report({
@@ -262,8 +271,14 @@ class Collector {
     await this.idle(Date.now() + delay, settings, mapping, intervalMs);
   }
 
-  /** Touched instants -> hour buckets (+ current and previous hour) -> recompute + NOTIFY. */
-  private async recomputeTouched(touched: number[], settings: Settings): Promise<void> {
+  /**
+   * Touched instants -> hour buckets (+ current and previous hour) -> recompute + NOTIFY, then the
+   * `staleHours` of earlier polls, one contiguous range at a time: a range that keeps failing (a
+   * row the database or the engine rejects) must not hold back the current hour or the others.
+   * They wait while this poll's own hours fail, which more work would only make worse. Returns why
+   * hour cells could not be recomputed, or null when every hour is up to date.
+   */
+  private async recomputeTouched(touched: number[], settings: Settings): Promise<string | null> {
     const tz = settings.plant_timezone;
     const hours = new Set<number>();
     const now = Date.now();
@@ -273,7 +288,25 @@ class Collector {
     for (const instant of touched) {
       if (Number.isFinite(instant)) hours.add(hourStartUtc(instant, tz));
     }
-    await this.recomputer.recomputeHours(hours, settings, now);
+    // As the plant time zone has those hours now: it may have been changed since they failed.
+    const earlier = [...this.staleHours].map((hour) => hourStartUtc(hour, tz)).filter((hour) => !hours.has(hour));
+    this.staleHours.clear();
+    const errors = new Set<string>();
+    const recompute = async (batch: number[]): Promise<void> => {
+      try {
+        await this.recomputer.recomputeHours(batch, settings, now);
+      } catch (err) {
+        for (const hour of batch) this.staleHours.add(hour);
+        errors.add(errorMessage(err));
+        this.log.error({ err: errorMessage(err), hours: batch.length }, 'hour cell recompute failed');
+      }
+    };
+    await recompute([...hours]);
+    if (errors.size > 0) for (const hour of earlier) this.staleHours.add(hour);
+    else for (const range of mergeHourRanges(earlier)) await recompute(hoursInRange(range));
+    if (errors.size === 0) return null;
+    const count = this.staleHours.size === 1 ? '1 hour' : `${this.staleHours.size} hours`;
+    return `could not recompute the hour cells of ${count} (${[...errors].join('; ')}); the collector tries again after every poll`;
   }
 
   /** True while the login FactoryLogix refused is still the saved one, not saved again since (see `refusedLogin`). */

@@ -59,6 +59,20 @@ export class CircuitBreaker {
     this.loginRefused = false;
   }
 
+  /**
+   * The required data sources came in but the hour cells could not be recomputed from them
+   * (`error`), so the numbers on screen stop changing. FactoryLogix answered (no backoff), but the
+   * last success stays where it was: the status is degraded with the error at once, and "Data
+   * delayed" shows once that is older than 3x the poll interval.
+   */
+  recordNotRecomputed(error: string): void {
+    this.consecutiveFailures = 0;
+    this.lastError = error;
+    this.openUntil = null;
+    this.everPolled = true;
+    this.loginRefused = false;
+  }
+
   recordFailure(now: number, error: string, opts: BreakerOptions): void {
     this.consecutiveFailures += 1;
     this.lastError = error;
@@ -109,8 +123,9 @@ export function isDelayed(lastSuccessAt: number | null, now: number, intervalMs:
 
 /**
  * ok        - last poll succeeded
- * degraded  - some failures (under threshold) or in backoff but with a recent success, or an
- *             optional data source failing while the required ones come in
+ * degraded  - some failures (under threshold) or in backoff but with a recent success, an
+ *             optional data source failing while the required ones come in, or hour cells that
+ *             could not be recomputed
  * down      - breaker open (or the login refused) and the last success is older than 3x the
  *             interval (or never)
  * never     - nothing has ever been polled (no mapping/connection yet)

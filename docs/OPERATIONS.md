@@ -285,12 +285,19 @@ successful poll is older than **3x the configured poll interval**, and show a "D
 since HH:MM" banner. The dashboards keep showing the last data they had — nothing disappears,
 nothing freezes on a spinner. The banner clears automatically on the next successful poll.
 
+A poll only counts as successful once what it brought in has reached the hour cells the TVs and
+portal show. When they cannot be recomputed (a database error such as a deadlock or a full disk,
+or a row the calculation fails on), the status shows `degraded` at once, with `could not
+recompute the hour cells of N hours` under "Last error", and the banner follows once that has
+lasted 3 poll intervals. There is no backoff, since FactoryLogix answered. The collector tries
+those hours again after every poll, and the error and the banner clear once they go through.
+
 Sync status values you will see in Admin > Sync:
 
 | Status | Meaning |
 |---|---|
 | `ok` | Last poll succeeded and data is current. |
-| `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in; the last error names it. |
+| `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in, or while hour cells cannot be recomputed; the last error names it. |
 | `down` | The breaker is open (threshold reached, or FactoryLogix refused the login) and the last success is older than 3x the poll interval. |
 | `never` | The collector has never completed a poll — either FactoryLogix connection/mapping has not been configured yet, or every attempt so far has failed. |
 
@@ -377,6 +384,7 @@ at about 1 GB in total (see [Logs](#logs)).
 | "Dashboard offline since HH:MM" banner on a TV | The TV's browser cannot reach the `web`/`api` containers at all (network issue, host down, container crashed) | Check `docker compose ps` and `docker compose logs api web`; check network connectivity between the TV and the server |
 | `docker compose logs api` shows `SSE stream limit reached`; some TVs only refresh once a minute | 1,000 live-update streams are open at once, far more than the site's TVs and browser tabs: something is holding streams open | Find the address with many connections (`docker compose exec web netstat -tn`) and block it on the network. Streams are let in again as others close; `docker compose restart api` closes them all, and TVs reconnect by themselves |
 | "Data delayed since HH:MM" banner | The collector cannot reach FactoryLogix, or its last successful poll is older than 3x the poll interval | Check Admin > Sync for the last error; confirm the FactoryLogix server and the Report Scheduler Service are up and reachable on port 6065 |
+| Admin > Sync says `could not recompute the hour cells of N hours` | The database refused to rewrite them (deadlock, lock timeout, disk full) or the calculation failed on one of their rows. The TVs and portal show those hours as they were before | Wait a poll or two: the collector tries again after every poll, and the error clears once they go through. If it stays, `docker compose logs collector` shows each `hour cell recompute failed`, and `docker compose logs db` and the free disk space show whether the database is the cause. A restarted collector no longer knows which hours to redo: the last `late_data_hours` are recomputed within the hour, older ones by "Run backfill now" |
 | Test connection or Admin > Sync still says `certificate not trusted` after `FACTORYLOGIX_CA_CERT` was set | The containers could not use the file, it is not the CA that issued FactoryLogix's certificate, or they have not been restarted since the file was replaced | `docker compose logs api collector \| grep FACTORYLOGIX_CA_CERT` shows whether each read it and, if not, why (no such file, not readable, DER instead of PEM). Check that the certificate's issuer is the CA in the file. After replacing the file, run `docker compose restart api collector`. See `docs/INSTALL.md`, section 10 |
 | Sync status stuck at `never` | FactoryLogix connection and/or field mapping have not been completed yet, or what is saved cannot be used: Admin > Sync then shows why under "Last error" | Finish Admin > Connection and Admin > Mapping (or the first-run wizard), or fix what the last error names |
 | After a restore, Admin > Connection asks for the password again, or Admin > Sync shows `could not decrypt the FactoryLogix password` | The database came from an install with another `ENCRYPTION_KEY`. The key is in `.env`, not in the backup, so the saved password cannot be decrypted here | Type the FactoryLogix password in Admin > Connection and save. Or put the old install's `ENCRYPTION_KEY` in `.env` and run `docker compose up -d` (see [Restore](#restore)) |
