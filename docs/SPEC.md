@@ -639,6 +639,7 @@ The existing dashboard is a dark page with large yellow-green text, white grid l
 - Operation names are not truncated: widen the column or wrap to two lines.
 - One row per (operation, eligible operator) in separate mode; one row per operation in grouped mode. Visitor rows in separate mode: see 8.5.
 - Rows ordered by route sequence, then operator name.
+- Every row stays on screen (the TV never scrolls): when the rows do not fit above the bottom strip, they shrink until they do, down to half size. Rows that still do not fit are covered by a line "+N more rows: <their operations>", never cut off without a word.
 - Hour cell background per 7.5. Text color on filled cells must remain legible (dark text on yellow/green/blue, white on red).
 
 **Defect table (bottom):** Operation, Prior, 12 hour columns, ShiftQty. Combined across operators. Non-zero cells red.

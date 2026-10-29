@@ -1,8 +1,9 @@
 /**
  * Pure helpers for the TV display (spec 8).
  *
- * Everything in this module is side-effect free and unit tested (`tvLogic.test.ts`), except the
- * three thin wrappers at the bottom that touch `window` / `localStorage` / `document.cookie`.
+ * Everything in this module is side-effect free and unit tested (`tvLogic.test.ts`), except
+ * `fitRows`, which sets one CSS variable on the element it is given, and the three thin wrappers at
+ * the bottom that touch `window` / `localStorage` / `document.cookie`.
  * Those guard every browser access so the module can also be imported in a node test environment.
  */
 import { TV_CELL_TEXT, TV_COLORS, type CellColor, type SseEvent, type TvDashboard, type TvRow, type TvState } from '@fld/shared';
@@ -89,6 +90,58 @@ export function formatProgressPct(progress: number | null | undefined): string {
 export function clampProgress(progress: number | null | undefined): number {
   if (progress == null || !Number.isFinite(progress)) return 0;
   return Math.min(1, Math.max(0, progress));
+}
+
+// ---------------------------------------------------------------- fitting the rows (spec 8.3)
+
+/** The output rows never shrink below half size (14 px type on a 1080p screen, from 28 px). */
+export const MIN_ROW_SCALE = 0.5;
+
+/** The `.tv-output` box, as `fitRows` uses it (an `HTMLElement` in the browser). */
+export interface RowFitBox {
+  style: { setProperty(name: string, value: string): void };
+  getBoundingClientRect(): { top: number; height: number };
+}
+
+/** The output table inside the box (an `HTMLTableElement`). */
+export interface RowFitTable {
+  getBoundingClientRect(): { height: number };
+  tBodies: ArrayLike<{ rows: ArrayLike<{ getBoundingClientRect(): { top: number; bottom: number; height: number } }> }>;
+}
+
+/** The "+N more rows" line: how many rows it covers, and where it starts (px below the top of the box). */
+export interface RowsCut {
+  hidden: number;
+  top: number;
+}
+
+/**
+ * Fits the output table into its box. The TV never scrolls (spec 8.3), and a row cut off without a
+ * word would be one of the last operations of the route, the ones that make Qty Complete. Starting
+ * from full size every time, the rows shrink (type and padding, through `--tv-fit` on the box) in
+ * steps proportional to the overflow, down to MIN_ROW_SCALE; it takes a few steps because the 1 px
+ * grid lines do not shrink. The rows that still do not fit give way to a "+N more rows" line one
+ * row high: returns where it goes, or null when every row is shown. Writes nothing but `--tv-fit`.
+ */
+export function fitRows(box: RowFitBox, table: RowFitTable): RowsCut | null {
+  box.style.setProperty('--tv-fit', '1');
+  const space = box.getBoundingClientRect().height;
+  let used = table.getBoundingClientRect().height;
+  let scale = 1;
+  for (let step = 0; used > space && scale > MIN_ROW_SCALE && step < 10; step++) {
+    scale = Math.max(MIN_ROW_SCALE, Math.min(scale * 0.99, (scale * space) / used));
+    box.style.setProperty('--tv-fit', String(scale));
+    used = table.getBoundingClientRect().height;
+  }
+  if (used <= space) return null;
+
+  const boxTop = box.getBoundingClientRect().top;
+  const rows = Array.from(table.tBodies[0]?.rows ?? [], (r) => r.getBoundingClientRect());
+  if (rows.length === 0) return null;
+  const line = Math.min(...rows.map((r) => r.height));
+  const first = rows.findIndex((r) => r.bottom - boxTop > space - line);
+  if (first < 0) return null;
+  return { hidden: rows.length - first, top: Math.floor(Math.max(0, Math.min(rows[first]!.top - boxTop, space - line))) };
 }
 
 // ---------------------------------------------------------------- hour boundary
