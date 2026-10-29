@@ -23,6 +23,14 @@ import { loadAdjustments, loadBreakDefs, loadDefects, loadOverrides, loadPins, l
 /** How long `Recomputer.judged` remembers an hour; an older one is read back from its cells when computed again. */
 const JUDGED_MEMORY_MS = 3 * 24 * HOUR_MS;
 
+/**
+ * The most hours computed as one range: its unit steps are loaded and held in memory together. Longer
+ * stretches of touched hours (a bulk change of old rows at the source, `recompute_cells` over months)
+ * are computed a day at a time, as the backfill's recoloring is (spec 4.7), not with weeks of steps in
+ * one query (millions of rows at 300,000 a day, more than the heap holds).
+ */
+const MAX_RANGE_HOURS = 24;
+
 /** How far before a range the engine reads steps and breaks, for the ownership windows. */
 function lookbackMs(settings: Settings): number {
   return Math.max(3 * HOUR_MS, settings.idle_timeout_minutes * 60_000 + HOUR_MS);
@@ -53,7 +61,8 @@ export class Recomputer {
   ) {}
 
   /**
-   * Recompute every hour bucket in `hourStarts` (merged into contiguous ranges). `currentStandards`:
+   * Recompute every hour bucket in `hourStarts` (merged into contiguous ranges of at most
+   * `MAX_RANGE_HOURS`, each with its own lookback). `currentStandards`:
    * judge the hours that already ended against today's standards too, instead of the StdHr they
    * keep (the backfill's recoloring, which gives the history its standards).
    */
@@ -64,7 +73,7 @@ export class Recomputer {
     opts: { notify?: boolean; currentStandards?: boolean } = {},
   ): Promise<RecomputeResult> {
     const started = Date.now();
-    const ranges = mergeHourRanges(hourStarts);
+    const ranges = mergeHourRanges(hourStarts, MAX_RANGE_HOURS);
     if (ranges.length === 0) return { hours: [], ranges: 0, cells: 0, durationMs: 0 };
 
     const [shifts, breakDefs, standards, adjustments, overrides, pins] = await Promise.all([
