@@ -67,7 +67,7 @@ Migrations at start-up have no such limit.
 | PUT | `/api/admin/connection` | admin | `FlConnection` (password optional = keep, only while `base_url` and `username` are the saved ones and the saved password can be decrypted; 400 otherwise, and when `base_url` holds a user name or password) | `ConnectionResponse` |
 | POST | `/api/admin/connection/test` | admin | optional `FlConnection` body to test unsaved values (without a password, the saved one is only sent when `base_url` and `username` are the saved ones) | `ConnectionTestResult` (`ok: false` asking for the password again when the saved one is needed but cannot be decrypted, or saying to take the user name and password out of a `base_url` that holds them; nothing is sent then) |
 | GET | `/api/admin/mapping` | admin | | `MappingResponse` |
-| PUT | `/api/admin/mapping` | admin | `MappingConfig` | `MappingResponse` (validates; notifies collector to restart) |
+| PUT | `/api/admin/mapping` | admin | `MappingConfig` | `MappingResponse` (validates; keeps a `unit_steps` or `defects` natural key it replaces in the `mapping_key_history` setting, see docs/MAPPING.md; notifies collector to restart) |
 | GET | `/api/admin/mapping/metadata` | admin | | `ODataMetadata` (fetches live `$metadata`; 400 asking for the password again when the saved one cannot be decrypted, or when the saved `base_url` holds a user name or password) |
 | POST | `/api/admin/mapping/preview` | admin | `MappingPreviewRequest` | `MappingPreviewResult` (400 asking for the password again when the saved one cannot be decrypted, or when the saved `base_url` holds a user name or password) |
 | GET | `/api/admin/standards` | manager | | `StandardsAdminResponse` |

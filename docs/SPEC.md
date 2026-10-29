@@ -349,6 +349,8 @@ PostgreSQL. Names are suggestions; keep the semantics. `hour_cells`, `unit_steps
 **defects**  (hypertable on `found_ts`)
 - `id`, `unit_id`, `job_number`, `operation_id`, `operator_id`, `defect_code`, `description`, `found_ts`, `status`, `natural_key` unique
 
+A `unit_steps` or `defects` row keeps the natural key it was written with. Saving a mapping that changes the key of either dataset (or stops using it) adds the old key to the `mapping_key_history` setting. The collector reads the fields of those keys too (those `$metadata` still lists), and a row read again replaces its copy under an old key: at the row's time, or within two days for the same unit, job and operation. So changing the key never stores a row twice.
+
 **raw_events**  (hypertable on `received_at`)
 - `id`, `source` text, `natural_key`, `payload` jsonb, `received_at`
 - Purpose: preserve every field FactoryLogix sent, including unmapped ones, so future tools can use them. Compress aggressively.

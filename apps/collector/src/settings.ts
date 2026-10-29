@@ -1,16 +1,19 @@
 /**
  * Loads collector configuration out of the `settings` table:
  *   - engine/collector settings (one row per key, merged over DEFAULT_SETTINGS)
- *   - `mapping`        -> MappingConfig (spec 4.8)
+ *   - `mapping`        -> MappingConfig (spec 4.8), with `mapping_key_history` as `previous_keys`
  *   - `fl_connection`  -> { base_url, username, password_enc } (spec 10.4)
  */
 import {
   DEFAULT_SETTINGS,
+  MAPPING_KEY_HISTORY,
   SETTINGS_KEYS,
   URL_CREDENTIALS_MESSAGE,
   mappingConfigSchema,
+  parseMappingKeyHistory,
   settingsSchema,
   urlHasCredentials,
+  withPreviousKeys,
   type MappingConfig,
   type Settings,
   type SettingsKey,
@@ -73,7 +76,8 @@ export async function loadConfig(db: Queryable, opts: { encryptionKey: string; f
   if (mappingRow && mappingRow.value) {
     const parsed = mappingConfigSchema.safeParse(mappingRow.value);
     if (parsed.success) {
-      mapping = parsed.data as MappingConfig;
+      // The keys its datasets had before: the rows stored under them are still there.
+      mapping = withPreviousKeys(parsed.data as MappingConfig, parseMappingKeyHistory(rows.find((r) => r.key === MAPPING_KEY_HISTORY)?.value));
     } else {
       mapping_error = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     }

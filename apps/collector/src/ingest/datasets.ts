@@ -5,7 +5,7 @@
 import type { DatasetMapping, DatasetName, MappingConfig } from '@fld/shared';
 import { bulkUpsert, q, q1, toMs, tx, type Pool, type PoolClient, type Queryable } from '../db.js';
 import type { Logger } from '../logger.js';
-import { extractRecord, num, str, bool, type TimestampResolver } from '../mapping/extract.js';
+import { buildNaturalKey, extractRecord, getField, num, str, bool, type TimestampResolver } from '../mapping/extract.js';
 import { upsertOperators, upsertProducts, upsertRoutesDerived, upsertRoutesMapped, type RouteEntry } from './derive.js';
 import { insertRawEvents } from './raw.js';
 import type { OperationCache } from './operations.js';
@@ -55,6 +55,23 @@ export class Ingestor {
   setMapping(mapping: MappingConfig): void {
     this.mapping = mapping;
     this.jobProducts.clear();
+  }
+
+  /**
+   * `row`'s natural key under each key its dataset had before (`previous_keys`), as long as the row
+   * has all of that key's fields: the key its copy has if it was stored before Admin > Mapping
+   * changed the key. The pull reads those fields too, when the entity set still has them
+   * (`Poller.previousKeyFields`).
+   */
+  private previousKeys(mapping: DatasetMapping, row: Record<string, unknown>, current: string): string[] {
+    const keys: string[] = [];
+    for (const fields of mapping.previous_keys ?? []) {
+      if (fields.some((field) => getField(row, field) === undefined)) continue;
+      const key = buildNaturalKey(row, fields);
+      // A key whose fields were all empty identifies nothing.
+      if (key !== current && /[^|]/.test(key) && !keys.includes(key)) keys.push(key);
+    }
+    return keys;
   }
 
   /**
@@ -210,6 +227,7 @@ export class Ingestor {
 
     interface Staged {
       natural_key: string;
+      previous_keys: string[];
       unit_id: string;
       job_number: string;
       product_number: string | null;
@@ -240,6 +258,7 @@ export class Ingestor {
       }
       staged.push({
         natural_key: rec.natural_key,
+        previous_keys: this.previousKeys(mapping, row, rec.natural_key),
         unit_id: unit,
         job_number: job,
         product_number: str(rec.values, 'product_number'),
@@ -298,7 +317,14 @@ export class Ingestor {
         ];
         if (withSeq) stepRow.push(s.operation_seq === null ? null : Math.trunc(s.operation_seq));
         stepRows.push(stepRow);
-        keys.push({ natural_key: s.natural_key, at: s.start_ts });
+        keys.push({
+          natural_key: s.natural_key,
+          at: s.start_ts,
+          previous_keys: s.previous_keys,
+          unit_id: s.unit_id,
+          job_number: s.job_number,
+          operation_id: operationId,
+        });
         products.push({ product_number: product, name: null });
         operators.push({ operator_id: s.operator_id, display_name: null });
         routes.push({ product_number: product, operation_id: operationId, sequence: s.operation_seq });
@@ -365,6 +391,7 @@ export class Ingestor {
 
     const staged: {
       natural_key: string;
+      previous_keys: string[];
       unit_id: string;
       job_number: string;
       operation: string;
@@ -390,6 +417,7 @@ export class Ingestor {
       }
       staged.push({
         natural_key: rec.natural_key,
+        previous_keys: this.previousKeys(mapping, row, rec.natural_key),
         unit_id: unit,
         job_number: job,
         operation,
@@ -428,7 +456,14 @@ export class Ingestor {
           s.modified_at === null ? null : new Date(s.modified_at),
           s.natural_key,
         ]);
-        keys.push({ natural_key: s.natural_key, at: s.found_ts });
+        keys.push({
+          natural_key: s.natural_key,
+          at: s.found_ts,
+          previous_keys: s.previous_keys,
+          unit_id: s.unit_id,
+          job_number: s.job_number,
+          operation_id: operationId,
+        });
         if (s.operator_id) operators.push({ operator_id: s.operator_id, display_name: null });
         out.touched.push(s.found_ts);
         out.ingested += 1;
@@ -577,10 +612,15 @@ export class Ingestor {
   }
 }
 
-/** A row about to be upserted into unit_steps / defects: its natural key and its time column. */
+/** A row about to be upserted into unit_steps / defects: its natural key, its time column and which step it is. */
 interface StoredKey {
   natural_key: string;
   at: number;
+  /** Its natural key under the keys its dataset had before (`Ingestor.previousKeys`). */
+  previous_keys: string[];
+  unit_id: string;
+  job_number: string;
+  operation_id: number;
 }
 
 /**
@@ -590,6 +630,14 @@ interface StoredKey {
  * with its stored row and would become a second one. Delete the stored copies of these keys at
  * other times (within MOVED_ROW_WINDOW_MS of the page) and return their `instants`, so the hours
  * they were counted in get recomputed.
+ *
+ * A record stored before Admin > Mapping changed the natural key is stored under its key from the
+ * old fields, and would become a second row too. Delete its copy under a key the dataset had
+ * before (`previous_keys`): at the record's time, or at another time within the window for the
+ * same unit, job and operation (the time moved as well). Away from the record's own instant, these
+ * keep out the unit's other steps when the old key did not tell them apart (a key that was changed
+ * because it was not unique), and another record whose key from the new fields happens to read like
+ * the old key. No record of the page is deleted under its own key and time.
  */
 async function deleteMovedRows(
   db: PoolClient,
@@ -602,19 +650,41 @@ async function deleteMovedRows(
   const keyed = keys.filter((k) => /[^|]/.test(k.natural_key));
   if (keyed.length === 0) return [];
   const ats = keyed.map((k) => k.at);
+  const from = new Date(Math.min(...ats) - MOVED_ROW_WINDOW_MS);
+  const to = new Date(Math.max(...ats) + MOVED_ROW_WINDOW_MS);
   const deleted = await q<Record<string, Date | null>>(
     db,
     `DELETE FROM ${table}
       WHERE natural_key = ANY($1::text[]) AND ${time} BETWEEN $3 AND $4
         AND (natural_key, ${time}) NOT IN (SELECT * FROM unnest($1::text[], $2::timestamptz[]))
       RETURNING ${instants.join(', ')}`,
-    [
-      keyed.map((k) => k.natural_key),
-      ats.map((at) => new Date(at)),
-      new Date(Math.min(...ats) - MOVED_ROW_WINDOW_MS),
-      new Date(Math.max(...ats) + MOVED_ROW_WINDOW_MS),
-    ],
+    [keyed.map((k) => k.natural_key), ats.map((at) => new Date(at)), from, to],
   );
+  const rekeyed = keyed.flatMap((k) => k.previous_keys.map((previous) => ({ ...k, previous })));
+  if (rekeyed.length > 0) {
+    deleted.push(
+      ...(await q<Record<string, Date | null>>(
+        db,
+        `DELETE FROM ${table}
+          WHERE natural_key = ANY($1::text[]) AND ${time} BETWEEN $6 AND $7
+            AND ((natural_key, ${time}) IN (SELECT * FROM unnest($1::text[], $2::timestamptz[]))
+              OR (natural_key, unit_id, job_number, operation_id) IN (SELECT * FROM unnest($1::text[], $3::text[], $4::text[], $5::int[])))
+            AND (natural_key, ${time}) NOT IN (SELECT * FROM unnest($8::text[], $9::timestamptz[]))
+          RETURNING ${instants.join(', ')}`,
+        [
+          rekeyed.map((k) => k.previous),
+          rekeyed.map((k) => new Date(k.at)),
+          rekeyed.map((k) => k.unit_id),
+          rekeyed.map((k) => k.job_number),
+          rekeyed.map((k) => k.operation_id),
+          from,
+          to,
+          keyed.map((k) => k.natural_key),
+          ats.map((at) => new Date(at)),
+        ],
+      )),
+    );
+  }
   return deleted.flatMap((row) => instants.map((column) => toMs(row[column])).filter((ms): ms is number => ms !== null));
 }
 

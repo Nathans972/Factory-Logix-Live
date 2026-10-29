@@ -403,7 +403,9 @@ zone was fixed, or the time was corrected in FactoryLogix) keeps its natural key
 collector deletes the copy stored at the old time, if it is within two days of the new one, and
 recomputes the hours that copy was counted in. Rows stored before such a fix are corrected as
 they are read again: the hourly late-data re-pull covers the last `late_data_hours`, and "Run
-backfill now" covers older history.
+backfill now" covers older history. A row stored before its natural key was changed in Admin >
+Mapping is replaced the same way, under its old key (`docs/MAPPING.md`, "Changing the natural
+key").
 
 ## Disk sizing
 

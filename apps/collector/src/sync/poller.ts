@@ -169,6 +169,17 @@ export class Poller {
     this.source = source;
   }
 
+  /**
+   * The fields of the natural keys a data source had before (`previous_keys`), read with its other
+   * fields so that the ingest can find a row's copy stored under one of them
+   * (`Ingestor.previousKeys`). Only fields $metadata lists for the entity set: FactoryLogix refuses
+   * a `$select` naming a field it does not have, and the data source would stop.
+   */
+  private previousKeyFields(mapping: DatasetMapping): string[] {
+    const fields = new Set((mapping.previous_keys ?? []).flat());
+    return [...fields].filter((field) => this.source.edmType(mapping.entity_set, field) !== null);
+  }
+
   private plan(dataset: DatasetName, mapping: DatasetMapping, storedWatermark: string | null = null): FieldPlan {
     const watermarkField = mapping.watermark_field ?? null;
     let watermarkKind: WatermarkKind = 'timestamp';
@@ -360,7 +371,7 @@ export class Poller {
         );
       }
 
-      const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField]);
+      const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField, ...this.previousKeyFields(mapping)]);
       this.deps.timestamps.setReadTime(now);
 
       const pull: PullRequest = {
@@ -716,7 +727,7 @@ export class Poller {
         throw new Error(`${dataset} has no primary timestamp; cannot pull a time window`);
       }
 
-      const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField]);
+      const select = selectFieldsFor(mapping, [plan.watermarkField, plan.timestampField, ...this.previousKeyFields(mapping)]);
       this.deps.timestamps.setReadTime(opts.now ?? null);
       const pull: PullRequest = { entitySet: mapping.entity_set, filter, orderBy, select, pageSize: settings.poll_page_size, maxPages: MAX_PAGES_WINDOW };
       const fetchJobs: WorkOrderFetcher = (jobs, jobMapping) => this.fetchWorkOrders(jobs, jobMapping, settings, opts.now ?? Date.now());

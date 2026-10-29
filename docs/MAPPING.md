@@ -168,6 +168,22 @@ duplicating it. Typical keys:
 Pick fields that are always present and that do not change between the initial scan and a
 later update to the same row.
 
+### Changing the natural key
+
+You can change the natural key of a dataset that already has rows. `unit_steps` and `defects`
+rows stay stored under the key they were written with, so when you save a mapping that changes
+their key (or stops using the dataset), the old key is kept in the `mapping_key_history` setting.
+The collector then also reads the fields of every old key, and when it reads a row again (the
+overlap, the hourly late-data re-pull, "Run backfill now") it replaces the copy stored under an
+old key with the row under the new one. That copy is found at the row's time, or, if the time
+also changed (a timestamp mode or plant time zone fix), within two days for the same unit, job
+and operation. Rows that are never read again keep their old key and are still counted once.
+
+An old key field that FactoryLogix no longer lists in `$metadata` is not read, because
+FactoryLogix would refuse the whole request. Rows stored under that key cannot be matched, and
+are stored a second time when they are read again. So change the key before FactoryLogix
+drops the field, not after.
+
 The natural key also de-duplicates the raw payload archive: `raw_events` gets a new row for a
 key only when the payload FactoryLogix sent differs from the last one stored for that key, so
 re-reading unchanged rows costs no disk.
