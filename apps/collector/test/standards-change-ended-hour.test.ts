@@ -5,7 +5,6 @@ import type { Logger } from '../src/logger.js';
 import { Recomputer } from '../src/engine/recompute.js';
 import { OperationCache } from '../src/ingest/operations.js';
 
-const HOUR = 3_600_000;
 const MIN = 60_000;
 const log = { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined } as unknown as Logger;
 const settings: Settings = { ...DEFAULT_SETTINGS, plant_timezone: 'America/New_York' };

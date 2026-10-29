@@ -90,10 +90,9 @@ function renderOperatorPage(): string {
     createElement(
       QueryClientProvider,
       { client: qc },
-      createElement(
-        DataSourceProvider,
-        { value: ds },
-        createElement(
+      createElement(DataSourceProvider, {
+        value: ds,
+        children: createElement(
           AuthProvider,
           null,
           createElement(
@@ -102,7 +101,7 @@ function renderOperatorPage(): string {
             createElement(Routes, null, createElement(Route, { path: '/operators/:id', element: createElement(OperatorPage) })),
           ),
         ),
-      ),
+      }),
     ),
   );
 }
