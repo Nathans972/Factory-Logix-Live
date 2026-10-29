@@ -3,9 +3,10 @@
  * window-truncation.test.ts). Here, against a service that honours the filter: a backfill day, the
  * late-data re-pull and a whole data source bigger than one pass are read whole; a window that
  * cannot be read on (more rows at one timestamp than a pass reads, a service that ignores `$skip`)
- * fails where it shows instead of counting as read.
+ * fails where it shows instead of counting as read, and so does a pull that still comes back
+ * `truncated` (proof in backfill_truncation.test.ts).
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS, type BackfillProgress, type DatasetMapping, type DatasetName, type MappingConfig, type Settings } from '@fld/shared';
 import type { Pool } from '../src/db.js';
 import type { Ingestor } from '../src/ingest/datasets.js';
@@ -250,5 +251,45 @@ describe('a whole data source (no timestamp) of more rows than one pass reads', 
 
     expect(src.requests).toHaveLength(1_001);
     expect(db.syncLog).toEqual([expect.objectContaining({ source: 'work_orders:backfill', status: 'error' })]);
+  });
+});
+
+describe('a window pull that comes back truncated', () => {
+  const now = Date.parse('2025-10-11T12:00:00Z');
+  /** Part of its window, and says so. */
+  const truncated = { rows: 10_000, ingested: 10_000, skipped: 0, truncated: true };
+
+  it('does not count the backfill day, and shows why', async () => {
+    const db = fakePool();
+    const poller = { pullWindow: async (dataset: DatasetName) => (dataset === 'unit_steps' ? truncated : { rows: 0, ingested: 0, skipped: 0, truncated: false }) };
+    const recomputed: number[][] = [];
+    const recomputer = {
+      recomputeHours: async (hours: number[]) => {
+        recomputed.push(hours);
+        return {} as never;
+      },
+    };
+    const backfill = new Backfill(db.pool, log, poller, recomputer as never, async () => undefined);
+    await backfill.ensureScheduled(settings);
+    await backfill.requestNow();
+    await backfill.tick(mapping, settings, now);
+
+    expect(db.state.get('backfill')?.backfill_progress).toMatchObject({
+      days_done: 0,
+      error: 'unit_steps: the window pull stopped at the page cap with rows still to read, so 2025-10-10 was not read whole. Raise poll_page_size',
+    });
+    expect(recomputed).toEqual([]);
+  });
+
+  it('records the late-data re-pull as failed', async () => {
+    const { poller, db } = harness({ UnitSteps: { field: 'Done', rows: [] } });
+    vi.spyOn(poller, 'pullWindow').mockResolvedValue(truncated);
+
+    expect((await poller.pollOnce({ ...mapping, work_orders: null } as unknown as MappingConfig, settings, now)).ok).toBe(true);
+
+    expect(db.state.get('late_data')).toMatchObject({
+      consecutive_failures: 1,
+      last_error: 'unit_steps: the late-data re-pull stopped at the page cap with rows still to read',
+    });
   });
 });

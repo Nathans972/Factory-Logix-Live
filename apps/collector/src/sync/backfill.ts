@@ -212,16 +212,16 @@ export class Backfill {
         // Every job changed since the first day. Open at the end: a job that changes while this
         // runs comes back at the end of the pull instead of leaving the window, so the poller
         // sees that it moved and reads again from where it was (`Poller.pullOrdered`).
-        await this.poller.pullWindow('work_orders', mapping.work_orders, settings, {
+        await this.pullWhole(day, 'work_orders', mapping.work_orders, settings, {
           from,
           to: null,
           logSource: 'work_orders:backfill',
           touched,
         });
       }
-      await this.poller.pullWindow('unit_steps', mapping.unit_steps, settings, { from, to, logSource: 'unit_steps:backfill', touched });
+      await this.pullWhole(day, 'unit_steps', mapping.unit_steps, settings, { from, to, logSource: 'unit_steps:backfill', touched });
       if (mapping.defects) {
-        await this.poller.pullWindow('defects', mapping.defects, settings, { from, to, logSource: 'defects:backfill', touched });
+        await this.pullWhole(day, 'defects', mapping.defects, settings, { from, to, logSource: 'defects:backfill', touched });
       }
 
       await this.recomputer.recomputeHours(hoursOf(tz, day), settings, now);
@@ -241,6 +241,18 @@ export class Backfill {
       return { worked: true, finished: false, error: err };
     }
     return { worked: true, finished: false };
+  }
+
+  /**
+   * One window pull of the day being downloaded. A pull that comes back `truncated` stopped with
+   * rows of its window still unread: the day was not read whole, so it fails and is tried again
+   * instead of counting as downloaded.
+   */
+  private async pullWhole(day: string, ...pull: Parameters<Poller['pullWindow']>): Promise<void> {
+    const result = await this.poller.pullWindow(...pull);
+    if (result.truncated) {
+      throw new Error(`${pull[0]}: the window pull stopped at the page cap with rows still to read, so ${day} was not read whole. Raise poll_page_size`);
+    }
   }
 
   /**

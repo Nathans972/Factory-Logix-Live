@@ -659,6 +659,8 @@ export class Poller {
           logSource: `${dataset}:late`,
           touched,
         });
+        // A window not read to its end is a failed re-pull, not a short one.
+        if (result.truncated) throw new Error(`${dataset}: the late-data re-pull stopped at the page cap with rows still to read`);
         rows += result.rows;
       }
     } catch (err) {
@@ -690,17 +692,21 @@ export class Poller {
    * the row after the last one read), until the window is read to its end. A pass that gets no
    * further (more rows with one timestamp than a pass reads; for a whole data source, a service
    * that ignores `$skip`) fails the pull, so a window that was not read whole never counts as read.
+   *
+   * `truncated` says the pull stopped with rows of its window still unread. It is false here,
+   * since the pull reads on or fails, but a caller counts a window as read only while it is false:
+   * the backfill does not count the day, and the late-data re-pull is recorded as failed.
    */
   async pullWindow(
     dataset: DatasetName,
     mapping: DatasetMapping,
     settings: Settings,
     opts: { from: number; to: number | null; now?: number; logSource?: string; touched?: number[] },
-  ): Promise<{ rows: number; ingested: number; skipped: number }> {
+  ): Promise<{ rows: number; ingested: number; skipped: number; truncated: boolean }> {
     const logSource = opts.logSource ?? `${dataset}:window`;
     const logId = await startSyncLog(this.deps.pool, logSource);
     const started = Date.now();
-    const out = { rows: 0, ingested: 0, skipped: 0 };
+    const out = { rows: 0, ingested: 0, skipped: 0, truncated: false };
     const plan = this.plan(dataset, mapping);
 
     try {
