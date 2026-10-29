@@ -133,6 +133,10 @@ history on every poll (spec 4.5):
   collector instead filters on that dataset's primary timestamp (`complete_ts`/`start_ts` for
   unit steps, `found_ts` for defects, `modified_at`/`created_at` for work orders) using the
   same overlap. Use this when the entity set has no reliable last-modified field.
+- **Changing the watermark field later** from a numeric ID to a timestamp field or to "none"
+  needs nothing else: the stored watermark is an ID, not a time, and is not used. That dataset's
+  next poll reads as its first run did (2 h back; work orders as far back as `late_data_hours`)
+  and goes on from there; the collector log says so.
 - Small dimension datasets with **no timestamp at all** (`operators`, `routes`, `standards`,
   and `work_orders` if nothing else is available) are pulled in full, at most 20 pages per poll
   (10,000 rows at the default page size). A longer list is read over several polls: each poll

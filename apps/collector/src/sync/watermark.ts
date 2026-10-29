@@ -77,10 +77,17 @@ export interface ParsedWatermark {
   text: string | null;
 }
 
+/**
+ * A timestamp watermark as `serialize` writes it: ISO 8601, date first. Other text was stored for
+ * another watermark field (digits: a numeric id) and is no timestamp, whatever `Date.parse` makes
+ * of it: it reads '5000' as the year 5000 and '150' as the year 150.
+ */
+const ISO_DATE = /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}/;
+
 export function parseStoredWatermark(stored: string | null, kind: WatermarkKind): ParsedWatermark {
   if (!stored) return { ms: null, numeric: null, text: null };
   if (kind === 'timestamp') {
-    const ms = Date.parse(stored);
+    const ms = ISO_DATE.test(stored) ? Date.parse(stored) : Number.NaN;
     return { ms: Number.isNaN(ms) ? null : ms, numeric: null, text: stored };
   }
   if (kind === 'number') {

@@ -205,9 +205,23 @@ export class Poller {
    * stamped in the future) or the clock went back. Polling from it would skip every new row, and
    * since a watermark never moves backwards it would stay; the start of the first-run lookback
    * replaces it.
+   *
+   * Stored text that is no timestamp at all was stored for another watermark field: the id of a
+   * numeric one, before the mapping changed the watermark to a timestamp field or to none. It says
+   * nothing about where to read from, so the poll reads from where a first run does (see
+   * `firstRunFrom`), and that replaces it.
    */
-  private usableStoredMs(dataset: DatasetName, storedMs: number | null, now: number): number | null {
-    if (storedMs === null || storedMs <= now) return storedMs;
+  private usableStoredMs(dataset: DatasetName, stored: string | null, settings: Settings, now: number): number | null {
+    const storedMs = parseStoredWatermark(stored, 'timestamp').ms;
+    if (!stored || (storedMs !== null && storedMs <= now)) return storedMs;
+    if (storedMs === null) {
+      const restart = this.firstRunFrom(dataset, settings, now);
+      this.deps.log.warn(
+        { dataset, watermark: stored, restart_from: new Date(restart).toISOString() },
+        'stored watermark is not a timestamp (the mapping changed the watermark field); polling from the first-run lookback',
+      );
+      return restart;
+    }
     const restart = now - FIRST_RUN_LOOKBACK_MS;
     this.deps.log.warn(
       { dataset, watermark: new Date(storedMs).toISOString(), restart_from: new Date(restart).toISOString() },
@@ -291,7 +305,7 @@ export class Poller {
       const stored = parseStoredWatermark(state?.watermark ?? null, plan.watermarkKind);
       /** The timestamp the persisted watermark represents, whichever mode produced it. */
       let storedMs: number | null = null;
-      /** The persisted watermark was ahead of the poll time and `storedMs` replaces it. */
+      /** The persisted watermark was ahead of the poll time, or no timestamp, and `storedMs` replaces it. */
       let replaceStored = false;
       const useWatermark =
         plan.watermarkField !== null && (plan.watermarkKind !== 'number' || stored.numeric !== null || plan.timestampField === null);
@@ -300,7 +314,7 @@ export class Poller {
         trackField = plan.watermarkField;
         orderBy = `${plan.watermarkField} asc`;
         if (plan.watermarkKind === 'timestamp') {
-          storedMs = this.usableStoredMs(dataset, stored.ms, now);
+          storedMs = this.usableStoredMs(dataset, stored.text, settings, now);
           replaceStored = storedMs !== stored.ms;
           const since = (storedMs ?? this.firstRunFrom(dataset, settings, now)) - overlapMs;
           filter = cmp(
@@ -314,16 +328,18 @@ export class Poller {
             'ge',
             this.source.literal(mapping.entity_set, plan.watermarkField, { kind: 'number', value: stored.numeric }),
           );
-        } else if (stored.text) {
+        } else if (plan.watermarkKind === 'string' && stored.text) {
           filter = cmp(plan.watermarkField, 'ge', this.source.literal(mapping.entity_set, plan.watermarkField, { kind: 'string', value: stored.text }));
         }
+        // A number field whose stored text is no number (a timestamp, stored before the mapping
+        // changed the watermark field) reads as a first run does: no `$filter`, in the field's order.
       } else if (plan.timestampField) {
         trackField = plan.timestampField;
         trackKind = 'timestamp';
         orderBy = `${plan.timestampField} asc`;
         // Window mode always persists an ISO timestamp, even when the mapped watermark is an id.
         const persistedMs = parseStoredWatermark(state?.watermark ?? null, 'timestamp').ms;
-        storedMs = this.usableStoredMs(dataset, persistedMs, now);
+        storedMs = this.usableStoredMs(dataset, state?.watermark ?? null, settings, now);
         replaceStored = storedMs !== persistedMs;
         const since = (storedMs ?? this.firstRunFrom(dataset, settings, now)) - overlapMs;
         filter = cmp(

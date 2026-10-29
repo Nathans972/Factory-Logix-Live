@@ -133,6 +133,14 @@ describe('parseStoredWatermark', () => {
     });
   });
 
+  it('reads no timestamp from a stored numeric id, which Date.parse would take for a year', () => {
+    for (const id of ['5000', '48210', '2025', '1999', '150', '7']) {
+      expect(parseStoredWatermark(id, 'timestamp')).toEqual({ ms: null, numeric: null, text: id });
+    }
+    // The form toISOString writes for a year past 9999 is still a timestamp.
+    expect(parseStoredWatermark('+048210-01-01T00:00:00.000Z', 'timestamp').ms).toBe(Date.UTC(48210, 0, 1));
+  });
+
   it('parses stored numeric ids and rejects non-numeric text', () => {
     expect(parseStoredWatermark('42', 'number')).toEqual({ ms: null, numeric: 42, text: '42' });
     expect(parseStoredWatermark('4x2', 'number')).toEqual({ ms: null, numeric: null, text: '4x2' });
