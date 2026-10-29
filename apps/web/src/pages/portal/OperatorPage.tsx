@@ -5,13 +5,13 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CellColor, OperatorRangeRow, PinMode } from '@fld/shared';
+import type { OperatorRangeRow, PinMode } from '@fld/shared';
 import type { OperatorDetailQuery } from '../../data/DataSource';
 import { useDataSource } from '../../data/DataSourceContext';
 import { hasRole, useAuth } from '../../auth/AuthContext';
 import { usePlantTz } from '../../lib/usePlantTz';
 import { downloadCsv } from '../../lib/csv';
-import { formatDateTime, formatInt, formatMinutes, formatNum, formatPct, formatTime } from '../../lib/format';
+import { formatDateTime, formatHours, formatInt, formatMinutes, formatNum, formatPct, formatTime } from '../../lib/format';
 import {
   Breadcrumbs,
   Button,
@@ -50,15 +50,6 @@ function msFromLocalInput(v: string): number | undefined {
   if (!v) return undefined;
   const t = Date.parse(v);
   return Number.isFinite(t) ? t : undefined;
-}
-
-/** Pace bands from docs/DESIGN.md, used for the aggregate KPI tile only. */
-function paceColor(pace: number | null): CellColor {
-  if (pace == null || !Number.isFinite(pace)) return 'neutral';
-  if (pace < 0.7) return 'red';
-  if (pace < 0.9) return 'yellow';
-  if (pace <= 1.05) return 'green';
-  return 'blue';
 }
 
 export function OperatorPage() {
@@ -169,8 +160,8 @@ export function OperatorPage() {
   const units = rows.reduce((s, r) => s + r.units, 0);
   const visitorUnits = rows.reduce((s, r) => s + r.visitor_units, 0);
   const chargedMinutes = rows.reduce((s, r) => s + r.charged_minutes, 0);
-  const targetUnits = rows.reduce((s, r) => s + r.target_units, 0);
-  const pace = targetUnits > 0 ? units / targetUnits : null;
+  // counted in charged hours but left out of the pace (spec 7.11)
+  const noStdHours = d?.summary.charged_hours_without_std ?? 0;
   const eligibleHours = rows.reduce((s, r) => s + r.eligible_hours, 0);
   const visitorHours = rows.reduce((s, r) => s + r.visitor_hours, 0);
 
@@ -343,10 +334,21 @@ export function OperatorPage() {
             <KpiTile
               label="Units in range"
               value={formatInt(units)}
-              hint={formatInt(targetUnits) + ' at standard' + (visitorUnits > 0 ? ' · +' + formatInt(visitorUnits) + ' visitor' : '')}
+              hint={rows.length + ' job/operation rows' + (visitorUnits > 0 ? ' · +' + formatInt(visitorUnits) + ' visitor' : '')}
             />
             <KpiTile label="Charged hours" value={formatNum(chargedMinutes / 60, 1)} hint="eligible time against a standard" />
-            <KpiTile label="Pace" value={formatPct(pace)} accent={cellAccent(paceColor(pace))} hint={rows.length + ' job/operation rows'} />
+            <KpiTile
+              label="Pace"
+              value={formatPct(d.summary.efficiency)}
+              accent={cellAccent(d.summary.color)}
+              hint={
+                formatHours(d.summary.earned_hours, 1) +
+                ' earned / ' +
+                formatHours(d.summary.charged_hours - noStdHours, 1) +
+                ' charged' +
+                (noStdHours > 0 ? ' with a StdHr' : '')
+              }
+            />
             <KpiTile
               label="Eligible / visitor hours"
               value={formatNum(eligibleHours, 1) + ' / ' + formatNum(visitorHours, 1)}

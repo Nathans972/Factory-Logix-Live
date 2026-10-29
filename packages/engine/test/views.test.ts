@@ -465,6 +465,45 @@ describe('buildOperatorDetail', () => {
     expect(detail.range.to_utc).toBe(ms('2025-06-10T22:00-04:00'));
     expect(detail.operator_name).toBe('Alice');
   });
+
+  it('rolls the range up in earned hours, as the shift view does for the same operator (spec 7.11)', () => {
+    // Label at half its StdHr of 60 and hand solder at 150% of its StdHr of 6, an hour each: 100% overall,
+    // where 39 units over a 66-unit target (59%) would lean towards the fast operation.
+    const cells = [
+      hourCell({ hour: SH09, job: 'JA', op: 'Label', operator: 'OP1', units: 30, charged: 60, std: 60 }),
+      hourCell({ hour: SH10, job: 'JB', op: 'Hand solder', operator: 'OP1', units: 9, charged: 60, std: 6 }),
+      hourCell({ hour: ms('2025-06-10T11:00-04:00'), job: 'JB', op: 'Pack', operator: 'OP1', units: 12, charged: 60, std: null }),
+      hourCell({ hour: ms('2025-06-10T11:00-04:00'), job: 'JA', op: 'Weld', operator: 'OP1', units: 4, eligible: false }),
+      hourCell({ hour: SH10, job: 'JA', op: 'Label', operator: 'OP2', units: 99, charged: 60, std: 60 }),
+    ];
+    const summary = buildOperatorDetail({
+      operator_id: 'OP1',
+      operator_name: 'Alice',
+      cells,
+      columns: rollingWindowColumns(SHIFT_NOW, TZ),
+      assignment: null,
+      pins: [],
+      product_names: {},
+      settings,
+      now: SHIFT_NOW,
+      range: { from_utc: SHIFT.start_utc, to_utc: SHIFT.end_utc },
+    }).summary;
+    expect(summary).toMatchObject({ units: 51, visitor_units: 4, charged_hours: 3, earned_hours: 2, efficiency: 1, color: 'green' });
+    // the hour without a standard is counted and flagged, not judged
+    expect(summary).toMatchObject({ rows_without_std: 1, charged_hours_without_std: 1 });
+
+    const byOperator = buildShiftView({ ...shiftInput(), cells }).rollups.by_operator.find((r) => r.key === 'OP1')!;
+    expect(summary).toMatchObject({
+      units: byOperator.units,
+      visitor_units: byOperator.visitor_units,
+      charged_hours: byOperator.charged_hours,
+      earned_hours: byOperator.earned_hours,
+      efficiency: byOperator.efficiency,
+      color: byOperator.color,
+      rows_without_std: byOperator.rows_without_std,
+      charged_hours_without_std: byOperator.charged_hours_without_std,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

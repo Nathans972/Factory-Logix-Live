@@ -377,6 +377,11 @@ export interface OperatorDetail {
   assignment: OperatorAssignment | null;
   strips: OperatorStrip[];
   rows: OperatorRangeRow[];
+  /**
+   * the operator's cells in the range rolled up in earned hours (spec 7.11), the same figures as the
+   * operator's row in the shift view's breakdown: rows with different StdHr don't add up in units
+   */
+  summary: RollupRow;
   range: { from_utc: UtcMs; to_utc: UtcMs };
   generated_at: UtcMs;
 }

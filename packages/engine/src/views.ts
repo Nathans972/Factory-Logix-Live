@@ -659,6 +659,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
     visitor_hours: number;
   }
   const rowAccs = new Map<string, RowAcc>();
+  const rangeCells: HourCell[] = [];
 
   for (const c of cells) {
     if (c.operator_id !== operator_id) continue;
@@ -684,6 +685,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
     }
 
     if (c.hour_start_utc >= range.from_utc && c.hour_start_utc < range.to_utc) {
+      rangeCells.push(c);
       let row = rowAccs.get(key);
       if (row === undefined) {
         row = {
@@ -769,6 +771,9 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
     assignment,
     strips,
     rows,
+    // Earned hours over charged hours, as the shift view rolls the same cells up: units and targets
+    // summed across rows with different StdHr would lean towards the fast operations.
+    summary: computeRollups(rangeCells, settings).overall,
     range,
     generated_at: now,
   };

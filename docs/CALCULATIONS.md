@@ -233,6 +233,11 @@ anything across different operations, so roll-ups use **earned hours** instead:
   they still count in the units and charged-hours totals. Efficiency is a dash only when no row
   in the group has a StdHr.
 
+The operator page's **Pace** tile is this efficiency for one operator over the range picked
+there, so for a shift it matches that operator's row in the shift view's breakdown (with no
+filter set). Adding up the operator's units and targets instead would lean towards whichever
+operation has the higher StdHr.
+
 **Worked example (spec scenario 13):** two rows in a shift — 60 units at StdHr 30 with 60
 charged minutes, and 10 units at StdHr 12 with 60 charged minutes.
 
