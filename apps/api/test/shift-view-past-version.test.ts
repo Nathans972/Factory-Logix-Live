@@ -42,7 +42,7 @@ function fakeDb(steps: UnitStep[], cells: HourCell[]): Db {
       const [from, to] = [ms(params[0]), ms(params[1])];
       return cells.filter((c) => c.hour_start_utc >= from && c.hour_start_utc < to).map((c) => ({ ...c, hour_start_utc: new Date(c.hour_start_utc) }));
     }
-    if (sql.startsWith('SELECT DISTINCT job_number FROM unit_steps')) {
+    if (sql.startsWith('SELECT DISTINCT job_number FROM unit_steps') || sql.startsWith('SELECT job_number FROM unit_steps')) {
       const [from, to] = [ms(params[0]), ms(params[1])];
       const inside = (t: number | null) => t !== null && t >= from && t < to;
       return [...new Set(steps.filter((s) => inside(s.start_ts) || inside(s.complete_ts)).map((s) => s.job_number))].map((job_number) => ({ job_number }));
