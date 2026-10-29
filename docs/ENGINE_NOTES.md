@@ -31,7 +31,7 @@ canonical interpretation. They are binding for the implementation and its tests.
 Input steps are all steps for one (product, operation) in the lookback. Algorithm:
 
 1. Filter: `complete_ts != null`, `complete_ts >= now - std_lookback_days`, `complete_ts > start_ts`, duration `<= std_max_unit_minutes`, `complete_ts < hourStartUtc(now)` (current hour excluded), and `rework_flag !== true` when `rework_flag_mapped`.
-2. Eligibility: compute work minutes per (operator, job, hour) from **all** input steps (before the duration filter, using `[start, complete ?? now]` clipped to the hour), and mark eligible when `>= eligibility_minutes` (completed-hour rule only; no scaling, no continuing rule, no pins). Keep only units whose `complete_ts` hour is eligible for that operator/job.
+2. Eligibility: compute work minutes per (operator, job, hour) from **all** input steps (before the duration filter, using `[start, complete ?? now]` clipped to the hour), and mark eligible when `>= eligibility_minutes` (completed-hour rule only; no scaling, no continuing rule, no pins). Keep only units whose `complete_ts` hour is eligible for that operator/job. Only those hours are computed, and an hour stops taking work once it is eligible, so a step with a zero-date start (1900) is not walked hour by hour and many of them do not add to the same hours again and again.
 3. Sessions per operator (across jobs of the same product/operation): sort by start; a unit joins the current session if `start <= sessionEnd + session_gap_minutes` where `sessionEnd` is the max complete seen so far; otherwise a new session starts. Busy minutes = union length of the session's intervals minus overlap with breaks (union of breaks). Per-unit minutes = busy / n. If busy is 0 (all inside a break), skip those units.
 4. `median_minutes_per_unit` = median of all per-unit values (average of the two middle values for even counts). `computed_std_hr = round(60 / median, 1)`.
 5. `sample_units`, `sample_operators` (distinct operator_ids among sampled units), `sample_from/to` = min/max complete_ts of sampled units.
@@ -91,7 +91,7 @@ after last event: if assigned: end = min(idleDeadline(lastScan), now, to_utc); c
 
 The pre-`from_utc` steps supplied by the caller establish the state at `from_utc` naturally because the sweep starts at the earliest supplied step. Emit only cells whose hour is in `[from_utc, to_utc)`.
 
-Note: eligibility for an event's hour must be known before the sweep. Pass 1 covers every hour touched by the supplied steps. For the current-hour "continuing operator" rule, pass 1 evaluates the previous hour first (it is a completed hour).
+Note: eligibility for an event's hour must be known before the sweep. Pass 1 covers every hour whose work minutes are read: the hours in `[from_utc, to_utc)`, the hours of the events and the hour before the current one. A step's other hours are skipped, not walked (a zero-date start, 1900 or 1970, is a million hours). For the current-hour "continuing operator" rule, pass 1 evaluates the previous hour first (it is a completed hour).
 
 ### Pass 3: cell assembly
 

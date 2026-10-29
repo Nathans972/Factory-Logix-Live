@@ -14,7 +14,7 @@ import type {
   UtcMs,
 } from '@fld/shared';
 import type { ComputeHourCellsInput, ComputeHourCellsOutput, EngineSettings } from '@fld/shared';
-import { hourStartUtc, mergeIntervals, nextHourStartUtc, prevHourStartUtc } from './time.js';
+import { firstHourAtOrAfter, hourStartUtc, mergeIntervals, nextHourStartUtc, prevHourStartUtc } from './time.js';
 import { stdKey } from './standards.js';
 
 const MINUTE_MS = 60_000;
@@ -105,6 +105,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
 
   const cells: HourCell[] = [];
   const assignments: OperatorAssignment[] = [];
+  const windowFrom = Number.isFinite(from_utc) ? hourStartUtc(from_utc, tz) : from_utc;
 
   for (const [operator_id, opSteps] of byOperator) {
     const accs = new Map<string, CellAcc>();
@@ -130,33 +131,51 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
       return acc;
     };
 
-    // ---------------- Pass 1: work minutes, units, events ----------------
+    // ---------------- Pass 1: events, then work minutes and units ----------------
     for (let i = 0; i < opSteps.length; i++) {
       const s = opSteps[i]!;
-      const start = s.start_ts;
       const complete = s.complete_ts ?? null;
 
-      if (start <= horizon) {
+      if (s.start_ts <= horizon) {
         events.push({
-          t: start,
+          t: s.start_ts,
           kind: 1,
           job: s.job_number,
           op: s.operation,
           product: s.product_number,
         });
       }
+      if (complete !== null && complete <= horizon) {
+        events.push({
+          t: complete,
+          kind: 0,
+          job: s.job_number,
+          op: s.operation,
+          product: s.product_number,
+        });
+      }
+    }
+
+    // Work minutes are read for the window's hours (pass 3) and, for eligibility, for the hours of the
+    // events and the hour before the current one. A step's other hours are skipped, not walked: from
+    // a zero-date start (1900, 1970) that is a million hours.
+    const eventHours = events.map((e) => hourStartUtc(e.t, tz));
+    eventHours.push(prevHourStartUtc(currentHour, tz));
+    eventHours.sort((a, b) => a - b);
+    const nextReadHour = (h: UtcMs): UtcMs => {
+      if (h >= windowFrom && h < to_utc) return h;
+      const next = eventHours[firstHourAtOrAfter(eventHours, h)] ?? Infinity;
+      return h < windowFrom ? Math.min(next, windowFrom) : next;
+    };
+
+    for (let i = 0; i < opSteps.length; i++) {
+      const s = opSteps[i]!;
+      const start = s.start_ts;
+      const complete = s.complete_ts ?? null;
+
       if (start <= now) touch(hourStartUtc(start, tz), s);
 
       if (complete !== null) {
-        if (complete <= horizon) {
-          events.push({
-            t: complete,
-            kind: 0,
-            job: s.job_number,
-            op: s.operation,
-            product: s.product_number,
-          });
-        }
         if (complete <= now) {
           const acc = touch(hourStartUtc(complete, tz), s);
           acc.units += 1;
@@ -172,7 +191,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
 
       const end = Math.min(complete ?? now, now);
       if (end > start) {
-        let h = hourStartUtc(start, tz);
+        let h = nextReadHour(hourStartUtc(start, tz));
         while (h < end) {
           const hEnd = nextHourStartUtc(h, tz);
           const ov = Math.min(end, hEnd) - Math.max(start, h);
@@ -182,7 +201,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
             const key = `${h}|${s.job_number}|${s.operation}`;
             workByKey.set(key, (workByKey.get(key) ?? 0) + ov / MINUTE_MS);
           }
-          h = hEnd;
+          h = nextReadHour(hEnd);
         }
       }
     }

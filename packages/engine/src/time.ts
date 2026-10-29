@@ -207,6 +207,18 @@ export function prevHourStartUtc(hourStart: UtcMs, tz: string): UtcMs {
   return hourStartUtc(hourStart - 1, tz);
 }
 
+/** Index of the first of the ascending hour starts `hours` at or after `t` (`hours.length` if none is). */
+export function firstHourAtOrAfter(hours: UtcMs[], t: UtcMs): number {
+  let lo = 0;
+  let hi = hours.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (hours[mid]! < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }

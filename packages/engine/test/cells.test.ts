@@ -505,4 +505,16 @@ describe('performance', () => {
     expect(out.cells.length).toBe(operators * Math.ceil((perOperator * 2) / 60));
     expect(out.assignments).toHaveLength(operators);
   });
+
+  it('does not walk the million hours since a zero-date start (1900) outside the window', () => {
+    const window = { from: '2025-06-10T09:00-04:00', to: '2025-06-10T11:00-04:00', now: '2025-06-10T10:30-04:00' };
+    const run = stepRun('OP1', 'JA', 'Weld', '2025-06-10T09:00-04:00', 5, 12);
+    const started = performance.now();
+    const zeroDate = compute([step('OP1', 'JA', 'Weld', '1900-01-01T00:00:00Z', '2025-06-10T10:10-04:00'), ...run], window);
+    expect(performance.now() - started).toBeLessThan(1_000); // vitest cannot time out a synchronous test
+    // The same unit started two days earlier gives the window the same cells.
+    const twoDays = compute([step('OP1', 'JA', 'Weld', '2025-06-08T09:00-04:00', '2025-06-10T10:10-04:00'), ...run], window);
+    expect(zeroDate.cells).toHaveLength(2);
+    expect(zeroDate).toEqual(twoDays);
+  });
 });
