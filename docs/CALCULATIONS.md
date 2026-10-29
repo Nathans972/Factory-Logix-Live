@@ -88,6 +88,10 @@ active. The product page (`/products/:z`) shows all four numbers — base, adjus
 effective — and where each one came from, and every change is written to the audit log with
 the note the manager entered.
 
+Setting an adjustment or override again on the same scope (say an override of 40, then 36 the
+next day) replaces the old one. Clearing it later goes back to whatever applies without it,
+never to the 40.
+
 ## 3. Eligibility and visitors
 
 Operators frequently "scan through" a handful of boards on a job they are not actually

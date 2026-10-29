@@ -38,9 +38,9 @@ Migrations at start-up have no such limit.
 | GET | `/api/portal/dashboard/:job?grouped=&shift_length_hours=&show_std_day=` | viewer | | `TvDashboard` (same fallback for a job without a work order; a TV assigned to it shows this dashboard) |
 | GET | `/api/portal/products?q=` | viewer | | `ProductListItem[]` |
 | GET | `/api/portal/products/:z` | viewer | | `ProductView` |
-| POST | `/api/portal/products/:z/adjustments` | manager | `CreateAdjustmentRequest` (scope product or product_operation) | `StandardAdjustment` |
+| POST | `/api/portal/products/:z/adjustments` | manager | `CreateAdjustmentRequest` (scope product or product_operation) | `StandardAdjustment` (turns off the active one on the same scope; audit `standards.adjustment_replaced`) |
 | DELETE | `/api/portal/adjustments/:id` | manager | | `OkResponse` (scope product or product_operation; `400` for global and operation ones, which `DELETE /api/admin/standards/adjustments/:id` removes) |
-| POST | `/api/portal/products/:z/overrides` | manager | `CreateOverrideRequest` | `StandardOverride` |
+| POST | `/api/portal/products/:z/overrides` | manager | `CreateOverrideRequest` | `StandardOverride` (turns off the active one on the same scope; audit `standards.override_replaced`) |
 | DELETE | `/api/portal/overrides/:id` | manager | | `OkResponse` (sets active=false) |
 | POST | `/api/portal/products/:z/recompute` | manager | | `OkResponse` (async; notifies collector) |
 | GET | `/api/portal/pins?operator_id=&job_number=` | viewer | | `PinListResponse` |
@@ -71,7 +71,7 @@ Migrations at start-up have no such limit.
 | GET | `/api/admin/mapping/metadata` | admin | | `ODataMetadata` (fetches live `$metadata`; 400 asking for the password again when the saved one cannot be decrypted, or when the saved `base_url` holds a user name or password) |
 | POST | `/api/admin/mapping/preview` | admin | `MappingPreviewRequest` | `MappingPreviewResult` (400 asking for the password again when the saved one cannot be decrypted, or when the saved `base_url` holds a user name or password) |
 | GET | `/api/admin/standards` | manager | | `StandardsAdminResponse` |
-| POST | `/api/admin/standards/adjustments` | manager | `CreateAdjustmentRequest` (global / operation) | `StandardAdjustment` |
+| POST | `/api/admin/standards/adjustments` | manager | `CreateAdjustmentRequest` (global / operation) | `StandardAdjustment` (turns off the active one on the same scope; audit `standards.adjustment_replaced`) |
 | DELETE | `/api/admin/standards/adjustments/:id` | manager | | `OkResponse` |
 | POST | `/api/admin/standards/recompute` | manager | `RecomputeStandardsRequest` | `OkResponse` |
 | GET | `/api/admin/users` | admin | | `User[]` |

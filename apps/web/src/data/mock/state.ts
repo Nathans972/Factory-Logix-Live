@@ -1195,6 +1195,17 @@ export class MockStore {
       created_at: this.now(),
       note: req.note,
     };
+    // Replaces the adjustment on the same scope instead of stacking on it, as the API does.
+    const replaced = this.adjustments.filter(
+      (a) =>
+        a.scope === adj.scope &&
+        (adj.scope === 'global' || adj.scope === 'operation' || a.product_number === adj.product_number) &&
+        (adj.scope === 'global' || adj.scope === 'product' || a.operation === adj.operation),
+    );
+    for (const old of replaced) {
+      this.audit('replace', 'standard_adjustment', String(old.id), old, adj);
+      this.adjustments.splice(this.adjustments.indexOf(old), 1);
+    }
     this.adjustments.push(adj);
     this.bumpStandards();
     this.audit('create', 'standard_adjustment', String(adj.id), null, adj);
@@ -1222,6 +1233,17 @@ export class MockStore {
       note: req.note,
       active: true,
     };
+    const replaced = this.overrides.filter(
+      (o) =>
+        o.active &&
+        o.scope === ov.scope &&
+        o.product_number === ov.product_number &&
+        (ov.scope === 'product' || o.operation === ov.operation),
+    );
+    for (const old of replaced) {
+      this.audit('replace', 'standard_override', String(old.id), old, ov);
+      old.active = false;
+    }
     this.overrides.push(ov);
     this.bumpStandards();
     this.audit('create', 'standard_override', String(ov.id), null, ov);

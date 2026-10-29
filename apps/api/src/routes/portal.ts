@@ -36,6 +36,8 @@ import {
   getOverride,
   insertAdjustment,
   insertOverride,
+  retireReplacedAdjustments,
+  retireReplacedOverrides,
 } from '../db/repo/standards.js';
 import { isJobActive, listJobsWithActivity } from '../db/repo/work-orders.js';
 import { badRequest, notFound } from '../errors.js';
@@ -179,6 +181,9 @@ export async function registerPortalRoutes(app: FastifyInstance, ctx: AppContext
       note: body.note,
     });
     await audit(req, 'standards.adjustment_created', 'standard_adjustment', created.id, null, created);
+    for (const old of await retireReplacedAdjustments(ctx.db, created)) {
+      await audit(req, 'standards.adjustment_replaced', 'standard_adjustment', old.id, old, created);
+    }
     return created;
   });
 
@@ -208,6 +213,9 @@ export async function registerPortalRoutes(app: FastifyInstance, ctx: AppContext
       note: body.note,
     });
     await audit(req, 'standards.override_created', 'standard_override', created.id, null, created);
+    for (const old of await retireReplacedOverrides(ctx.db, created)) {
+      await audit(req, 'standards.override_replaced', 'standard_override', old.id, old, created);
+    }
     return created;
   });
 

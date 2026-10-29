@@ -588,6 +588,23 @@ describe('admin (in memory)', () => {
     ]);
     expect(s.breakDefs.find((b) => b.name === 'Lunch')?.shift_ids).toEqual([DAY_SHIFT_ID, version.id]);
   });
+
+  it('replaces an override or adjustment on the same scope like the API, so clearing it goes back to the base', async () => {
+    const pack = async () => (await ds.productView('PB-2200')).rows.find((r) => r.operation === 'Pack')!.effective;
+    const base = await pack();
+    const target = { scope: 'product_operation', product_number: 'PB-2200', operation: 'Pack', note: 'n' } as const;
+
+    await ds.createOverride('PB-2200', { ...target, std_hr: 40 });
+    const override = await ds.createOverride('PB-2200', { ...target, std_hr: 36 });
+    expect((await pack()).effective).toBe(36);
+    await ds.deleteOverride(override.id);
+    expect(await pack()).toEqual(base);
+
+    await ds.createProductAdjustment('PB-2200', { ...target, percent: 20 });
+    const adjustment = await ds.createProductAdjustment('PB-2200', { ...target, percent: 10 });
+    await ds.deleteAdjustment(adjustment.id);
+    expect(await pack()).toEqual(base);
+  });
 });
 
 describe('live simulation', () => {

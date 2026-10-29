@@ -476,6 +476,8 @@ Effective StdHr for (Z, operation) is resolved in this order:
 
 The portal's product view shows all four values (base, adjustment, override, effective) and their provenance. Changing any of them writes to `audit_log`.
 
+Saving an adjustment or override replaces the active one on the same scope (the same scope, and the same product and operation where the scope names them): the old one is turned off and the audit log records it as replaced. Clearing the new one then returns to what applies without it, never to the value it replaced.
+
 ### 7.3 Eligibility (visitor rule)
 
 Problem: operators frequently "scan through" a handful of boards on a job they are not working (boards missed earlier, rework). Counting them as operators would add a mostly empty, red row and skew grouped targets and standards.
