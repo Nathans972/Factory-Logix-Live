@@ -2,8 +2,9 @@
  * TV lifecycle hook (spec 8.1, 8.2, 8.4).
  *
  * - resolves the device identity once and registers with the backend on mount
- * - refetches `tvState` every 60 s, on `data_updated` / `sync_health` and on a `display_updated`
- *   for its own display, and registers the same token again when the server does not know it (404)
+ * - refetches `tvState` every 60 s, on `data_updated` / `sync_health` / `resync` and on a
+ *   `display_updated` for its own display, and registers the same token again when the server does
+ *   not know it (404)
  * - re-renders at the top of every plant-local hour so the rolling window rolls without data
  * - keeps the last good dashboard while refetching (no flicker) and tracks the offline/delayed
  *   banner timestamps

@@ -10,6 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SseEvent } from '@fld/shared';
+import type { LiveEvent } from '../DataSource';
 import { ApiDataSource } from './ApiDataSource';
 
 class FakeEventSource {
@@ -68,7 +69,7 @@ describe('ApiDataSource event stream after the api restarts', () => {
 
   it('opens a new stream when the browser has closed the old one for good', async () => {
     const ds = new ApiDataSource('/api');
-    const seen: SseEvent[] = [];
+    const seen: LiveEvent[] = [];
     ds.subscribe((e) => seen.push(e));
     expect(FakeEventSource.instances).toHaveLength(1);
 

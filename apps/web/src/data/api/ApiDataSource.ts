@@ -63,6 +63,7 @@ import {
   DataSourceError,
   type DashboardQuery,
   type DataSource,
+  type LiveEvent,
   type OperatorDetailQuery,
   type ShiftViewQuery,
   type Unsubscribe,
@@ -107,11 +108,25 @@ function queryString(params: Record<string, QueryValue>): string {
   return s ? '?' + s : '';
 }
 
+/**
+ * Whether the page is in a background tab or a minimized window.
+ *
+ * Over plain HTTP/1.1 (nginx `listen 80`; TLS is left to the customer) a browser opens at most six
+ * connections to the host, shared by all its tabs, and an open stream keeps one for good. Every
+ * portal page and every TV holds a stream, so six open tabs would leave no connection for any
+ * request in any of them. A hidden page gives its stream back and opens a new one when it is shown.
+ */
+function pageHidden(): boolean {
+  return typeof document !== 'undefined' && document.hidden;
+}
+
 export class ApiDataSource implements DataSource {
   readonly kind = 'api' as const;
 
   private es: EventSource | null = null;
-  private subscribers = new Set<(e: SseEvent) => void>();
+  /** No stream is held because the page is hidden; showing it opens one and sends `resync`. */
+  private paused = false;
+  private subscribers = new Set<(e: LiveEvent) => void>();
   private fallbackTimer: ReturnType<typeof setInterval> | null = null;
   private reopenTimer: ReturnType<typeof setTimeout> | null = null;
   private reopenDelayMs = STREAM_REOPEN_MIN_MS;
@@ -206,9 +221,14 @@ export class ApiDataSource implements DataSource {
     return this.get<SyncHealth>('/health/sync');
   }
 
-  subscribe(cb: (e: SseEvent) => void): Unsubscribe {
+  subscribe(cb: (e: LiveEvent) => void): Unsubscribe {
     this.subscribers.add(cb);
-    if (this.es === null) this.openStream();
+    if (this.subscribers.size === 1) {
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', this.onVisibilityChange);
+      }
+      this.openStream();
+    }
     let active = true;
     return () => {
       if (!active) return;
@@ -218,7 +238,20 @@ export class ApiDataSource implements DataSource {
     };
   }
 
-  private emit(e: SseEvent): void {
+  private readonly onVisibilityChange = (): void => {
+    if (pageHidden()) {
+      if (this.paused) return;
+      this.paused = true;
+      this.dropStream();
+    } else if (this.paused) {
+      this.paused = false;
+      this.openStream();
+      // Nothing sent while the page was hidden arrived, so subscribers refetch instead.
+      this.emit({ type: 'resync', at: Date.now() });
+    }
+  };
+
+  private emit(e: LiveEvent): void {
     for (const cb of [...this.subscribers]) {
       try {
         cb(e);
@@ -231,6 +264,12 @@ export class ApiDataSource implements DataSource {
   private openStream(): void {
     if (typeof EventSource === 'undefined') {
       // No SSE here (tests / old browsers): the synthetic heartbeat is the only signal.
+      this.startFallback();
+      return;
+    }
+    if (pageHidden()) {
+      // Opened when the page is shown (onVisibilityChange).
+      this.paused = true;
       this.startFallback();
       return;
     }
@@ -266,7 +305,8 @@ export class ApiDataSource implements DataSource {
     if (this.es !== closed || this.reopenTimer !== null) return;
     const delay = this.reopenDelayMs;
     this.reopenDelayMs = Math.min(delay * 2, STREAM_REOPEN_MAX_MS);
-    // closeStream() clears the timer, so a stream nobody listens to any more is not reopened.
+    // dropStream() clears the timer, so a stream nobody listens to any more, or that a hidden page
+    // gave back, is not reopened.
     this.reopenTimer = setTimeout(() => {
       this.reopenTimer = null;
       this.openStream();
@@ -280,7 +320,8 @@ export class ApiDataSource implements DataSource {
     }, FALLBACK_HEARTBEAT_MS);
   }
 
-  private closeStream(): void {
+  /** Closes the stream, giving its connection back to the browser, and cancels a pending reopen. */
+  private dropStream(): void {
     if (this.es !== null) {
       this.es.close();
       this.es = null;
@@ -290,6 +331,14 @@ export class ApiDataSource implements DataSource {
       this.reopenTimer = null;
     }
     this.reopenDelayMs = STREAM_REOPEN_MIN_MS;
+  }
+
+  private closeStream(): void {
+    this.dropStream();
+    this.paused = false;
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    }
     if (this.fallbackTimer !== null) {
       clearInterval(this.fallbackTimer);
       this.fallbackTimer = null;

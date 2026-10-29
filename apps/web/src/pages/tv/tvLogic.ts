@@ -6,7 +6,8 @@
  * the bottom that touch `window` / `localStorage` / `document.cookie`.
  * Those guard every browser access so the module can also be imported in a node test environment.
  */
-import { TV_CELL_TEXT, TV_COLORS, type CellColor, type SseEvent, type TvDashboard, type TvRow, type TvState } from '@fld/shared';
+import { TV_CELL_TEXT, TV_COLORS, type CellColor, type TvDashboard, type TvRow, type TvState } from '@fld/shared';
+import type { LiveEvent } from '../../data/DataSource';
 
 export const DEVICE_TOKEN_KEY = 'fld_device_token';
 /** 10 years, in seconds (spec 8.1: the token survives reboots and normal cache behavior). */
@@ -341,10 +342,11 @@ export function rowOperatorLabel(row: Pick<TvRow, 'operator_id' | 'operator_name
  * Whether a live event is a reason for the TV to fetch its state again. Every page gets a
  * `display_updated` for every display, including each new TV that registers (no login needed), so
  * a TV acts only on its own display's, or on any while it does not know which display it is yet.
+ * A `resync` means events were missed while the page was hidden, so it always is.
  */
-export function shouldRefetch(event: SseEvent, displayId: number | null): boolean {
+export function shouldRefetch(event: LiveEvent, displayId: number | null): boolean {
   if (event.type === 'display_updated') return displayId === null || event.display_id === displayId;
-  return event.type === 'data_updated' || event.type === 'sync_health';
+  return event.type === 'data_updated' || event.type === 'sync_health' || event.type === 'resync';
 }
 
 // ---------------------------------------------------------------- screen selection (spec 8.2)

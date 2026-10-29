@@ -104,6 +104,8 @@ describe('shouldRefetch', () => {
     expect(shouldRefetch({ type: 'display_updated', at: 1, display_id: 8 }, null)).toBe(true);
     expect(shouldRefetch({ type: 'settings_updated', at: 1 }, 7)).toBe(false);
     expect(shouldRefetch({ type: 'heartbeat', at: 1 }, 7)).toBe(false);
+    // Shown again after its stream was closed while hidden: anything may have changed.
+    expect(shouldRefetch({ type: 'resync', at: 1 }, 7)).toBe(true);
   });
 });
 
