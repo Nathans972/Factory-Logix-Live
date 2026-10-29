@@ -242,6 +242,7 @@ export async function registerPortalRoutes(app: FastifyInstance, ctx: AppContext
     const pins = await listPins(ctx.db, {
       operator_id: qStr(query.operator_id),
       job_number: qStr(query.job_number),
+      activeOnly: true,
     });
     return { pins };
   });

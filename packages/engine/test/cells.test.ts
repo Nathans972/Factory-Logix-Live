@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ComputeHourCellsInput, ComputeHourCellsOutput, UnitStep } from '@fld/shared';
+import type { ComputeHourCellsInput, ComputeHourCellsOutput, Pin, UnitStep } from '@fld/shared';
 import {
   colorForPace,
   computeDefectHourCells,
@@ -182,6 +182,35 @@ describe('eligibility', () => {
       ],
     });
     expect(findCell(otherOp.cells, { operator: 'OP1' })!.eligible).toBe(false);
+  });
+
+  it('judges each hour by the pins in force when it ended, whenever it is computed', () => {
+    // A 1-minute board every 10 minutes, 08:00-11:00: 6 work minutes an hour, a visitor unpinned.
+    const steps = stepRun('OP1', 'JA', 'Weld', '2025-06-10T08:00-04:00', 1, 18, { gapMinutes: 9 });
+    const eligible = (p: Pin, hour: string, now: string): boolean =>
+      findCell(compute(steps, { from: hour, to: at(hour) + HOUR, now, pins: [p] }).cells, { hour, operator: 'OP1' })!
+        .eligible;
+    const H8 = '2025-06-10T08:00-04:00';
+    const H9 = '2025-06-10T09:00-04:00';
+    const H10 = '2025-06-10T10:00-04:00';
+
+    // Removed at 10:20 (removing ends a pin): 09:00 keeps it; 10:00 is judged without it at once.
+    const removed = pin({
+      operator_id: 'OP1',
+      job_number: 'JA',
+      mode: 'force_eligible',
+      created_at: ms(H8),
+      expires_at: ms('2025-06-10T10:20-04:00'),
+    });
+    expect(eligible(removed, H9, '2025-06-10T11:05-04:00')).toBe(true);
+    expect(eligible(removed, H10, '2025-06-10T10:25-04:00')).toBe(false);
+    expect(eligible(removed, H10, '2025-06-10T11:05-04:00')).toBe(false);
+
+    // Created at 09:20: it forces 09:00 now and once that hour has ended, never the hour before.
+    const created = pin({ operator_id: 'OP1', job_number: 'JA', mode: 'force_eligible', created_at: ms('2025-06-10T09:20-04:00') });
+    expect(eligible(created, H9, '2025-06-10T09:30-04:00')).toBe(true);
+    expect(eligible(created, H9, '2025-06-10T10:05-04:00')).toBe(true);
+    expect(eligible(created, H8, '2025-06-10T09:30-04:00')).toBe(false);
   });
 });
 

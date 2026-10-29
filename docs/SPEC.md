@@ -488,7 +488,7 @@ Rule, evaluated per (operator, job, operation, hour):
 - **Completed hours:** eligible if `work_minutes >= settings.eligibility_minutes` (default 10).
 - **Current hour:** the threshold scales with elapsed time so the rule works from the first minutes: `threshold = max(1, eligibility_minutes × elapsed_minutes_in_hour / 60)`. An operator is also provisionally eligible if they were eligible on the same job/operation in the previous hour (continuing operator). Eligibility in the current hour may flip as evidence accumulates; that is expected.
 - Slow operations are safe: a step whose standard is 5 units/hour has about 12 minutes of work time on one board (60 / 5), so it still clears the 10-minute threshold.
-- Manager pins (`operator_pins`) force eligibility either way for a job (optionally a specific operation) until removed or expired.
+- Manager pins (`operator_pins`) force eligibility either way for a job (optionally a specific operation) until removed or expired. An hour that has ended is judged by the pins in force when it ended, so it keeps them after they expire or are removed (removing a pin ends it; the row is kept).
 
 **Consequences of being a visitor:** the operator's units on that job/operation still count toward job totals (Prior, Shift column, Qty Complete, defect counts). They do not create an operator row in separate mode with color (they appear as a gray "visitor" row, see 8.5), do not contribute charged minutes in grouped mode, do not count in the pace numerator, and their units are excluded from standards.
 

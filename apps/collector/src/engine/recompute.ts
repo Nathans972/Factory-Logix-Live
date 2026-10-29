@@ -23,6 +23,11 @@ import { loadAdjustments, loadBreakDefs, loadDefects, loadOverrides, loadPins, l
 /** How long `Recomputer.judged` remembers an hour; an older one is read back from its cells when computed again. */
 const JUDGED_MEMORY_MS = 3 * 24 * HOUR_MS;
 
+/** How far before a range the engine reads steps and breaks, for the ownership windows. */
+function lookbackMs(settings: Settings): number {
+  return Math.max(3 * HOUR_MS, settings.idle_timeout_minutes * 60_000 + HOUR_MS);
+}
+
 export interface RecomputeResult {
   hours: number[];
   ranges: number;
@@ -68,7 +73,7 @@ export class Recomputer {
       loadStandards(this.pool),
       loadAdjustments(this.pool),
       loadOverrides(this.pool),
-      loadPins(this.pool),
+      loadPins(this.pool, ranges[0]!.from - lookbackMs(settings)),
     ]);
 
     const hours: number[] = [];
@@ -118,16 +123,16 @@ export class Recomputer {
   ): Promise<number> {
     const tz = ctx.settings.plant_timezone;
     const engineSettings = pickEngineSettings(ctx.settings);
-    const lookbackMs = Math.max(3 * HOUR_MS, ctx.settings.idle_timeout_minutes * 60_000 + HOUR_MS);
+    const lookback = lookbackMs(ctx.settings);
     const currentHour = hourStartUtc(ctx.now, tz);
 
     const [steps, defects, kept] = await Promise.all([
-      loadUnitSteps(this.pool, { from: range.from, to: range.to, lookbackMs }),
+      loadUnitSteps(this.pool, { from: range.from, to: range.to, lookbackMs: lookback }),
       loadDefects(this.pool, range.from, range.to),
       ctx.currentStandards ? undefined : this.keptStdHr(range, currentHour),
     ]);
 
-    const breaks = expandBreaks(ctx.breakDefs, ctx.shifts, range.from - lookbackMs, range.to, tz);
+    const breaks = expandBreaks(ctx.breakDefs, ctx.shifts, range.from - lookback, range.to, tz);
     const extraKeys = [...new Set(steps.map((s) => `${s.product_number}\u0001${s.operation}`))].map((key) => {
       const [product_number, operation] = key.split('\u0001');
       return { product_number: product_number as string, operation: operation as string };

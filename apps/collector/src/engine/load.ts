@@ -110,12 +110,17 @@ export async function loadOverrides(db: Queryable): Promise<StandardOverride[]> 
   }));
 }
 
-export async function loadPins(db: Queryable): Promise<Pin[]> {
+/**
+ * Pins in force at some time since `since`, expired and removed ones included: an hour that has
+ * ended keeps the pins that were in force when it ended (spec 7.3), whenever it is computed again.
+ */
+export async function loadPins(db: Queryable, since: number): Promise<Pin[]> {
   const rows = await q<Record<string, unknown>>(
     db,
     `SELECT p.id, p.operator_id, p.job_number, o.name AS operation, p.mode, p.created_by, p.created_at, p.expires_at
        FROM operator_pins p LEFT JOIN operations o ON o.id = p.operation_id
-      WHERE p.expires_at IS NULL OR p.expires_at > now()`,
+      WHERE p.expires_at IS NULL OR p.expires_at > $1`,
+    [new Date(since)],
   );
   return rows.map((r) => ({
     id: Number(r.id),

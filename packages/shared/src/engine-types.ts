@@ -63,6 +63,7 @@ export interface ComputeHourCellsInput {
    * that have ended, which stop changing (spec 7.7).
    */
   kept_std_hr?: Map<UtcMs, Map<StdKey, number | null>>;
+  /** Every pin in force at some time in the hours computed, expired and removed ones too (spec 7.3). */
   pins: Pin[];
   settings: EngineSettings;
   /** Emit cells for hour buckets whose start is in [from_utc, to_utc). */

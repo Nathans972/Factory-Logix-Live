@@ -1312,7 +1312,10 @@ export class MockStore {
     const idx = this.pins.findIndex((p) => p.id === id);
     if (idx < 0) return;
     const before = this.pins[idx]!;
-    this.pins.splice(idx, 1);
+    const now = this.now();
+    if (before.expires_at !== null && before.expires_at <= now) return;
+    // Ended, not dropped: the hours that ended while it was in force keep it (spec 7.3).
+    this.pins[idx] = { ...before, expires_at: now };
     this.cells.clear();
     this.audit('delete', 'pin', String(id), before, null);
   }

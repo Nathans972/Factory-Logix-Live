@@ -78,10 +78,10 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
   const idleMs = settings.idle_timeout_minutes * MINUTE_MS;
   const countWorkDuringBreaks = settings.count_work_during_breaks;
 
-  // --- Active pins indexed by operator|job.
+  // --- Pins indexed by operator|job. Expired ones too: an hour that has ended is judged by the pins in
+  // force when it ended (see pinFor), however long after their expiry or removal it is computed again.
   const pinIndex = new Map<string, Pin[]>();
   for (const p of pins) {
-    if (p.expires_at !== null && p.expires_at !== undefined && p.expires_at <= now) continue;
     const key = `${p.operator_id}|${p.job_number}`;
     let list = pinIndex.get(key);
     if (list === undefined) {
@@ -211,12 +211,16 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
     // ---------------- Eligibility ----------------
     const eligibilityMemo = new Map<string, boolean>();
 
-    const pinFor = (job: string, op: string): Pin | null => {
+    /** The pin for the hour: of those in force at its last moment (the current hour: now), spec 7.3. */
+    const pinFor = (hour: UtcMs, job: string, op: string): Pin | null => {
       const list = pinIndex.get(`${operator_id}|${job}`);
       if (list === undefined) return null;
+      const at = Math.min(now, nextHourStartUtc(hour, tz) - 1);
       let best: Pin | null = null;
       let bestRank = 0;
       for (const p of list) {
+        if (p.created_at > at) continue;
+        if (p.expires_at !== null && p.expires_at !== undefined && p.expires_at <= at) continue;
         const rank = p.operation === op ? 2 : p.operation === null ? 1 : 0;
         if (rank === 0) continue;
         if (
@@ -237,7 +241,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
       if (memo !== undefined) return memo;
 
       let result: boolean;
-      const pin = pinFor(job, op);
+      const pin = pinFor(hour, job, op);
       if (pin !== null) {
         result = pin.mode === 'force_eligible';
       } else {

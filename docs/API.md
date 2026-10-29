@@ -43,9 +43,9 @@ Migrations at start-up have no such limit.
 | POST | `/api/portal/products/:z/overrides` | manager | `CreateOverrideRequest` | `StandardOverride` (turns off the active one on the same scope; audit `standards.override_replaced`) |
 | DELETE | `/api/portal/overrides/:id` | manager | | `OkResponse` (sets active=false) |
 | POST | `/api/portal/products/:z/recompute` | manager | | `OkResponse` (async; notifies collector) |
-| GET | `/api/portal/pins?operator_id=&job_number=` | viewer | | `PinListResponse` |
+| GET | `/api/portal/pins?operator_id=&job_number=` | viewer | | `PinListResponse` (pins in force now) |
 | POST | `/api/portal/pins` | manager | `CreatePinRequest` | `Pin` |
-| DELETE | `/api/portal/pins/:id` | manager | | `OkResponse` |
+| DELETE | `/api/portal/pins/:id` | manager | | `OkResponse` (ends the pin now; the row is kept for the hours it covered, spec 7.3) |
 | GET | `/api/displays` | manager | | `Display[]` (same shape as the admin list; the manager TV displays page) |
 | PUT | `/api/displays/:id/job` | manager | `SetDisplayJobRequest` (`{ job_number: string \| null }`) | `Display` (changes only the job; audit `display.job_changed`; emits `display_updated` so the TV switches at once) |
 | GET | `/api/admin/displays` | admin | | `Display[]` |

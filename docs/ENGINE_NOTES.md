@@ -57,7 +57,7 @@ For every step of the operator, for every hour bucket overlapped by `[start, com
 Also record "scan events": a start event at `start_ts` and, if present, a complete event at `complete_ts`. Units are counted in the hour of `complete_ts`.
 
 Eligibility for `(hour, job, op)`:
-- Pins: an active pin (`expires_at` null or `> now`) for `(operator, job)` with `operation` null or equal forces the result (`force_eligible` => true, `force_visitor` => false). Pins win over everything.
+- Pins: a pin for `(operator, job)` with `operation` null or equal, in force at the hour's last moment `at = min(now, hourEnd - 1)` (`created_at <= at`, `expires_at` null or `> at`), forces the result (`force_eligible` => true, `force_visitor` => false); the most specific, then the newest, wins. Pins win over everything. So an hour that has ended keeps the pins in force when it ended, however long after their expiry (or removal, which ends a pin now) it is computed again, and a new pin starts with the hour it is created in.
 - If `hour` is the current hour (`hour == hourStartUtc(now)`): `elapsed = (now - hour)/60000`, `threshold = max(1, eligibility_minutes * elapsed / 60)`; eligible if `work_minutes >= threshold` OR the operator was eligible on the same `(job, op)` in the previous hour bucket (`hour - 1h`, evaluated with the completed-hour rule).
 - Else (completed hour): eligible if `work_minutes >= eligibility_minutes`.
 - A `(hour, job, op)` with zero work minutes and zero units and no events is not evaluated.

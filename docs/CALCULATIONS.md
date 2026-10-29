@@ -120,7 +120,10 @@ distinguishes:
   to a visitor at the top of every hour while evidence catches up.
 - **Manager pins** (Admin/portal, manager role) force an operator eligible or force them to be
   treated as a visitor on a job (optionally a specific operation), overriding the rule above
-  until the pin is removed or expires.
+  until the pin is removed or expires. Each hour is judged by the pins in force when it ended
+  (the current hour: right now), so the hours a pin covered keep it after it expires or is
+  removed, and a new pin starts with the hour it is created in; it does not change hours that
+  had already ended.
 
 Slow operations are naturally safe under this rule: a 5-units/hour operation gives an operator
 about 12 minutes of work time on a single board (60 ÷ 5), which still clears the 10-minute bar.

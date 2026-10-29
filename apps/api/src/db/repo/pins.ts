@@ -82,7 +82,14 @@ export async function insertPin(
   return created;
 }
 
+/**
+ * Removes a pin by ending it now. The row stays: the hours that ended while it was in force keep it
+ * when they are computed again (spec 7.3).
+ */
 export async function deletePin(db: Db, id: number): Promise<boolean> {
-  const res = await db.query('DELETE FROM operator_pins WHERE id = $1', [id]);
+  const res = await db.query(
+    'UPDATE operator_pins SET expires_at = now() WHERE id = $1 AND (expires_at IS NULL OR expires_at > now())',
+    [id],
+  );
   return (res.rowCount ?? 0) > 0;
 }
