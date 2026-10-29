@@ -296,20 +296,26 @@ those hours again after every poll, and the error and the banner clear once they
 
 The collector does one thing at a time: it does not poll while it recomputes standards (the
 nightly run, "Recompute all standards now", a product's "Recompute now", the one after a
-backfill) or processes a backfill chunk, and it polls as soon as that is done. In a large plant
-a standards recompute can take many minutes. Once it has held up the polls for 3 poll intervals,
-the TVs and portal show "Data delayed since HH:MM" as for any other delay, and Admin > Sync shows
-`degraded` with `the collector is recomputing the standards; polling resumes when that is done`
-(or `processing a backfill chunk`) under "Last error". The collector writes its heartbeat every
-30 seconds meanwhile, so it is still shown as running. Do not restart it: that only throws the
-work away.
+backfill), processes a backfill chunk, or recomputes the hour cells of today and yesterday after
+a change to an engine setting, the plant time zone, a shift or a break, and it polls as soon as
+that is done. In a large plant a standards recompute can take many minutes. Once it has held up
+the polls for 3 poll intervals, the TVs and portal show "Data delayed since HH:MM" as for any
+other delay, and Admin > Sync shows `degraded` with `the collector is recomputing the standards;
+polling resumes when that is done` (or `processing a backfill chunk`, `recomputing the hour
+cells`) under "Last error". The collector writes its heartbeat every 30 seconds meanwhile, so it
+is still shown as running. Do not restart it: that only throws the work away.
+
+Hour cells keep the engine settings, shifts and breaks they were computed with. When one of them
+changes, the collector recomputes the hour cells of today and yesterday with it (the TVs and the
+shifts of those days); earlier days keep what they were computed with. "Run backfill now"
+recomputes the whole backfill range with the current ones, as it downloads it again.
 
 Sync status values you will see in Admin > Sync:
 
 | Status | Meaning |
 |---|---|
 | `ok` | Last poll succeeded and data is current. |
-| `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in, while hour cells cannot be recomputed, while the nightly standards recompute keeps failing, or while a long standards recompute or backfill chunk holds up the polls; the last error names it. |
+| `degraded` | Some recent failures (under the breaker threshold) or backing off, but a poll has succeeded recently enough not to be "delayed" yet. Also shown while an optional data source keeps failing and work orders and unit steps come in, while hour cells cannot be recomputed, while the nightly standards recompute keeps failing, or while a long standards recompute, backfill chunk or hour cell recompute holds up the polls; the last error names it. |
 | `down` | The breaker is open (threshold reached, or FactoryLogix refused the login) and the last success is older than 3x the poll interval. |
 | `never` | The collector is not polling: the FactoryLogix connection or field mapping has not been configured yet, or what is saved cannot be used (for example a password saved under another `ENCRYPTION_KEY`, or a mapping that is no longer valid), in which case "Last error" says why. It also shows until the very first poll has finished. |
 

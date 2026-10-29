@@ -1,5 +1,6 @@
 import {
   DATASET_SPECS,
+  HOUR_CELL_SETTINGS_KEYS,
   connectionWriteSchema,
   datasetMappingSchema,
   mappingConfigSchema,
@@ -18,7 +19,7 @@ import { requireRole } from '../../auth/index.js';
 import type { AppContext } from '../../context.js';
 import { applySettingsPatch, getSettings } from '../../db/repo/settings.js';
 import { ApiError, badRequest } from '../../errors.js';
-import { sendControl } from '../../notify.js';
+import { requestCellRecompute, sendControl } from '../../notify.js';
 import { fetchMetadata, runPreview, type ODataCredentials } from '../../odata.js';
 import { getCredentials, getStoredConnection, saveConnection, toPublicConnection } from '../../services/connection.js';
 import { cacheMetadata, getCachedMetadata, getMapping, saveMapping } from '../../services/mapping.js';
@@ -28,10 +29,12 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
   const viewer = { preHandler: requireRole('viewer') };
   const admin = { preHandler: requireRole('admin') };
 
-  const configChanged = async (): Promise<void> => {
+  /** `cells`: what was saved changes the stored hour cells, so the recent ones are recomputed in that time zone. */
+  const configChanged = async (cells?: { tz: string }): Promise<void> => {
     ctx.sse.broadcast({ type: 'settings_updated', at: Date.now() });
     try {
       await sendControl(ctx.db, { cmd: 'restart' });
+      if (cells) await requestCellRecompute(ctx.db, cells.tz);
     } catch (err) {
       ctx.log.warn({ err }, 'could not notify the collector');
     }
@@ -51,7 +54,8 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
     await applySettingsPatch(ctx.db, patch, req.auth?.username ?? null);
     const after = await getSettings(ctx.db, { fresh: true });
     await audit(req, 'settings.updated', 'settings', null, before, after);
-    await configChanged();
+    const changesCells = HOUR_CELL_SETTINGS_KEYS.some((key) => patch[key] !== undefined && patch[key] !== before[key]);
+    await configChanged(changesCells ? { tz: after.plant_timezone } : undefined);
     return { settings: after };
   });
 

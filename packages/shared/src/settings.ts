@@ -104,6 +104,22 @@ export type SettingsKey = keyof Settings;
 
 export const SETTINGS_KEYS = Object.keys(DEFAULT_SETTINGS) as SettingsKey[];
 
+/**
+ * The settings the hour cells are computed and stored with (the plant's hours and breaks,
+ * eligibility, charged time, colour). Changing one makes the API ask the collector to recompute
+ * the cells of today and yesterday (`recompute_cells`, docs/API.md).
+ */
+export const HOUR_CELL_SETTINGS_KEYS: readonly SettingsKey[] = [
+  'plant_timezone',
+  'eligibility_minutes',
+  'neutral_minutes',
+  'idle_timeout_minutes',
+  'count_work_during_breaks',
+  'color_red_below',
+  'color_yellow_below',
+  'color_blue_above',
+];
+
 export function pickEngineSettings(s: Settings): EngineSettings {
   return {
     plant_timezone: s.plant_timezone,

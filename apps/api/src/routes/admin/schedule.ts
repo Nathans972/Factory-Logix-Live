@@ -21,7 +21,7 @@ import {
 } from '../../db/repo/schedule.js';
 import { getPlantTimezone } from '../../db/repo/settings.js';
 import { badRequest, notFound } from '../../errors.js';
-import { sendControl } from '../../notify.js';
+import { requestCellRecompute, sendControl } from '../../notify.js';
 import { changesShiftTimes, findOverlappingShift, previousDay } from '../../services/shift-validation.js';
 import { parseWith, requireIdParam } from '../../util/query.js';
 
@@ -33,6 +33,8 @@ export async function registerAdminScheduleRoutes(app: FastifyInstance, ctx: App
     ctx.sse.broadcast({ type: 'settings_updated', at: Date.now() });
     try {
       await sendControl(ctx.db, { cmd: 'restart' });
+      // Stored hour cells keep the breaks they were computed with.
+      await requestCellRecompute(ctx.db, await getPlantTimezone(ctx.db));
     } catch (err) {
       ctx.log.warn({ err }, 'could not notify the collector');
     }

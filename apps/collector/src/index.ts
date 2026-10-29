@@ -90,9 +90,10 @@ class Collector {
    */
   private refusedLogin: { connection: string; savedAt: number | null } | null = null;
   /**
-   * Hours whose cells could not be recomputed, tried again with every poll until they are (see
-   * `recomputeTouched`): the watermarks have moved past their rows, so no later poll touches them.
-   * In memory only: after a restart they wait for the late-data re-pull (`late_data_hours`).
+   * Hours whose cells could not be recomputed, after a poll or on `recompute_cells`, tried again
+   * with every poll until they are (see `recomputeTouched`): the watermarks have moved past their
+   * rows, so no later poll touches them. In memory only: after a restart they wait for the
+   * late-data re-pull (`late_data_hours`).
    */
   private readonly staleHours = new Set<number>();
   private mappingFingerprint = '';
@@ -500,7 +501,13 @@ class Collector {
           hours.push(hour);
           hour += HOUR_MS;
         }
-        await this.recomputer.recomputeHours(hours, settings, Date.now());
+        try {
+          await this.whileBusy('recomputing the hour cells', () => this.recomputer.recomputeHours(hours, settings, Date.now()));
+        } catch (err) {
+          // Tried again after every poll until they go through, as the hours of a poll are (`recomputeTouched`).
+          for (const failed of hours) this.staleHours.add(failed);
+          throw err;
+        }
         this.log.info({ hours: hours.length }, 'on-demand cell recompute finished');
         return;
       }

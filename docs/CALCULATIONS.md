@@ -301,6 +301,14 @@ simply units / target). The StdHr column shows the latest standard. If part of t
 no standard at all, those hours are left out of its pace, just like the job efficiency; the row
 is left unjudged only when none of it had a standard.
 
+**What happens to past hours when I change an engine setting, a shift or a break?**
+Hour cells are stored as they were computed. Saving an engine setting the cells depend on
+(eligibility, neutral or idle timeout minutes, work during breaks, the color bands), the plant
+time zone, a shift or a break recomputes the cells of today and yesterday with it, so the TVs and
+the shifts of those two days follow one rule. Earlier days keep the cells they were computed with:
+there, a row's or a shift's total is still colored with the current bands, but its hourly cells
+keep their old colors. "Run backfill now" recomputes the whole backfill range.
+
 **Why is StdHr a dash?**
 There is not yet enough sampled history for that product/operation (fewer than the configured
 minimum units or distinct operators) and no FactoryLogix StdHr is mapped as a fallback. Cells

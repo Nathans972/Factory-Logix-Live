@@ -101,6 +101,15 @@ Payload JSON: `{cmd:'restart'} | {cmd:'backfill_now'} | {cmd:'recompute_standard
 The API sends these; the collector listens. Commands that must survive a collector restart are
 also persisted (`backfill_progress.requested_now`, settings).
 
+Hour cells are stored with the settings, shifts and breaks of when they were computed, and on its
+own the collector only recomputes the current and previous hour and the hours new rows touch. So
+after a change to a shift, a break, or a setting the cells depend on (`HOUR_CELL_SETTINGS_KEYS`:
+plant time zone, eligibility, neutral and idle timeout minutes, work during breaks, color bands),
+the API sends `restart` and then `recompute_cells` from the start of yesterday, plant time, to now:
+the TVs and the shifts of today and yesterday. Earlier days keep the settings they were computed
+with. The collector runs it like a standards recompute (no poll meanwhile, heartbeat every 30 s),
+and hours it could not recompute are tried again after every poll.
+
 ## Export CSV
 
 CSV export is done client-side from the rendered table data; no server endpoint.
