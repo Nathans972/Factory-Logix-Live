@@ -153,11 +153,15 @@ export interface ResolveTokenInput {
  * Identity resolution (spec 8.1):
  *   `?demo=N` in mock mode (never persisted) → `?token=<uuid>` (persisted) →
  *   stored token (re-persisted so the cookie expiry rolls forward) → a fresh UUID.
- * Outside mock mode a stored token that is not a UUID can never register, so it is replaced: older
- * builds stored a `tv-…` token on TVs that loaded the page over plain HTTP.
+ * Outside mock mode a token that is not a UUID can never register, so it is skipped, never adopted
+ * or persisted: a bookmark typed with the pairing code (`?token=4821`) falls through to the stored
+ * token, and a stored `tv-…` token (older builds wrote one on TVs that loaded the page over plain
+ * HTTP) is replaced.
  */
 export function resolveDeviceToken(input: ResolveTokenInput): TokenResolution {
   const params = new URLSearchParams(input.search.startsWith('?') ? input.search.slice(1) : input.search);
+  // The mock DataSource accepts any token.
+  const usable = (token: string) => token !== '' && (input.isMock || UUID_RE.test(token));
 
   if (input.isMock) {
     const demo = (params.get('demo') ?? '').trim();
@@ -165,10 +169,10 @@ export function resolveDeviceToken(input: ResolveTokenInput): TokenResolution {
   }
 
   const fromQuery = (params.get('token') ?? '').trim();
-  if (fromQuery) return { token: fromQuery, persist: true, source: 'query' };
+  if (usable(fromQuery)) return { token: fromQuery, persist: true, source: 'query' };
 
   const stored = (input.stored ?? '').trim();
-  if (stored && (input.isMock || UUID_RE.test(stored))) return { token: stored, persist: true, source: 'stored' };
+  if (usable(stored)) return { token: stored, persist: true, source: 'stored' };
 
   return { token: input.generate(), persist: true, source: 'generated' };
 }

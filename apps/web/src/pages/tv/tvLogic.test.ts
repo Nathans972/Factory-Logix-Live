@@ -127,8 +127,15 @@ describe('resolveDeviceToken', () => {
   });
 
   it('prefers ?token= over storage and persists it (spec 8.1 bookmark restore)', () => {
-    const r = resolveDeviceToken({ search: '?token=1234-abcd&x=1', stored: 'stored-one', isMock: false, generate });
-    expect(r).toEqual({ token: '1234-abcd', persist: true, source: 'query' });
+    const QUERY = '2a7d4e91-8c3b-4f6a-9e1d-0b5c7a3f2e18';
+    const r = resolveDeviceToken({ search: `?token=${QUERY}&x=1`, stored: STORED, isMock: false, generate });
+    expect(r).toEqual({ token: QUERY, persist: true, source: 'query' });
+    // the mock DataSource accepts any token, so a mock bookmark need not be a UUID
+    expect(resolveDeviceToken({ search: '?token=demo-2', stored: STORED, isMock: true, generate })).toEqual({
+      token: 'demo-2',
+      persist: true,
+      source: 'query',
+    });
   });
 
   it('falls back to the stored token, re-persisting so the cookie expiry rolls forward', () => {
