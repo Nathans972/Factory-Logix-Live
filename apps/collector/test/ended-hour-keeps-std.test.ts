@@ -74,14 +74,14 @@ function memoryDb(computedStdHr: number | null) {
       return ok([]);
     }
     if (/INSERT INTO hour_cells/.test(sql)) {
-      for (let i = 0; i < params.length; i += 16) {
-        const r = params.slice(i, i + 16);
+      for (let i = 0; i < params.length; i += 17) {
+        const r = params.slice(i, i + 17);
         cells.push({
           hour: (r[0] as Date).getTime(), operator: r[4] as string, units: r[5] as number,
           provisional: r[11] as boolean, std_hr: r[12] as number | null, color: r[15] as string,
         });
       }
-      return ok([], params.length / 16);
+      return ok([], params.length / 17);
     }
     return ok([]); // shifts, breaks, adjustments, pins, defects, operations insert, notify, BEGIN/COMMIT
   };

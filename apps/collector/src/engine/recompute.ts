@@ -187,6 +187,7 @@ export class Recomputer {
           'target_units',
           'pace',
           'color',
+          'spans',
         ],
         rows: written.map((cell) => [
           new Date(cell.hour_start_utc),
@@ -205,6 +206,7 @@ export class Recomputer {
           cell.target_units,
           cell.pace,
           cell.color,
+          cell.spans ? JSON.stringify(cell.spans) : null,
         ]),
         conflict: ['hour_start_utc', 'job_number', 'operation_id', 'operator_id'],
         update: [
@@ -220,6 +222,7 @@ export class Recomputer {
           'target_units',
           'pace',
           'color',
+          'spans',
         ],
         extraSet: ['computed_at = now()'],
       });

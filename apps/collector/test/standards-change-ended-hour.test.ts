@@ -56,12 +56,12 @@ function fakePool() {
       return ok([]);
     }
     if (/INSERT INTO hour_cells/.test(sql)) {
-      for (let i = 0; i < params.length; i += 16) {
-        const r = params.slice(i, i + 16);
+      for (let i = 0; i < params.length; i += 17) {
+        const r = params.slice(i, i + 17);
         const hour = (r[0] as Date).getTime();
         cells.set(`${hour}|${r[1]}|${r[3]}|${r[4]}`, { hour, units: r[5], charged: r[9], eligible: r[10], std_hr: r[12], pace: r[14], color: r[15] });
       }
-      return ok([], params.length / 16);
+      return ok([], params.length / 17);
     }
     return ok([]); // shifts, breaks, adjustments, pins, defects, operations insert, notify, BEGIN/COMMIT
   };

@@ -13,6 +13,7 @@ import {
   expandShiftInstance,
   findCurrentOrMostRecentShift,
   findCurrentShift,
+  hourStartUtc,
   listShiftInstances,
 } from '@fld/engine';
 import type { Db } from '../db/pool.js';
@@ -88,7 +89,8 @@ export async function buildShiftViewForQuery(db: Db, query: ShiftViewQuery, now:
   const shift = await resolveShiftInstance(db, query, now);
 
   const [cells, activeJobNumbers] = await Promise.all([
-    getCellsInRange(db, shift.start_utc, shift.end_utc),
+    // From the start of the shift's first hour: a shift starting mid-hour (06:30) takes part of it.
+    getCellsInRange(db, hourStartUtc(shift.start_utc, settings.plant_timezone), shift.end_utc),
     getActiveJobNumbers(db, shift.start_utc, shift.end_utc),
   ]);
 

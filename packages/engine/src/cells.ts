@@ -4,6 +4,7 @@
  */
 import type {
   CellColor,
+  CellSpans,
   Defect,
   DefectHourCell,
   GroupedHourCell,
@@ -34,6 +35,8 @@ interface CellAcc {
   units: number;
   work_ms: number;
   pieces: Piece[];
+  completes: UtcMs[];
+  work: Piece[];
 }
 
 interface Ev {
@@ -125,6 +128,8 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
           units: 0,
           work_ms: 0,
           pieces: [],
+          completes: [],
+          work: [],
         };
         accs.set(key, acc);
       }
@@ -179,6 +184,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
         if (complete <= now) {
           const acc = touch(hourStartUtc(complete, tz), s);
           acc.units += 1;
+          acc.completes.push(complete);
           const cKey = `${s.job_number}|${s.operation}`;
           let list = completesByJobOp.get(cKey);
           if (list === undefined) {
@@ -198,6 +204,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
           if (ov > 0) {
             const acc = touch(h, s);
             acc.work_ms += ov;
+            acc.work.push({ from: Math.max(start, h), to: Math.min(end, hEnd) });
             const key = `${h}|${s.job_number}|${s.operation}`;
             workByKey.set(key, (workByKey.get(key) ?? 0) + ov / MINUTE_MS);
           }
@@ -364,6 +371,8 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
               units: 0,
               work_ms: 0,
               pieces: [],
+              completes: [],
+              work: [],
             };
             accs.set(key, acc);
           }
@@ -380,6 +389,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
       const eligible = isEligible(acc.hour, acc.job, acc.op);
       let windowMs = 0;
       let breakMs = 0;
+      const breakPieces: Piece[] = [];
       if (eligible && acc.pieces.length > 0) {
         const completes = completesByJobOp.get(`${acc.job}|${acc.op}`);
         for (const piece of acc.pieces) {
@@ -395,6 +405,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
                 !completedInside(completes, b.start_utc, b.end_utc)
               ) {
                 breakMs += ov;
+                breakPieces.push({ from: Math.max(piece.from, b.start_utc), to: Math.min(piece.to, b.end_utc) });
               }
             }
             i++;
@@ -415,13 +426,8 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
       const target_units = std_hr === null ? 0 : (std_hr * charged_minutes) / 60;
       const pace = std_hr !== null && target_units > 0 ? acc.units / target_units : null;
       const provisional = acc.hour === currentHour;
-
-      let color: CellColor;
-      if (!eligible) color = 'visitor';
-      else if (std_hr === null) color = 'neutral';
-      else if (provisional && charged_minutes < settings.neutral_minutes) color = 'neutral';
-      else if (charged_minutes === 0) color = 'neutral';
-      else color = colorForPace(pace, settings);
+      const color = cellColor(eligible, std_hr, provisional, charged_minutes, pace, settings);
+      const offsets = (list: Piece[]): [number, number][] => list.map((p) => [p.from - acc.hour, p.to - acc.hour]);
 
       cells.push({
         hour_start_utc: acc.hour,
@@ -440,6 +446,12 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
         target_units,
         pace,
         color,
+        spans: {
+          completes: acc.completes.map((t) => t - acc.hour),
+          work: offsets(acc.work),
+          window: eligible ? offsets(acc.pieces) : [],
+          breaks: offsets(breakPieces),
+        },
       });
     }
   }
@@ -454,6 +466,81 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
   assignments.sort((a, b) => cmp(a.operator_id, b.operator_id));
 
   return { cells, assignments };
+}
+
+function cellColor(
+  eligible: boolean,
+  std_hr: number | null,
+  provisional: boolean,
+  charged_minutes: number,
+  pace: number | null,
+  settings: EngineSettings,
+): CellColor {
+  if (!eligible) return 'visitor';
+  if (std_hr === null) return 'neutral';
+  if (provisional && charged_minutes < settings.neutral_minutes) return 'neutral';
+  if (charged_minutes === 0) return 'neutral';
+  return colorForPace(pace, settings);
+}
+
+/**
+ * The part of a cell that falls in [from, to), for a shift that changes mid-hour (06:30): each shift
+ * takes only its part of the hour. A cell wholly inside comes back as it is; one without spans
+ * (written before they were recorded) goes whole to the range its hour starts in. Null when none of
+ * its units, work or window falls inside.
+ */
+export function clipHourCell(cell: HourCell, from: UtcMs, to: UtcMs, settings: EngineSettings): HourCell | null {
+  const hour = cell.hour_start_utc;
+  const spans = cell.spans;
+  if (spans === undefined) return hour >= from && hour < to ? cell : null;
+  const hourEnd = nextHourStartUtc(hour, settings.plant_timezone);
+  if (from <= hour && to >= hourEnd) return cell;
+  if (to <= hour || from >= hourEnd) return null;
+
+  const a = from - hour;
+  const b = to - hour;
+  const clip = (list: [number, number][]): [number, number][] =>
+    list.flatMap(([s, e]): [number, number][] => (Math.min(e, b) > Math.max(s, a) ? [[Math.max(s, a), Math.min(e, b)]] : []));
+  const minutes = (list: [number, number][]): number => list.reduce((sum, [s, e]) => sum + (e - s), 0) / MINUTE_MS;
+  const clipped: CellSpans = {
+    completes: spans.completes.filter((t) => t >= a && t < b),
+    work: clip(spans.work),
+    window: clip(spans.window),
+    breaks: clip(spans.breaks),
+  };
+
+  const units = clipped.completes.length;
+  const work_minutes = minutes(clipped.work);
+  const window_minutes = minutes(clipped.window);
+  const break_minutes = minutes(clipped.breaks);
+  const charged_minutes = Math.max(0, window_minutes - break_minutes);
+  if (units === 0 && work_minutes === 0 && charged_minutes === 0) return null;
+
+  const { std_hr, eligible, provisional } = cell;
+  const target_units = std_hr === null ? 0 : (std_hr * charged_minutes) / 60;
+  const pace = std_hr !== null && target_units > 0 ? units / target_units : null;
+  return {
+    ...cell,
+    units,
+    work_minutes,
+    window_minutes,
+    break_minutes,
+    charged_minutes,
+    target_units,
+    pace,
+    color: cellColor(eligible, std_hr, provisional, charged_minutes, pace, settings),
+    spans: clipped,
+  };
+}
+
+/** The cells' parts that fall in [from, to) (`clipHourCell`). */
+export function clipHourCells(cells: HourCell[], from: UtcMs, to: UtcMs, settings: EngineSettings): HourCell[] {
+  const out: HourCell[] = [];
+  for (const c of cells) {
+    const part = clipHourCell(c, from, to, settings);
+    if (part !== null) out.push(part);
+  }
+  return out;
 }
 
 function cmp(a: string, b: string): number {

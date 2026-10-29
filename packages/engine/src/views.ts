@@ -38,10 +38,10 @@ import type {
   TvDefectRow,
   TvRow,
 } from '@fld/shared';
-import { colorForPace, groupCells } from './cells.js';
+import { clipHourCell, clipHourCells, colorForPace, groupCells } from './cells.js';
 import { computeRollups } from './rollups.js';
 import { resolveEffectiveStandard } from './standards.js';
-import { hourStartUtc } from './time.js';
+import { hourStartUtc, nextHourStartUtc } from './time.js';
 
 const UNKNOWN_OP_SEQ_BASE = 1000;
 
@@ -391,7 +391,8 @@ export function buildShiftView(input: ShiftViewInput): ShiftView {
   const operationFilter = f.operation != null && f.operation !== '' ? f.operation : null;
   const operatorFilter = f.operator != null && f.operator !== '' ? f.operator : null;
 
-  const filtered = cells.filter(
+  // A shift that changes mid-hour (06:30) takes only its part of the hours at its ends.
+  const filtered = clipHourCells(cells, shift.start_utc, shift.end_utc, settings).filter(
     (c) =>
       (jobFilter === null || c.job_number === jobFilter) &&
       (productFilter === null || c.product_number === productFilter) &&
@@ -684,14 +685,16 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
       strip.std_cell = laterStdCell(strip.std_cell, c);
     }
 
-    if (c.hour_start_utc >= range.from_utc && c.hour_start_utc < range.to_utc) {
-      rangeCells.push(c);
+    // A range that starts or ends mid-hour (a 06:30 shift) takes only its part of those hours.
+    const part = clipHourCell(c, range.from_utc, range.to_utc, settings);
+    if (part !== null) {
+      rangeCells.push(part);
       let row = rowAccs.get(key);
       if (row === undefined) {
         row = {
-          job: c.job_number,
-          product: c.product_number,
-          op: c.operation,
+          job: part.job_number,
+          product: part.product_number,
+          op: part.operation,
           std_cell: null,
           window_minutes: 0,
           totals: newRowTotals(),
@@ -702,15 +705,15 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
         };
         rowAccs.set(key, row);
       }
-      row.std_cell = laterStdCell(row.std_cell, c);
-      row.window_minutes += c.window_minutes;
+      row.std_cell = laterStdCell(row.std_cell, part);
+      row.window_minutes += part.window_minutes;
       // Visitor units are shown but never judged (spec 7.3): they stay out of the pace, as in the shift view.
-      if (c.eligible) {
-        addToRow(row.totals, c);
-        row.units += c.units;
+      if (part.eligible) {
+        addToRow(row.totals, part);
+        row.units += part.units;
         row.eligible_hours += 1;
       } else {
-        row.visitor_units += c.units;
+        row.visitor_units += part.units;
         row.visitor_hours += 1;
       }
     }
@@ -827,8 +830,8 @@ export function buildJobDetail(input: JobDetailInput): JobDetail {
     );
 
   // One pass over the cells, not one per shift instance: a job that has run for a year has more
-  // than a thousand instances. Each cell goes to every instance whose [start, end) holds its hour,
-  // in all_cells order, so each shift gets the same cells a filter would give it.
+  // than a thousand instances. Each cell goes to every instance whose [start, end) overlaps its hour,
+  // in all_cells order, so each shift gets the same cells (or parts of cells) a filter would give it.
   const shifts = [...shift_instances].sort((a, b) => a.start_utc - b.start_utc);
   // reach[i]: the latest end among shifts[0..i]. Walking back from a cell's hour can stop once no
   // earlier shift reaches it.
@@ -841,16 +844,21 @@ export function buildJobDetail(input: JobDetailInput): JobDetail {
   const cellsByShift: HourCell[][] = shifts.map(() => []);
   for (const c of all_cells) {
     const hour = c.hour_start_utc;
-    // First shift starting after the hour.
+    const hourEnd = nextHourStartUtc(hour, settings.plant_timezone);
+    // First shift starting after the hour ends. A shift that changes mid-hour (06:30) takes only its
+    // part of the hour.
     let lo = 0;
     let hi = shifts.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      if (shifts[mid]!.start_utc <= hour) lo = mid + 1;
+      if (shifts[mid]!.start_utc < hourEnd) lo = mid + 1;
       else hi = mid;
     }
     for (let i = lo - 1; i >= 0 && reach[i]! > hour; i--) {
-      if (shifts[i]!.end_utc > hour) cellsByShift[i]!.push(c);
+      const shift = shifts[i]!;
+      if (shift.end_utc <= hour) continue;
+      const part = clipHourCell(c, shift.start_utc, shift.end_utc, settings);
+      if (part !== null) cellsByShift[i]!.push(part);
     }
   }
 

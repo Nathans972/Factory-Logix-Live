@@ -1,4 +1,4 @@
-import type { CellColor, DefectHourCell, HourCell, PriorCount, UtcMs } from '@fld/shared';
+import type { CellColor, CellSpans, DefectHourCell, HourCell, PriorCount, UtcMs } from '@fld/shared';
 import type { Db } from '../pool.js';
 import { toBool, toMsOr, toNum, toNumOr, tsParam } from '../util.js';
 
@@ -19,11 +19,12 @@ type CellRow = {
   target_units: number;
   pace: number | null;
   color: CellColor;
+  spans?: CellSpans | null;
 };
 
 const CELL_COLUMNS = `c.hour_start_utc, c.job_number, c.product_number, o.name AS operation, c.operator_id,
     c.units, c.work_minutes, c.window_minutes, c.break_minutes, c.charged_minutes,
-    c.eligible, c.provisional, c.std_hr, c.target_units, c.pace, c.color`;
+    c.eligible, c.provisional, c.std_hr, c.target_units, c.pace, c.color, c.spans`;
 
 const CELL_FROM = 'FROM hour_cells c JOIN operations o ON o.id = c.operation_id';
 
@@ -45,6 +46,7 @@ export function mapHourCell(row: CellRow): HourCell {
     target_units: toNumOr(row.target_units, 0),
     pace: toNum(row.pace),
     color: row.color,
+    ...(row.spans ? { spans: row.spans } : {}),
   };
 }
 
