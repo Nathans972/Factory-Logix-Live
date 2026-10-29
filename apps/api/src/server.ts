@@ -97,6 +97,11 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
       reply.code(503).send(errorBody(503, 'unavailable', 'the database is unavailable'));
       return;
     }
+    // query_canceled: the statement ran past the pool's statement timeout (createPool).
+    if (status >= 500 && anyErr.code === '57014') {
+      reply.code(503).send(errorBody(503, 'unavailable', 'the database took too long to answer'));
+      return;
+    }
     reply
       .code(status)
       .send(errorBody(status, codeForStatus(status), status >= 500 ? 'internal server error' : err.message));

@@ -20,12 +20,23 @@ export interface PoolWarnLogger {
   warn(obj: object, msg: string): void;
 }
 
+/**
+ * Postgres cancels any api statement still running after this (SQLSTATE 57014). A request keeps its
+ * connection until its statement ends, even after the browser has given up on it, so without a
+ * limit a few slow reads (all jobs over years of history) could hold all 10 and leave TVs, logins
+ * and the health check waiting. Pages and TV refreshes normally need a fraction of that.
+ */
+const STATEMENT_TIMEOUT_MS = 15_000;
+
 export function createPool(env: Pick<AppEnv, 'databaseUrl'>, log?: PoolWarnLogger): Pool {
   const pool = new PgPool({
     connectionString: env.databaseUrl,
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
+    // Sent when each connection starts, so it is the session default: RESET returns to it after a
+    // SET (runMigrations lifts it for its own connection).
+    statement_timeout: STATEMENT_TIMEOUT_MS,
     application_name: 'fld-api',
   });
   // An idle client dying (e.g. the database restarting) emits 'error' on the pool; without a

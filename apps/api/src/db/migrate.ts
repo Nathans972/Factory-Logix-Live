@@ -50,11 +50,16 @@ export interface MigrationPool {
  * Session advisory locks belong to a connection, so the lock, every migration and the unlock run
  * on one client taken from the pool (through the pool they could land on different connections
  * and the unlock would miss).
+ *
+ * That client runs without the pool's statement timeout (createPool): a migration over a large
+ * table may need longer, and so may waiting for another instance's lock. RESET puts the timeout
+ * back before the client returns to the pool.
  */
 export async function runMigrations(pool: MigrationPool, dir: string, log: MigrationLogger): Promise<string[]> {
   const db = await pool.connect();
   let broken: Error | undefined;
   try {
+    await db.query('SET statement_timeout = 0');
     await db.query(
       'CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())',
     );
@@ -84,6 +89,14 @@ export async function runMigrations(pool: MigrationPool, dir: string, log: Migra
     }
     return applied;
   } finally {
+    if (!broken) {
+      try {
+        await db.query('RESET statement_timeout');
+      } catch (err) {
+        // Could not reset: destroy the connection rather than pool one without a timeout.
+        broken = err instanceof Error ? err : new Error(String(err));
+      }
+    }
     db.release(broken);
   }
 }

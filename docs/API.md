@@ -11,6 +11,9 @@ logging out, an admin password reset and deactivation bump it, which ends every 
 Unauthenticated requests to protected routes return `401 {error:'unauthorized'}`; insufficient role returns `403`.
 Validation errors return `400 {error:'bad_request', message, issues?}`. Dates in a request body are
 `YYYY-MM-DD` and must be a day on the calendar (`2026-02-29` is a 400).
+A database statement still running after 15 s is cancelled, so that it cannot keep one of the API's
+10 database connections; its request returns `503 {error:'unavailable', message:'the database took too long to answer'}`.
+Migrations at start-up have no such limit.
 
 | Method | Path | Auth | Request | Response |
 |---|---|---|---|---|
