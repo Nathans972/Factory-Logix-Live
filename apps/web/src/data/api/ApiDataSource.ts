@@ -80,6 +80,14 @@ const SSE_EVENT_NAMES: SseEvent['type'][] = [
 /** Synthetic heartbeat interval; consumers use it as the polling fallback (spec 8.4). */
 const FALLBACK_HEARTBEAT_MS = 60_000;
 
+/**
+ * A TV request still unanswered after this long is aborted and fails. The TV keeps one request in
+ * flight, so without a bound a single lost one (half-open connection after a Wi-Fi blip or
+ * sleep/wake, an API stalled behind the proxy's 3600 s read timeout) would stop every later poll
+ * and never show the offline banner. Well under the TV's 60 s poll.
+ */
+const TV_REQUEST_TIMEOUT_MS = 20_000;
+
 type QueryValue = string | number | boolean | null | undefined;
 
 function queryString(params: Record<string, QueryValue>): string {
@@ -103,7 +111,10 @@ export class ApiDataSource implements DataSource {
 
   // ---------------------------------------------------------------- transport
 
-  private async request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  private async request<T>(
+    path: string,
+    init?: { method?: string; body?: unknown; timeoutMs?: number },
+  ): Promise<T> {
     const method = init?.method ?? 'GET';
     const headers: Record<string, string> = { Accept: 'application/json' };
     let body: string | undefined;
@@ -112,14 +123,30 @@ export class ApiDataSource implements DataSource {
       body = JSON.stringify(init.body);
     }
 
+    // `timeoutMs` aborts the request, body read included. A timer rather than
+    // `AbortSignal.timeout()`, which older TV browsers do not have.
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (init?.timeoutMs !== undefined) timer = setTimeout(() => controller.abort(), init.timeoutMs);
+
     let res: Response;
+    let text: string;
     try {
-      res = await fetch(this.baseUrl + path, { method, headers, body, credentials: 'include' });
+      res = await fetch(this.baseUrl + path, {
+        method,
+        headers,
+        body,
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      text = await res.text();
     } catch (err) {
+      if (controller.signal.aborted) throw new DataSourceError(0, 'Request timed out', err);
       throw new DataSourceError(0, err instanceof Error ? err.message : 'Network error', err);
+    } finally {
+      clearTimeout(timer);
     }
 
-    const text = await res.text();
     let payload: unknown = null;
     if (text.length > 0) {
       try {
@@ -140,12 +167,12 @@ export class ApiDataSource implements DataSource {
     return payload as T;
   }
 
-  private get<T>(path: string): Promise<T> {
-    return this.request<T>(path);
+  private get<T>(path: string, timeoutMs?: number): Promise<T> {
+    return this.request<T>(path, { timeoutMs });
   }
 
-  private post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>(path, { method: 'POST', body: body ?? {} });
+  private post<T>(path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+    return this.request<T>(path, { method: 'POST', body: body ?? {}, timeoutMs });
   }
 
   private put<T>(path: string, body?: unknown): Promise<T> {
@@ -263,11 +290,14 @@ export class ApiDataSource implements DataSource {
   // ----------------------------------------------------------------------- tv
 
   tvRegister(device_token: string): Promise<TvState> {
-    return this.post<TvState>('/tv/register', { device_token });
+    return this.post<TvState>('/tv/register', { device_token }, TV_REQUEST_TIMEOUT_MS);
   }
 
   tvState(device_token: string): Promise<TvState> {
-    return this.get<TvState>('/tv/' + encodeURIComponent(device_token) + '/state');
+    return this.get<TvState>(
+      '/tv/' + encodeURIComponent(device_token) + '/state',
+      TV_REQUEST_TIMEOUT_MS,
+    );
   }
 
   // ------------------------------------------------------------------- portal

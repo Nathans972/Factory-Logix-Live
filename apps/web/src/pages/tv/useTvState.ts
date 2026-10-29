@@ -89,6 +89,8 @@ export function useTvState(): TvViewState {
   }, []);
 
   const refresh = useCallback(async () => {
+    // One request at a time. The data source fails a TV request left unanswered for 20 s, so a lost
+    // one shows the offline banner and frees this guard for the next poll.
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
