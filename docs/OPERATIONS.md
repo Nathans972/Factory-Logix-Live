@@ -309,6 +309,9 @@ Hour cells keep the engine settings, shifts and breaks they were computed with. 
 changes, the collector recomputes the hour cells of today and yesterday with it (the TVs and the
 shifts of those days); earlier days keep what they were computed with. "Run backfill now"
 recomputes the whole backfill range with the current ones, as it downloads it again.
+A standards change (an override, an adjustment, a standards recompute) applies to the running
+hour and the ones after it: an hour that has ended keeps the StdHr it was judged against when it
+is recomputed, until the backfill recolors it.
 
 Sync status values you will see in Admin > Sync:
 

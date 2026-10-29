@@ -552,6 +552,7 @@ This replaces any "multiply by operator count" logic and remains correct when pe
 
 - The engine recomputes the current hour and the previous hour after every successful poll. Cells for the current hour are marked `provisional = true`.
 - When an hour ends, it is recomputed once more on the next poll and marked final. Late-arriving rows (detected by the overlap re-pull or the hourly late-data pull) trigger recomputation of exactly the hours they touch.
+- A standards change (override, adjustment, standards recompute) applies to the current hour and the hours after it. An hour that has ended keeps the StdHr it was judged against while it ran, whenever it is recomputed (as the previous hour, for late rows, after a settings change or a collector restart); only the backfill's recoloring (4.7) judges past days against the current standards.
 - Effective latency is one poll interval plus processing (target under 2 minutes end to end).
 - Cells for the current hour may change row membership, eligibility, and color as the hour progresses. This is correct and expected.
 

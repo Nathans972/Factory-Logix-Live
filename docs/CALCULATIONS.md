@@ -292,22 +292,27 @@ intentionally omitted rather than shown as an all-gray row (spec 8.5) — or the
 expired with no scans in the visible window, so they have no open window on any job right now.
 
 **What happens when a standard changes during a shift?**
-Hours that have already been computed keep the StdHr they were judged against; only hours
-computed after the change (an override, an adjustment, or the nightly recompute) use the new
-one. A row on the shift view or the operator page adds its hours up: its target is the sum of
-each hour's own target, and its pace is earned hours over charged hours — the same arithmetic
-as the job efficiency, so the two always agree for the same work (with a single standard it is
-simply units / target). The StdHr column shows the latest standard. If part of the row ran with
-no standard at all, those hours are left out of its pace, just like the job efficiency; the row
-is left unjudged only when none of it had a standard.
+Each hour is judged against the standard in force while it runs. A change (an override, an
+adjustment, or the nightly recompute) applies from the next poll to the hour that is running, all
+of it, and to every hour after it. An hour that has already ended keeps the StdHr it was judged
+against, even when it is computed again (late rows, a settings change, a collector restart), so
+the hours that ended before the change all keep the old one. Only the backfill's recoloring
+judges past days against the standards of the day it runs. A row on the shift view or the
+operator page adds its hours up: its target is the sum of each hour's own target, and its pace
+is earned hours over charged hours — the same arithmetic as the job efficiency, so the two always
+agree for the same work (with a single standard it is simply units / target). The StdHr column
+shows the latest standard. If part of the row ran with no standard at all, those hours are left
+out of its pace, just like the job efficiency; the row is left unjudged only when none of it had
+a standard.
 
 **What happens to past hours when I change an engine setting, a shift or a break?**
 Hour cells are stored as they were computed. Saving an engine setting the cells depend on
 (eligibility, neutral or idle timeout minutes, work during breaks, the color bands), the plant
 time zone, a shift or a break recomputes the cells of today and yesterday with it, so the TVs and
-the shifts of those two days follow one rule. Earlier days keep the cells they were computed with:
-there, a row's or a shift's total is still colored with the current bands, but its hourly cells
-keep their old colors. "Run backfill now" recomputes the whole backfill range.
+the shifts of those two days follow one rule (each hour keeps its StdHr, as above). Earlier days
+keep the cells they were computed with: there, a row's or a shift's total is still colored with
+the current bands, but its hourly cells keep their old colors. "Run backfill now" recomputes the
+whole backfill range.
 
 **Why is StdHr a dash?**
 There is not yet enough sampled history for that product/operation (fewer than the configured

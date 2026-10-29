@@ -307,7 +307,8 @@ export class Backfill {
     progress.current_day = day;
     await this.persist();
     try {
-      await this.recomputer.recomputeHours(hoursOf(settings.plant_timezone, day), settings, now);
+      // Against the standards just computed, not the StdHr (often none) the downloaded hours were computed with.
+      await this.recomputer.recomputeHours(hoursOf(settings.plant_timezone, day), settings, now, { currentStandards: true });
       progress.recolor_days_done = done + 1;
       clearFailures(progress);
       await this.persist();

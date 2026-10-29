@@ -101,7 +101,7 @@ For each `(hour, job, op)` the operator touched (has work minutes, units, events
 - `window_minutes` = sum of segment overlap with the hour (0 for visitors).
 - `break_minutes` = overlap of those segment pieces with breaks (union). If `count_work_during_breaks` is true, a break interval is not subtracted when the operator completed at least one unit inside that break interval on this job/op.
 - `charged_minutes = window_minutes - break_minutes` (never negative).
-- `std_hr` from the lookup (`effective` or null).
+- `std_hr` from `kept_std_hr[hour][stdKey(product, op)]` when it has that entry (null included: an hour that has ended keeps the StdHr it was judged against, spec 7.7; the collector passes it), else from the lookup (`effective` or null).
 - `target_units = std_hr * charged_minutes / 60` (0 when std null).
 - `pace = units / target_units` when `target_units > 0` and std non-null, else null.
 - `provisional = hour == currentHour`.

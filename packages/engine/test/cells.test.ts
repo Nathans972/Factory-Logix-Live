@@ -6,6 +6,7 @@ import {
   computeHourCells,
   groupCells,
 } from '../src/cells.js';
+import { stdKey } from '../src/standards.js';
 import {
   HOUR,
   MINUTE,
@@ -37,6 +38,7 @@ function compute(
     steps,
     breaks: o.breaks ?? [],
     standards: o.standards ?? STD30,
+    kept_std_hr: o.kept_std_hr,
     pins: o.pins ?? [],
     settings: o.settings ?? engineSettings(),
     from_utc: at(o.from),
@@ -363,6 +365,23 @@ describe('target, pace and color', () => {
     expect(cell.target_units).toBe(0);
     expect(cell.pace).toBeNull();
     expect(cell.color).toBe('neutral');
+  });
+
+  it('judges an hour against the StdHr it keeps (none included), the others against the standards', () => {
+    const out = compute(stepRun('OP1', 'JA', 'Weld', '2025-06-10T08:00-04:00', 2, 90), {
+      from: '2025-06-10T08:00-04:00',
+      to: '2025-06-10T11:00-04:00',
+      now: '2025-06-10T10:30-04:00',
+      standards: stdLookup([['Z1', 'Weld', 40]]),
+      kept_std_hr: new Map([
+        [ms('2025-06-10T08:00-04:00'), new Map([[stdKey('Z1', 'Weld'), 30]])],
+        [ms('2025-06-10T09:00-04:00'), new Map([[stdKey('Z1', 'Weld'), null]])],
+      ]),
+    });
+    // 29 units (the 30th completes at 09:00) in 60 charged minutes.
+    expect(findCell(out.cells, { hour: '2025-06-10T08:00-04:00' })).toMatchObject({ std_hr: 30, target_units: 30, color: 'green' });
+    expect(findCell(out.cells, { hour: '2025-06-10T09:00-04:00' })).toMatchObject({ std_hr: null, pace: null, color: 'neutral' });
+    expect(findCell(out.cells, { hour: '2025-06-10T10:00-04:00' })!.std_hr).toBe(40);
   });
 
   it('marks only the current hour provisional and only emits hours inside [from,to)', () => {

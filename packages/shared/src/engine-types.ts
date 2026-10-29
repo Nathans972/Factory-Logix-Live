@@ -57,6 +57,12 @@ export interface ComputeHourCellsInput {
   breaks: BreakInterval[];
   /** Effective standards lookup (see buildStandardsLookup). Missing => std_hr null => neutral. */
   standards: StandardsLookup;
+  /**
+   * StdHr some hours were already judged against (null = none), by hour start then StdKey: those
+   * cells keep it instead of taking the one in `standards`. The collector passes it for the hours
+   * that have ended, which stop changing (spec 7.7).
+   */
+  kept_std_hr?: Map<UtcMs, Map<StdKey, number | null>>;
   pins: Pin[];
   settings: EngineSettings;
   /** Emit cells for hour buckets whose start is in [from_utc, to_utc). */

@@ -70,7 +70,7 @@ export function colorForPace(pace: number | null, settings: EngineSettings): Cel
 // ---------------------------------------------------------------------------
 
 export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCellsOutput {
-  const { steps, breaks, standards, pins, settings, from_utc, to_utc, now } = input;
+  const { steps, breaks, standards, kept_std_hr, pins, settings, from_utc, to_utc, now } = input;
   const tz = settings.plant_timezone;
   const mergedBreaks = mergeIntervals(breaks);
   const currentHour = hourStartUtc(now, tz);
@@ -405,7 +405,9 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
 
       if (acc.units === 0 && work_minutes === 0 && charged_minutes === 0) continue;
 
-      const std_hr = standards.get(stdKey(acc.product, acc.op))?.effective ?? null;
+      const key = stdKey(acc.product, acc.op);
+      const kept = kept_std_hr?.get(acc.hour)?.get(key);
+      const std_hr = kept !== undefined ? kept : (standards.get(key)?.effective ?? null);
       const target_units = std_hr === null ? 0 : (std_hr * charged_minutes) / 60;
       const pace = std_hr !== null && target_units > 0 ? acc.units / target_units : null;
       const provisional = acc.hour === currentHour;

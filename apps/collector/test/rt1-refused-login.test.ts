@@ -181,6 +181,7 @@ function scriptedDatabase(start: number, backfillDays: number) {
     if (text.includes('FROM standards s JOIN operations')) return ok();
     if (text.includes('FROM unit_steps us JOIN operations') || text.includes('FROM defects d JOIN operations')) return ok();
     if (text.startsWith('DELETE FROM hour_cells') || text.startsWith('DELETE FROM defect_hour_cells')) return ok();
+    if (text.includes('FROM hour_cells c JOIN operations')) return ok();
     if (text.startsWith('SELECT pg_notify')) return ok();
     unexpected.push(text);
     throw new Error(`unexpected SQL: ${text}`);
