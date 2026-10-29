@@ -654,6 +654,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
     window_minutes: number;
     totals: RowTotals;
     units: number;
+    visitor_units: number;
     eligible_hours: number;
     visitor_hours: number;
   }
@@ -693,6 +694,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
           window_minutes: 0,
           totals: newRowTotals(),
           units: 0,
+          visitor_units: 0,
           eligible_hours: 0,
           visitor_hours: 0,
         };
@@ -700,10 +702,15 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
       }
       row.std_cell = laterStdCell(row.std_cell, c);
       row.window_minutes += c.window_minutes;
-      addToRow(row.totals, c);
-      row.units += c.units;
-      if (c.eligible) row.eligible_hours += 1;
-      else row.visitor_hours += 1;
+      // Visitor units are shown but never judged (spec 7.3): they stay out of the pace, as in the shift view.
+      if (c.eligible) {
+        addToRow(row.totals, c);
+        row.units += c.units;
+        row.eligible_hours += 1;
+      } else {
+        row.visitor_units += c.units;
+        row.visitor_hours += 1;
+      }
     }
   }
 
@@ -745,6 +752,7 @@ export function buildOperatorDetail(input: OperatorDetailInput): OperatorDetail 
         window_minutes: r.window_minutes,
         charged_minutes: r.totals.charged_minutes,
         units: r.units,
+        visitor_units: r.visitor_units,
         target_units: r.totals.target_units,
         pace,
         color: aggregateColor(std_hr, r.totals.std_charged_minutes, pace, settings),

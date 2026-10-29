@@ -159,7 +159,7 @@ One row per `(operator, job, op)` with an **eligible** cell in the current hour;
 ### OperatorDetail (spec 9.4)
 
 - `strips`: one per `(job, op)` the operator touched within `columns`, cells aligned to columns like the TV; `std_hr` = the latest hour's.
-- `rows`: per `(job, op)` over the full `range`: sums of window/charged/units, `target`, pace and `std_hr` as in the row totals above, color (same bands, neutral when charged < neutral_minutes), `eligible_hours`/`visitor_hours` counts, `pinned` from an active pin.
+- `rows`: per `(job, op)` over the full `range`: sums of window/charged minutes, `units` over the eligible cells and `visitor_units` over the visitor cells (visitor units never enter the pace, spec 7.3, as in ShiftView), `target`, pace and `std_hr` as in the row totals above, color (same bands, neutral when charged < neutral_minutes), `eligible_hours`/`visitor_hours` counts, `pinned` from an active pin.
 
 ### JobDetail (spec 9.5)
 

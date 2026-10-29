@@ -439,6 +439,7 @@ describe('buildOperatorDetail', () => {
     expect(weld.window_minutes).toBe(150);
     expect(weld.charged_minutes).toBe(150);
     expect(weld.units).toBe(50);
+    expect(weld.visitor_units).toBe(0);
     expect(weld.target_units).toBe(75);
     expect(weld.pace).toBeCloseTo(50 / 75, 6);
     expect(weld.color).toBe('red');
@@ -450,6 +451,10 @@ describe('buildOperatorDetail', () => {
     const test = detail.rows[1]!;
     expect(test.visitor_hours).toBe(1);
     expect(test.eligible_hours).toBe(0);
+    // a visitor's units are shown apart and never judged (spec 7.3)
+    expect(test.units).toBe(0);
+    expect(test.visitor_units).toBe(3);
+    expect(test.pace).toBeNull();
     expect(test.charged_minutes).toBe(0);
     expect(test.color).toBe('neutral');
     expect(test.pinned).toBeNull();

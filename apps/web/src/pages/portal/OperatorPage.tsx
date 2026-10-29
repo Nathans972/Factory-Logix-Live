@@ -167,6 +167,7 @@ export function OperatorPage() {
   const d = detail.data;
   const rows = d?.rows ?? [];
   const units = rows.reduce((s, r) => s + r.units, 0);
+  const visitorUnits = rows.reduce((s, r) => s + r.visitor_units, 0);
   const chargedMinutes = rows.reduce((s, r) => s + r.charged_minutes, 0);
   const targetUnits = rows.reduce((s, r) => s + r.target_units, 0);
   const pace = targetUnits > 0 ? units / targetUnits : null;
@@ -207,7 +208,18 @@ export function OperatorPage() {
     },
     { key: 'window', header: 'Window', align: 'right', value: (r) => Math.round(r.window_minutes), render: (r) => formatMinutes(r.window_minutes) },
     { key: 'charged', header: 'Charged', align: 'right', value: (r) => Math.round(r.charged_minutes), render: (r) => formatMinutes(r.charged_minutes) },
-    { key: 'units', header: 'Units', align: 'right', render: (r) => formatInt(r.units) },
+    {
+      key: 'units',
+      header: 'Units',
+      align: 'right',
+      value: (r) => r.units,
+      render: (r) => (
+        <>
+          {formatInt(r.units)}
+          {r.visitor_units > 0 && <span className="num-note"> (+{formatInt(r.visitor_units)} visitor)</span>}
+        </>
+      ),
+    },
     { key: 'target', header: 'Target', align: 'right', value: (r) => Math.round(r.target_units), render: (r) => formatInt(r.target_units) },
     { key: 'pace', header: 'Pace', align: 'right', value: (r) => r.pace, render: (r) => <PaceChip pace={r.pace} color={r.color} /> },
     {
@@ -246,6 +258,7 @@ export function OperatorPage() {
         { header: 'Window minutes', value: (r: OperatorRangeRow) => Math.round(r.window_minutes) },
         { header: 'Charged minutes', value: (r: OperatorRangeRow) => Math.round(r.charged_minutes) },
         { header: 'Units', value: (r: OperatorRangeRow) => r.units },
+        { header: 'Visitor units', value: (r: OperatorRangeRow) => r.visitor_units },
         { header: 'Target', value: (r: OperatorRangeRow) => Math.round(r.target_units) },
         { header: 'Pace', value: (r: OperatorRangeRow) => (r.pace == null ? '' : Math.round(r.pace * 100) + '%') },
         { header: 'Eligible h', value: (r: OperatorRangeRow) => r.eligible_hours.toFixed(2) },
@@ -327,7 +340,11 @@ export function OperatorPage() {
       {d && (
         <>
           <KpiRow>
-            <KpiTile label="Units in range" value={formatInt(units)} hint={formatInt(targetUnits) + ' at standard'} />
+            <KpiTile
+              label="Units in range"
+              value={formatInt(units)}
+              hint={formatInt(targetUnits) + ' at standard' + (visitorUnits > 0 ? ' · +' + formatInt(visitorUnits) + ' visitor' : '')}
+            />
             <KpiTile label="Charged hours" value={formatNum(chargedMinutes / 60, 1)} hint="eligible time against a standard" />
             <KpiTile label="Pace" value={formatPct(pace)} accent={cellAccent(paceColor(pace))} hint={rows.length + ' job/operation rows'} />
             <KpiTile

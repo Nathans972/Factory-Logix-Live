@@ -351,7 +351,10 @@ export interface OperatorRangeRow {
   std_hr: number | null;
   window_minutes: number;
   charged_minutes: number;
+  /** units of the eligible hours: the pace numerator */
   units: number;
+  /** units of the visitor hours: shown, never judged (spec 7.3) */
+  visitor_units: number;
   target_units: number;
   pace: number | null;
   color: CellColor;
