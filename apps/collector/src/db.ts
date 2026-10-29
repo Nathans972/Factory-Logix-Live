@@ -112,6 +112,18 @@ export function toNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+const INT4_MIN = -2_147_483_648;
+const INT4_MAX = 2_147_483_647;
+
+/**
+ * A whole number as an `int` column can store it. Postgres refuses a value outside int4 (a "no
+ * limit" quantity of 9,999,999,999 in FactoryLogix) and with it the whole statement; the nearest
+ * value it can store keeps the row.
+ */
+export function toInt4(value: number): number {
+  return Math.min(INT4_MAX, Math.max(INT4_MIN, Math.trunc(value)));
+}
+
 export interface UpsertSpec {
   table: string;
   columns: string[];

@@ -198,6 +198,13 @@ The collector drops NUL characters and stores half an emoji as `�` (U+FFFD), i
 fields, the natural key and the raw payload, so `Bracket` followed by NUL padding is stored as
 `Bracket`.
 
+Whole numbers stored in `int` columns (`qty_released`, `qty_complete`, `operation_seq` and a
+route's `sequence`) are kept within the int range: a "no limit" quantity of 9,999,999,999 is
+stored as 2,147,483,647. If PostgreSQL still refuses a value in a row (for example a scanner's
+whole buffer in the operator field, too long for its index), the collector stores the rest of the
+page without that row. The row is counted as skipped, and the collector log gives its natural key
+and the database error.
+
 ## Timestamp modes
 
 FactoryLogix may return timestamps in different shapes depending on version and configuration.

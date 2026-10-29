@@ -242,7 +242,8 @@ Then run `docker compose up -d`: a container takes its log settings when it is c
 - **Rows, Ingested, Skipped** in the recent-polls table: `Rows` is what FactoryLogix returned,
   `Ingested` what reached the normalized tables, and `Skipped` what was dropped because a
   required field was missing or the product or operation could not be resolved (for example a
-  unit step whose work order has not arrived yet and no product number mapped). Pulls with
+  unit step whose work order has not arrived yet and no product number mapped), or because the
+  database refused a value in the row (the collector log names the row and the error). Pulls with
   skipped rows are highlighted. A few skipped rows that disappear on the next poll are normal;
   a steady count usually means a mapping problem (check the field mapping and the collector
   logs). Pulls logged before migration `0005` show a dash.

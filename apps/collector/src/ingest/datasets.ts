@@ -3,7 +3,7 @@
  * Every write is idempotent by natural key, so overlap re-pulls and backfill are harmless.
  */
 import type { DatasetMapping, DatasetName, MappingConfig } from '@fld/shared';
-import { bulkUpsert, q, q1, toMs, tx, type Pool, type PoolClient, type Queryable } from '../db.js';
+import { bulkUpsert, q, q1, toInt4, toMs, tx, type Pool, type PoolClient, type Queryable } from '../db.js';
 import type { Logger } from '../logger.js';
 import { buildNaturalKey, extractRecord, getField, num, str, bool, type TimestampResolver } from '../mapping/extract.js';
 import { upsertOperators, upsertProducts, upsertRoutesDerived, upsertRoutesMapped, type RouteEntry } from './derive.js';
@@ -77,9 +77,55 @@ export class Ingestor {
   /**
    * Route a page of source rows to the right ingest routine. `fetchJobs` lets unit_steps fetch the
    * work orders of its jobs that are not in the database yet (see `fetchMissingJobs`).
+   *
+   * A page is written in one transaction, and Postgres refuses all of it for one value it cannot
+   * store (`isRefusedValue`). The poll would read that page again from the same watermark every
+   * time and stop on it, and on work_orders hold back unit_steps too. So a refused page is written
+   * again in halves, each in its own transaction, down to the rows Postgres refuses on their own:
+   * those are skipped, counted in `skipped` and logged with their natural key.
    */
   async ingest(dataset: DatasetName, rows: Record<string, unknown>[], fetchJobs?: WorkOrderFetcher): Promise<IngestOutcome> {
     if (rows.length === 0) return { ...EMPTY };
+    const refused: { key: string; err: string }[] = [];
+    const out = await this.ingestSplitting(dataset, rows, fetchJobs, refused);
+    if (refused.length > 0) {
+      this.deps.log.warn(
+        { dataset, rows: refused.length, refused: refused.slice(0, 10) },
+        'rows skipped: the database refused a value in them',
+      );
+    }
+    return out;
+  }
+
+  private async ingestSplitting(
+    dataset: DatasetName,
+    rows: Record<string, unknown>[],
+    fetchJobs: WorkOrderFetcher | undefined,
+    refused: { key: string; err: string }[],
+  ): Promise<IngestOutcome> {
+    try {
+      return await this.ingestPage(dataset, rows, fetchJobs);
+    } catch (err) {
+      if (!isRefusedValue(err)) throw err;
+      if (rows.length === 1) {
+        // The refused value can be in the key, and as long as the index it did not fit.
+        const key = buildNaturalKey(rows[0], this.mapping[dataset]?.key ?? []);
+        refused.push({ key: key.slice(0, 200), err: err.message.slice(0, 200) });
+        return { received: 1, ingested: 0, skipped: 1, touched: [] };
+      }
+      const half = Math.ceil(rows.length / 2);
+      const first = await this.ingestSplitting(dataset, rows.slice(0, half), fetchJobs, refused);
+      const second = await this.ingestSplitting(dataset, rows.slice(half), fetchJobs, refused);
+      return {
+        received: first.received + second.received,
+        ingested: first.ingested + second.ingested,
+        skipped: first.skipped + second.skipped,
+        touched: [...first.touched, ...second.touched],
+      };
+    }
+  }
+
+  private async ingestPage(dataset: DatasetName, rows: Record<string, unknown>[], fetchJobs?: WorkOrderFetcher): Promise<IngestOutcome> {
     switch (dataset) {
       case 'work_orders':
         return this.workOrders(rows);
@@ -139,7 +185,7 @@ export class Ingestor {
     const missing = [...new Set(jobs)].filter((job) => !this.jobProducts.has(job));
     if (missing.length === 0) return;
     const rows = await fetchJobs(missing, mapping);
-    if (rows.length > 0) await this.workOrders(rows);
+    if (rows.length > 0) await this.ingest('work_orders', rows);
   }
 
   /**
@@ -183,7 +229,7 @@ export class Ingestor {
         job,
         product,
         name,
-        Math.trunc(num(rec.values, 'qty_released') ?? 0),
+        toInt4(num(rec.values, 'qty_released') ?? 0),
         qtyCompleteMapped ? roundOrNull(num(rec.values, 'qty_complete')) : null,
         str(rec.values, 'status'),
         tsOrNull(num(rec.values, 'created_at')),
@@ -315,7 +361,7 @@ export class Ingestor {
           s.modified_at === null ? null : new Date(s.modified_at),
           s.natural_key,
         ];
-        if (withSeq) stepRow.push(s.operation_seq === null ? null : Math.trunc(s.operation_seq));
+        if (withSeq) stepRow.push(s.operation_seq === null ? null : toInt4(s.operation_seq));
         stepRows.push(stepRow);
         keys.push({
           natural_key: s.natural_key,
@@ -541,7 +587,7 @@ export class Ingestor {
         out.skipped += 1;
         continue;
       }
-      staged.push({ product_number: product, operation, sequence: Math.trunc(sequence) });
+      staged.push({ product_number: product, operation, sequence: toInt4(sequence) });
       out.ingested += 1;
     }
 
@@ -693,5 +739,16 @@ function tsOrNull(ms: number | null): Date | null {
 }
 
 function roundOrNull(value: number | null): number | null {
-  return value === null ? null : Math.trunc(value);
+  return value === null ? null : toInt4(value);
+}
+
+/**
+ * Postgres refused a value of the rows written: SQLSTATE class 22 (data exception: a number out
+ * of range, a character or time it cannot store), class 23 (integrity constraint violation) or
+ * 54000 (a value too long for an index). Anything else (a lost connection, a deadlock, a timeout,
+ * a missing table) is not about the rows, and fails the page.
+ */
+function isRefusedValue(err: unknown): err is Error {
+  const code = err instanceof Error ? (err as { code?: unknown }).code : undefined;
+  return typeof code === 'string' && (/^2[23]/.test(code) || code === '54000');
 }

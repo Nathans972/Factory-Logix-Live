@@ -1,5 +1,5 @@
 /** Derived dimension tables: products, operators and product routes (spec 4.4, 6.1). */
-import { bulkUpsert, q, type Queryable } from '../db.js';
+import { bulkUpsert, q, toInt4, type Queryable } from '../db.js';
 
 export interface ProductEntry {
   product_number: string;
@@ -85,7 +85,7 @@ export async function upsertRoutesDerived(db: Queryable, entries: RouteEntry[]):
     affected += await bulkUpsert(db, {
       table: 'product_routes',
       columns: ['product_number', 'operation_id', 'sequence', 'source'],
-      rows: withSeq.map((e) => [e.product_number, e.operation_id, Math.trunc(e.sequence as number), 'derived']),
+      rows: withSeq.map((e) => [e.product_number, e.operation_id, toInt4(e.sequence as number), 'derived']),
       conflict: ['product_number', 'operation_id'],
       update: ['sequence'],
       updateExpr: { sequence: 'LEAST(EXCLUDED.sequence, product_routes.sequence)' },
@@ -113,7 +113,8 @@ export async function upsertRoutesDerived(db: Queryable, entries: RouteEntry[]):
     const key = `${entry.product_number}\u0001${entry.operation_id}`;
     if (known.has(key)) continue;
     known.add(key);
-    const next = (maxSeq.get(entry.product_number) ?? 0) + 1;
+    // A route already at the top of the int range (2,147,483,647, a "last" sentinel) appends there too.
+    const next = toInt4((maxSeq.get(entry.product_number) ?? 0) + 1);
     maxSeq.set(entry.product_number, next);
     rows.push([entry.product_number, entry.operation_id, next, 'derived']);
   }
