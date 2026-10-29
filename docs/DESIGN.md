@@ -106,7 +106,8 @@ The current hour gets a 2 px primary outline.
   history), hourly grid card with the grouped control, two-column operators and shift history.
 - **Product standards**: one row per route operation showing computed value and sample, median,
   FL value, adjustment, override, and the bold effective value with a provenance label; active
-  adjustments and overrides listed below with remove actions.
+  adjustments and overrides listed below with remove actions (global and operation adjustments
+  link to Admin > Standards instead).
 - **Admin**: list plus drawer for displays, shifts, breaks, users; wizard-style mapping page;
   settings pages as grouped forms with a sticky save bar.
 - **Setup**: centered 760 px card with the stepper.

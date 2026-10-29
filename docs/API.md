@@ -39,7 +39,7 @@ Migrations at start-up have no such limit.
 | GET | `/api/portal/products?q=` | viewer | | `ProductListItem[]` |
 | GET | `/api/portal/products/:z` | viewer | | `ProductView` |
 | POST | `/api/portal/products/:z/adjustments` | manager | `CreateAdjustmentRequest` (scope product or product_operation) | `StandardAdjustment` |
-| DELETE | `/api/portal/adjustments/:id` | manager | | `OkResponse` |
+| DELETE | `/api/portal/adjustments/:id` | manager | | `OkResponse` (scope product or product_operation; `400` for global and operation ones, which `DELETE /api/admin/standards/adjustments/:id` removes) |
 | POST | `/api/portal/products/:z/overrides` | manager | `CreateOverrideRequest` | `StandardOverride` |
 | DELETE | `/api/portal/overrides/:id` | manager | | `OkResponse` (sets active=false) |
 | POST | `/api/portal/products/:z/recompute` | manager | | `OkResponse` (async; notifies collector) |

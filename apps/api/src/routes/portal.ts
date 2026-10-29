@@ -186,6 +186,9 @@ export async function registerPortalRoutes(app: FastifyInstance, ctx: AppContext
     const id = requireIdParam((req.params as { id: string }).id);
     const before = await getAdjustment(ctx.db, id);
     if (!before) throw notFound('unknown adjustment');
+    if (before.scope !== 'product' && before.scope !== 'product_operation') {
+      throw badRequest('scope must be product or product_operation here; use /api/admin/standards/adjustments/:id for global and operation scopes');
+    }
     await deactivateAdjustment(ctx.db, id);
     await audit(req, 'standards.adjustment_deleted', 'standard_adjustment', id, before, null);
     return { ok: true };

@@ -6,7 +6,7 @@
  * override and recompute; every write takes a required note (audited).
  */
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ProductOperationRow, StandardAdjustment, StandardOverride, StdProvenance } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
@@ -55,6 +55,11 @@ function scopeText(scope: string, operation: string | null): string {
   if (scope === 'product') return 'whole product';
   if (scope === 'operation') return 'operation ' + (operation ?? '');
   return operation ?? 'one operation';
+}
+
+/** This page clears only its own product's adjustments; global and operation ones belong to Admin > Standards (spec 9.6). */
+function isProductScope(a: StandardAdjustment): boolean {
+  return a.scope === 'product' || a.scope === 'product_operation';
 }
 
 export function ProductPage() {
@@ -218,7 +223,7 @@ export function ProductPage() {
                 <Button size="sm" variant="ghost" onClick={() => openModal('adjust', r.operation)}>
                   Adjust
                 </Button>
-                {r.effective.adjustment && (
+                {r.effective.adjustment && isProductScope(r.effective.adjustment) && (
                   <Button
                     size="sm"
                     variant="danger"
@@ -317,9 +322,15 @@ export function ProductPage() {
                     </div>
                     {isManager && (
                       <div className="right-actions">
-                        <Button size="sm" variant="danger" disabled={busy} onClick={() => void run(() => ds.deleteAdjustment(a.id))}>
-                          Remove
-                        </Button>
+                        {isProductScope(a) ? (
+                          <Button size="sm" variant="danger" disabled={busy} onClick={() => void run(() => ds.deleteAdjustment(a.id))}>
+                            Remove
+                          </Button>
+                        ) : (
+                          <Link className="link" to="/admin/standards">
+                            Edit in Standards
+                          </Link>
+                        )}
                       </div>
                     )}
                   </div>
