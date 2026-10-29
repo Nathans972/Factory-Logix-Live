@@ -10,7 +10,14 @@ import { audit } from '../../audit.js';
 import { requireRole } from '../../auth/index.js';
 import type { AppContext } from '../../context.js';
 import { getOrCreateOperationId, listOperationNames } from '../../db/repo/operations.js';
-import { deactivateAdjustment, getAdjustment, insertAdjustment, listAdjustments, listOverrides } from '../../db/repo/standards.js';
+import {
+  deactivateAdjustment,
+  getAdjustment,
+  insertAdjustment,
+  listAdjustments,
+  listOverrides,
+  retireReplacedAdjustments,
+} from '../../db/repo/standards.js';
 import { getCollectorState } from '../../db/repo/sync.js';
 import { badRequest, notFound } from '../../errors.js';
 import { sendControl } from '../../notify.js';
@@ -44,6 +51,9 @@ export async function registerAdminStandardsRoutes(app: FastifyInstance, ctx: Ap
       note: body.note,
     });
     await audit(req, 'standards.adjustment_created', 'standard_adjustment', created.id, null, created);
+    for (const old of await retireReplacedAdjustments(ctx.db, created)) {
+      await audit(req, 'standards.adjustment_replaced', 'standard_adjustment', old.id, old, created);
+    }
     return created;
   });
 

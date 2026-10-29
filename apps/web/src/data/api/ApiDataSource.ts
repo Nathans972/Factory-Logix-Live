@@ -63,6 +63,7 @@ import {
   DataSourceError,
   type DashboardQuery,
   type DataSource,
+  type LiveEvent,
   type OperatorDetailQuery,
   type ShiftViewQuery,
   type Unsubscribe,
@@ -80,6 +81,21 @@ const SSE_EVENT_NAMES: SseEvent['type'][] = [
 /** Synthetic heartbeat interval; consumers use it as the polling fallback (spec 8.4). */
 const FALLBACK_HEARTBEAT_MS = 60_000;
 
+/**
+ * Wait before replacing a stream the browser has closed for good, doubling per failed stream up to
+ * the max and back to the min once one opens. The first wait matches the API's `retry: 5000`.
+ */
+const STREAM_REOPEN_MIN_MS = 5_000;
+const STREAM_REOPEN_MAX_MS = 60_000;
+
+/**
+ * A TV request still unanswered after this long is aborted and fails. The TV keeps one request in
+ * flight, so without a bound a single lost one (half-open connection after a Wi-Fi blip or
+ * sleep/wake, an API stalled behind the proxy's 3600 s read timeout) would stop every later poll
+ * and never show the offline banner. Well under the TV's 60 s poll.
+ */
+const TV_REQUEST_TIMEOUT_MS = 20_000;
+
 type QueryValue = string | number | boolean | null | undefined;
 
 function queryString(params: Record<string, QueryValue>): string {
@@ -92,18 +108,37 @@ function queryString(params: Record<string, QueryValue>): string {
   return s ? '?' + s : '';
 }
 
+/**
+ * Whether the page is in a background tab or a minimized window.
+ *
+ * Over plain HTTP/1.1 (nginx `listen 80`; TLS is left to the customer) a browser opens at most six
+ * connections to the host, shared by all its tabs, and an open stream keeps one for good. Every
+ * portal page and every TV holds a stream, so six open tabs would leave no connection for any
+ * request in any of them. A hidden page gives its stream back and opens a new one when it is shown.
+ */
+function pageHidden(): boolean {
+  return typeof document !== 'undefined' && document.hidden;
+}
+
 export class ApiDataSource implements DataSource {
   readonly kind = 'api' as const;
 
   private es: EventSource | null = null;
-  private subscribers = new Set<(e: SseEvent) => void>();
+  /** No stream is held because the page is hidden; showing it opens one and sends `resync`. */
+  private paused = false;
+  private subscribers = new Set<(e: LiveEvent) => void>();
   private fallbackTimer: ReturnType<typeof setInterval> | null = null;
+  private reopenTimer: ReturnType<typeof setTimeout> | null = null;
+  private reopenDelayMs = STREAM_REOPEN_MIN_MS;
 
   constructor(public baseUrl: string) {}
 
   // ---------------------------------------------------------------- transport
 
-  private async request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  private async request<T>(
+    path: string,
+    init?: { method?: string; body?: unknown; timeoutMs?: number },
+  ): Promise<T> {
     const method = init?.method ?? 'GET';
     const headers: Record<string, string> = { Accept: 'application/json' };
     let body: string | undefined;
@@ -112,14 +147,30 @@ export class ApiDataSource implements DataSource {
       body = JSON.stringify(init.body);
     }
 
+    // `timeoutMs` aborts the request, body read included. A timer rather than
+    // `AbortSignal.timeout()`, which older TV browsers do not have.
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (init?.timeoutMs !== undefined) timer = setTimeout(() => controller.abort(), init.timeoutMs);
+
     let res: Response;
+    let text: string;
     try {
-      res = await fetch(this.baseUrl + path, { method, headers, body, credentials: 'include' });
+      res = await fetch(this.baseUrl + path, {
+        method,
+        headers,
+        body,
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      text = await res.text();
     } catch (err) {
+      if (controller.signal.aborted) throw new DataSourceError(0, 'Request timed out', err);
       throw new DataSourceError(0, err instanceof Error ? err.message : 'Network error', err);
+    } finally {
+      clearTimeout(timer);
     }
 
-    const text = await res.text();
     let payload: unknown = null;
     if (text.length > 0) {
       try {
@@ -140,12 +191,12 @@ export class ApiDataSource implements DataSource {
     return payload as T;
   }
 
-  private get<T>(path: string): Promise<T> {
-    return this.request<T>(path);
+  private get<T>(path: string, timeoutMs?: number): Promise<T> {
+    return this.request<T>(path, { timeoutMs });
   }
 
-  private post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>(path, { method: 'POST', body: body ?? {} });
+  private post<T>(path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+    return this.request<T>(path, { method: 'POST', body: body ?? {}, timeoutMs });
   }
 
   private put<T>(path: string, body?: unknown): Promise<T> {
@@ -170,9 +221,14 @@ export class ApiDataSource implements DataSource {
     return this.get<SyncHealth>('/health/sync');
   }
 
-  subscribe(cb: (e: SseEvent) => void): Unsubscribe {
+  subscribe(cb: (e: LiveEvent) => void): Unsubscribe {
     this.subscribers.add(cb);
-    if (this.es === null) this.openStream();
+    if (this.subscribers.size === 1) {
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', this.onVisibilityChange);
+      }
+      this.openStream();
+    }
     let active = true;
     return () => {
       if (!active) return;
@@ -182,7 +238,20 @@ export class ApiDataSource implements DataSource {
     };
   }
 
-  private emit(e: SseEvent): void {
+  private readonly onVisibilityChange = (): void => {
+    if (pageHidden()) {
+      if (this.paused) return;
+      this.paused = true;
+      this.dropStream();
+    } else if (this.paused) {
+      this.paused = false;
+      this.openStream();
+      // Nothing sent while the page was hidden arrived, so subscribers refetch instead.
+      this.emit({ type: 'resync', at: Date.now() });
+    }
+  };
+
+  private emit(e: LiveEvent): void {
     for (const cb of [...this.subscribers]) {
       try {
         cb(e);
@@ -195,6 +264,12 @@ export class ApiDataSource implements DataSource {
   private openStream(): void {
     if (typeof EventSource === 'undefined') {
       // No SSE here (tests / old browsers): the synthetic heartbeat is the only signal.
+      this.startFallback();
+      return;
+    }
+    if (pageHidden()) {
+      // Opened when the page is shown (onVisibilityChange).
+      this.paused = true;
       this.startFallback();
       return;
     }
@@ -212,12 +287,30 @@ export class ApiDataSource implements DataSource {
     };
     for (const name of SSE_EVENT_NAMES) es.addEventListener(name, onMessage);
     es.onmessage = onMessage;
+    es.onopen = () => {
+      this.reopenDelayMs = STREAM_REOPEN_MIN_MS;
+    };
     es.onerror = () => {
-      // Keep the EventSource alive: the browser reconnects on its own. Meanwhile the synthetic
-      // heartbeat lets consumers fall back to polling (spec 8.4).
+      // The browser reconnects on its own only after a dropped connection (readyState CONNECTING).
+      // A reconnect answered with an error status or a body that is not an event stream (nginx's
+      // 502 while the api restarts) closes the stream for good, so open a new one. Meanwhile the
+      // synthetic heartbeat lets consumers fall back to polling (spec 8.4).
       this.startFallback();
+      if (es.readyState === EventSource.CLOSED) this.scheduleReopen(es);
     };
     this.startFallback();
+  }
+
+  private scheduleReopen(closed: EventSource): void {
+    if (this.es !== closed || this.reopenTimer !== null) return;
+    const delay = this.reopenDelayMs;
+    this.reopenDelayMs = Math.min(delay * 2, STREAM_REOPEN_MAX_MS);
+    // dropStream() clears the timer, so a stream nobody listens to any more, or that a hidden page
+    // gave back, is not reopened.
+    this.reopenTimer = setTimeout(() => {
+      this.reopenTimer = null;
+      this.openStream();
+    }, delay);
   }
 
   private startFallback(): void {
@@ -227,10 +320,24 @@ export class ApiDataSource implements DataSource {
     }, FALLBACK_HEARTBEAT_MS);
   }
 
-  private closeStream(): void {
+  /** Closes the stream, giving its connection back to the browser, and cancels a pending reopen. */
+  private dropStream(): void {
     if (this.es !== null) {
       this.es.close();
       this.es = null;
+    }
+    if (this.reopenTimer !== null) {
+      clearTimeout(this.reopenTimer);
+      this.reopenTimer = null;
+    }
+    this.reopenDelayMs = STREAM_REOPEN_MIN_MS;
+  }
+
+  private closeStream(): void {
+    this.dropStream();
+    this.paused = false;
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange);
     }
     if (this.fallbackTimer !== null) {
       clearInterval(this.fallbackTimer);
@@ -263,11 +370,14 @@ export class ApiDataSource implements DataSource {
   // ----------------------------------------------------------------------- tv
 
   tvRegister(device_token: string): Promise<TvState> {
-    return this.post<TvState>('/tv/register', { device_token });
+    return this.post<TvState>('/tv/register', { device_token }, TV_REQUEST_TIMEOUT_MS);
   }
 
   tvState(device_token: string): Promise<TvState> {
-    return this.get<TvState>('/tv/' + encodeURIComponent(device_token) + '/state');
+    return this.get<TvState>(
+      '/tv/' + encodeURIComponent(device_token) + '/state',
+      TV_REQUEST_TIMEOUT_MS,
+    );
   }
 
   // ------------------------------------------------------------------- portal

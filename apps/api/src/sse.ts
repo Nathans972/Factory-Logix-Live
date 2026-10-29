@@ -14,6 +14,27 @@ const { Client } = pg;
 
 export const CHANNELS = ['fld_data_updated', 'fld_sync_health', 'fld_display_updated'] as const;
 const HEARTBEAT_MS = 25_000;
+/**
+ * Bytes a client may have waiting in this process before it is dropped. A client that reads stays far
+ * below it: frames are small and seconds apart, and Node holds what it writes only until the next tick
+ * (16 of the largest frames, 8 KB each, fit in one). One that stops reading (hung, asleep, or on
+ * purpose: the stream needs no login) would otherwise have every later frame kept for it in memory.
+ */
+const MAX_QUEUED_BYTES = 128 * 1024;
+/**
+ * Streams served at once (exported for tests). Far more than a plant has TVs and portal tabs, and with
+ * MAX_QUEUED_BYTES a bound on what stalled streams can hold.
+ */
+export const MAX_CLIENTS = 1000;
+/** How long a browser turned away by a full hub waits before trying again. */
+const FULL_RETRY_MS = 60_000;
+
+const STREAM_HEADERS = {
+  'Content-Type': 'text/event-stream',
+  'Cache-Control': 'no-cache, no-transform',
+  Connection: 'keep-alive',
+  'X-Accel-Buffering': 'no',
+};
 
 interface SseClient {
   id: number;
@@ -56,13 +77,9 @@ export function notificationToEvent(channel: string, payload: string | undefined
         delayed: Boolean(data.delayed),
       };
     case 'fld_display_updated': {
+      // Only the id: a device_token in the payload must not reach the unauthenticated stream.
       const id = Number(data.display_id ?? data.id);
-      return {
-        type: 'display_updated',
-        at: now,
-        display_id: Number.isFinite(id) ? id : 0,
-        device_token: typeof data.device_token === 'string' ? data.device_token : undefined,
-      };
+      return { type: 'display_updated', at: now, display_id: Number.isFinite(id) ? id : 0 };
     }
     default:
       return null;
@@ -80,6 +97,7 @@ export class SseHub {
   private heartbeat: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private lastFullWarningAt = 0;
 
   constructor(
     private readonly connectionString: string,
@@ -135,14 +153,22 @@ export class SseHub {
     this.reconnectTimer.unref?.();
   }
 
-  addClient(res: ServerResponse): number {
+  /** Starts the stream on `res` and returns its id, or answers and closes `res` and returns null when full. */
+  addClient(res: ServerResponse): number | null {
+    if (this.clients.size >= MAX_CLIENTS) {
+      const now = Date.now();
+      if (now - this.lastFullWarningAt >= 60_000) {
+        this.lastFullWarningAt = now;
+        this.log.warn({ clients: this.clients.size }, 'SSE stream limit reached; turning new streams away');
+      }
+      // A stream that ends at once, so EventSource tries again after `retry`. An error status would
+      // make it give up for good, leaving a TV on its 60 s poll until the page is reloaded.
+      res.writeHead(200, STREAM_HEADERS);
+      res.end(`retry: ${FULL_RETRY_MS}\n\n`);
+      return null;
+    }
     const id = this.nextId++;
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
+    res.writeHead(200, STREAM_HEADERS);
     res.write(`retry: 5000\n\n`);
     res.write(serializeEvent({ type: 'heartbeat', at: Date.now() }));
     this.clients.set(id, { id, res });
@@ -167,6 +193,12 @@ export class SseHub {
           continue;
         }
         client.res.write(frame);
+        if (client.res.writableLength > MAX_QUEUED_BYTES) {
+          // It has stopped reading. Free what Node holds for it; a real EventSource reconnects.
+          this.log.debug({ queued: client.res.writableLength }, 'dropping SSE client that stopped reading');
+          this.clients.delete(id);
+          client.res.destroy();
+        }
       } catch (err) {
         this.log.debug({ err }, 'dropping SSE client');
         this.clients.delete(id);

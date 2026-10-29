@@ -1,5 +1,6 @@
 import {
   DATASET_SPECS,
+  HOUR_CELL_SETTINGS_KEYS,
   connectionWriteSchema,
   datasetMappingSchema,
   mappingConfigSchema,
@@ -17,9 +18,9 @@ import { audit } from '../../audit.js';
 import { requireRole } from '../../auth/index.js';
 import type { AppContext } from '../../context.js';
 import { applySettingsPatch, getSettings } from '../../db/repo/settings.js';
-import { badRequest } from '../../errors.js';
-import { sendControl } from '../../notify.js';
-import { fetchMetadata, runPreview } from '../../odata.js';
+import { ApiError, badRequest } from '../../errors.js';
+import { requestCellRecompute, sendControl } from '../../notify.js';
+import { fetchMetadata, runPreview, type ODataCredentials } from '../../odata.js';
 import { getCredentials, getStoredConnection, saveConnection, toPublicConnection } from '../../services/connection.js';
 import { cacheMetadata, getCachedMetadata, getMapping, saveMapping } from '../../services/mapping.js';
 import { parseWith } from '../../util/query.js';
@@ -28,10 +29,12 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
   const viewer = { preHandler: requireRole('viewer') };
   const admin = { preHandler: requireRole('admin') };
 
-  const configChanged = async (): Promise<void> => {
+  /** `cells`: what was saved changes the stored hour cells, so the recent ones are recomputed in that time zone. */
+  const configChanged = async (cells?: { tz: string }): Promise<void> => {
     ctx.sse.broadcast({ type: 'settings_updated', at: Date.now() });
     try {
       await sendControl(ctx.db, { cmd: 'restart' });
+      if (cells) await requestCellRecompute(ctx.db, cells.tz);
     } catch (err) {
       ctx.log.warn({ err }, 'could not notify the collector');
     }
@@ -51,7 +54,8 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
     await applySettingsPatch(ctx.db, patch, req.auth?.username ?? null);
     const after = await getSettings(ctx.db, { fresh: true });
     await audit(req, 'settings.updated', 'settings', null, before, after);
-    await configChanged();
+    const changesCells = HOUR_CELL_SETTINGS_KEYS.some((key) => patch[key] !== undefined && patch[key] !== before[key]);
+    await configChanged(changesCells ? { tz: after.plant_timezone } : undefined);
     return { settings: after };
   });
 
@@ -81,7 +85,15 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
       raw && typeof raw.base_url === 'string' && raw.base_url.length > 0
         ? parseWith(connectionWriteSchema, raw)
         : null;
-    const creds = await getCredentials(ctx.db, override);
+    let creds: ODataCredentials | null;
+    try {
+      creds = await getCredentials(ctx.db, override);
+    } catch (err) {
+      // A URL holding a user name or password, or a saved password this ENCRYPTION_KEY cannot
+      // decrypt: a failed test that says so.
+      if (err instanceof ApiError) return { ok: false, error: err.message, metadata: null, latency_ms: null };
+      throw err;
+    }
     if (!creds) {
       return { ok: false, error: 'no FactoryLogix connection is configured', metadata: null, latency_ms: null };
     }
@@ -128,6 +140,8 @@ export async function registerAdminSettingsRoutes(app: FastifyInstance, ctx: App
     const datasetMapping = parseWith(datasetMappingSchema, mappingRecord[dataset]);
     const creds = await getCredentials(ctx.db);
     if (!creds) throw badRequest('no FactoryLogix connection is configured');
-    return runPreview(creds, dataset, datasetMapping, await timeoutMs());
+    const { fl_timestamp_mode, plant_timezone } = await getSettings(ctx.db);
+    const timestamps = { mode: fl_timestamp_mode, timezone: plant_timezone };
+    return runPreview(creds, dataset, datasetMapping, timestamps, await timeoutMs());
   });
 }

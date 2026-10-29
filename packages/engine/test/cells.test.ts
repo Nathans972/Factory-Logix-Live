@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { ComputeHourCellsInput, ComputeHourCellsOutput, UnitStep } from '@fld/shared';
+import type { ComputeHourCellsInput, ComputeHourCellsOutput, Pin, UnitStep } from '@fld/shared';
 import {
   colorForPace,
   computeDefectHourCells,
   computeHourCells,
   groupCells,
 } from '../src/cells.js';
+import { stdKey } from '../src/standards.js';
 import {
   HOUR,
   MINUTE,
@@ -37,6 +38,7 @@ function compute(
     steps,
     breaks: o.breaks ?? [],
     standards: o.standards ?? STD30,
+    kept_std_hr: o.kept_std_hr,
     pins: o.pins ?? [],
     settings: o.settings ?? engineSettings(),
     from_utc: at(o.from),
@@ -180,6 +182,35 @@ describe('eligibility', () => {
       ],
     });
     expect(findCell(otherOp.cells, { operator: 'OP1' })!.eligible).toBe(false);
+  });
+
+  it('judges each hour by the pins in force when it ended, whenever it is computed', () => {
+    // A 1-minute board every 10 minutes, 08:00-11:00: 6 work minutes an hour, a visitor unpinned.
+    const steps = stepRun('OP1', 'JA', 'Weld', '2025-06-10T08:00-04:00', 1, 18, { gapMinutes: 9 });
+    const eligible = (p: Pin, hour: string, now: string): boolean =>
+      findCell(compute(steps, { from: hour, to: at(hour) + HOUR, now, pins: [p] }).cells, { hour, operator: 'OP1' })!
+        .eligible;
+    const H8 = '2025-06-10T08:00-04:00';
+    const H9 = '2025-06-10T09:00-04:00';
+    const H10 = '2025-06-10T10:00-04:00';
+
+    // Removed at 10:20 (removing ends a pin): 09:00 keeps it; 10:00 is judged without it at once.
+    const removed = pin({
+      operator_id: 'OP1',
+      job_number: 'JA',
+      mode: 'force_eligible',
+      created_at: ms(H8),
+      expires_at: ms('2025-06-10T10:20-04:00'),
+    });
+    expect(eligible(removed, H9, '2025-06-10T11:05-04:00')).toBe(true);
+    expect(eligible(removed, H10, '2025-06-10T10:25-04:00')).toBe(false);
+    expect(eligible(removed, H10, '2025-06-10T11:05-04:00')).toBe(false);
+
+    // Created at 09:20: it forces 09:00 now and once that hour has ended, never the hour before.
+    const created = pin({ operator_id: 'OP1', job_number: 'JA', mode: 'force_eligible', created_at: ms('2025-06-10T09:20-04:00') });
+    expect(eligible(created, H9, '2025-06-10T09:30-04:00')).toBe(true);
+    expect(eligible(created, H9, '2025-06-10T10:05-04:00')).toBe(true);
+    expect(eligible(created, H8, '2025-06-10T09:30-04:00')).toBe(false);
   });
 });
 
@@ -365,6 +396,23 @@ describe('target, pace and color', () => {
     expect(cell.color).toBe('neutral');
   });
 
+  it('judges an hour against the StdHr it keeps (none included), the others against the standards', () => {
+    const out = compute(stepRun('OP1', 'JA', 'Weld', '2025-06-10T08:00-04:00', 2, 90), {
+      from: '2025-06-10T08:00-04:00',
+      to: '2025-06-10T11:00-04:00',
+      now: '2025-06-10T10:30-04:00',
+      standards: stdLookup([['Z1', 'Weld', 40]]),
+      kept_std_hr: new Map([
+        [ms('2025-06-10T08:00-04:00'), new Map([[stdKey('Z1', 'Weld'), 30]])],
+        [ms('2025-06-10T09:00-04:00'), new Map([[stdKey('Z1', 'Weld'), null]])],
+      ]),
+    });
+    // 29 units (the 30th completes at 09:00) in 60 charged minutes.
+    expect(findCell(out.cells, { hour: '2025-06-10T08:00-04:00' })).toMatchObject({ std_hr: 30, target_units: 30, color: 'green' });
+    expect(findCell(out.cells, { hour: '2025-06-10T09:00-04:00' })).toMatchObject({ std_hr: null, pace: null, color: 'neutral' });
+    expect(findCell(out.cells, { hour: '2025-06-10T10:00-04:00' })!.std_hr).toBe(40);
+  });
+
   it('marks only the current hour provisional and only emits hours inside [from,to)', () => {
     const steps = [
       ...stepRun('OP1', 'JA', 'Weld', '2025-06-10T08:00-04:00', 5, 12),
@@ -504,5 +552,17 @@ describe('performance', () => {
     // One cell per operator per hour.
     expect(out.cells.length).toBe(operators * Math.ceil((perOperator * 2) / 60));
     expect(out.assignments).toHaveLength(operators);
+  });
+
+  it('does not walk the million hours since a zero-date start (1900) outside the window', () => {
+    const window = { from: '2025-06-10T09:00-04:00', to: '2025-06-10T11:00-04:00', now: '2025-06-10T10:30-04:00' };
+    const run = stepRun('OP1', 'JA', 'Weld', '2025-06-10T09:00-04:00', 5, 12);
+    const started = performance.now();
+    const zeroDate = compute([step('OP1', 'JA', 'Weld', '1900-01-01T00:00:00Z', '2025-06-10T10:10-04:00'), ...run], window);
+    expect(performance.now() - started).toBeLessThan(1_000); // vitest cannot time out a synchronous test
+    // The same unit started two days earlier gives the window the same cells.
+    const twoDays = compute([step('OP1', 'JA', 'Weld', '2025-06-08T09:00-04:00', '2025-06-10T10:10-04:00'), ...run], window);
+    expect(zeroDate.cells).toHaveLength(2);
+    expect(zeroDate).toEqual(twoDays);
   });
 });

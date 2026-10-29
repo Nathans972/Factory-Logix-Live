@@ -57,6 +57,13 @@ export interface ComputeHourCellsInput {
   breaks: BreakInterval[];
   /** Effective standards lookup (see buildStandardsLookup). Missing => std_hr null => neutral. */
   standards: StandardsLookup;
+  /**
+   * StdHr some hours were already judged against (null = none), by hour start then StdKey: those
+   * cells keep it instead of taking the one in `standards`. The collector passes it for the hours
+   * that have ended, which stop changing (spec 7.7).
+   */
+  kept_std_hr?: Map<UtcMs, Map<StdKey, number | null>>;
+  /** Every pin in force at some time in the hours computed, expired and removed ones too (spec 7.3). */
   pins: Pin[];
   settings: EngineSettings;
   /** Emit cells for hour buckets whose start is in [from_utc, to_utc). */
@@ -83,12 +90,17 @@ export interface RollupRow {
   charged_minutes: number;
   charged_hours: number;
   earned_hours: number;
-  /** null when any contributing row has no StdHr (flag in UI) */
+  /**
+   * earned_hours over the charged hours of the cells with a StdHr (the others are left out);
+   * null when those have no charged time
+   */
   efficiency: number | null;
   color: CellColor;
   eligible_operators: number;
-  /** count of contributing cells with null std_hr */
+  /** count of contributing cells with null std_hr (flag in UI) */
   rows_without_std: number;
+  /** charged hours of those cells: part of charged_hours, left out of efficiency */
+  charged_hours_without_std: number;
 }
 
 export interface Rollups {
@@ -257,6 +269,8 @@ export interface ShiftJobSection {
   earned_hours: number;
   efficiency: number | null;
   color: CellColor;
+  /** charged hours without a StdHr, left out of efficiency (RollupRow) */
+  charged_hours_without_std: number;
   operations: ShiftOperationRow[];
 }
 
@@ -272,6 +286,7 @@ export interface ShiftView {
     active_jobs: number;
     eligible_operators: number;
     rows_without_std: number;
+    charged_hours_without_std: number;
   };
   jobs: ShiftJobSection[];
   rollups: Rollups;
@@ -343,7 +358,10 @@ export interface OperatorRangeRow {
   std_hr: number | null;
   window_minutes: number;
   charged_minutes: number;
+  /** units of the eligible hours: the pace numerator */
   units: number;
+  /** units of the visitor hours: shown, never judged (spec 7.3) */
+  visitor_units: number;
   target_units: number;
   pace: number | null;
   color: CellColor;
@@ -360,6 +378,11 @@ export interface OperatorDetail {
   assignment: OperatorAssignment | null;
   strips: OperatorStrip[];
   rows: OperatorRangeRow[];
+  /**
+   * the operator's cells in the range rolled up in earned hours (spec 7.11), the same figures as the
+   * operator's row in the shift view's breakdown: rows with different StdHr don't add up in units
+   */
+  summary: RollupRow;
   range: { from_utc: UtcMs; to_utc: UtcMs };
   generated_at: UtcMs;
 }
@@ -371,6 +394,8 @@ export interface JobShiftHistoryRow {
   earned_hours: number;
   efficiency: number | null;
   color: CellColor;
+  /** charged hours without a StdHr, left out of efficiency (RollupRow) */
+  charged_hours_without_std: number;
 }
 
 export interface JobOperatorTotal {

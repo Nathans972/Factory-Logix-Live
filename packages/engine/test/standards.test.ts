@@ -199,6 +199,23 @@ describe('computeStandard', () => {
     expect(std.computed_std_hr).toBe(13.3); // 60 / 4.5 = 13.333...
   });
 
+  it('counts a step from a zero-date start (1900) as work in the hours it spans, without walking them all', () => {
+    const steps = [
+      ...stepRun('OP1', 'JA', 'Weld', '2025-06-10T08:00-04:00', 5, 10),
+      ...stepRun('OP2', 'JA', 'Weld', '2025-06-10T08:00-04:00', 5, 10),
+      // Two work minutes in the hour: a visitor, but for the long step below.
+      ...stepRun('OP3', 'JA', 'Weld', '2025-06-10T08:40-04:00', 0.5, 4),
+    ];
+    const started = performance.now();
+    const zeroDate = computeStandard(input([step('OP3', 'JA', 'Weld', '1900-01-01T00:00:00Z', '2025-06-10T09:30-04:00'), ...steps]));
+    expect(performance.now() - started).toBeLessThan(1_000); // vitest cannot time out a synchronous test
+    const twoDays = computeStandard(input([step('OP3', 'JA', 'Weld', '2025-06-08T08:00-04:00', '2025-06-10T09:30-04:00'), ...steps]));
+    expect(zeroDate.sample_units).toBe(24);
+    expect(zeroDate.sample_operators).toBe(3);
+    expect(zeroDate).toEqual(twoDays);
+    expect(computeStandard(input(steps)).sample_units).toBe(20);
+  });
+
   it('skips a session that falls entirely inside a break', () => {
     const steps = [
       ...stepRun('OP1', 'JA', 'Weld', '2025-06-10T08:00-04:00', 5, 10),

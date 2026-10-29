@@ -216,6 +216,22 @@ export interface HourCell {
   target_units: number;
   pace: number | null;
   color: CellColor;
+  /**
+   * Where in the hour the cell's units, work, window and breaks fall, so a shift that changes
+   * mid-hour (06:30) takes only its part of the hour (`clipHourCell`). Absent on cells written
+   * before it was recorded: those go whole to the shift their hour starts in.
+   */
+  spans?: CellSpans;
+}
+
+/** Offsets in ms from the cell's hour start; intervals are [from, to). */
+export interface CellSpans {
+  /** one per unit completed */
+  completes: number[];
+  work: [number, number][];
+  window: [number, number][];
+  /** the part of the window charged as break */
+  breaks: [number, number][];
 }
 
 /** Aggregation of HourCells per (job, operation, hour): grouped-operator mode (spec 7.6). */

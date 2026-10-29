@@ -119,6 +119,11 @@ export interface DatasetMapping {
   key: string[];
   /** target field name -> source field name (or null when not available). */
   fields: Record<string, string | null>;
+  /**
+   * The natural keys this dataset had before `key`, oldest first (`MappingKeyHistory`). Not saved
+   * with the mapping: the collector adds them when it loads it (`withPreviousKeys`).
+   */
+  previous_keys?: string[][];
 }
 
 export interface MappingConfig {
@@ -128,6 +133,74 @@ export interface MappingConfig {
   operators: DatasetMapping | null;
   routes: DatasetMapping | null;
   standards: DatasetMapping | null;
+}
+
+/**
+ * Datasets whose rows are stored by natural key: `unit_steps` and `defects` are upserted on
+ * (natural_key, start_ts / found_ts) (spec 6.1). The others are stored by their own columns (job
+ * number, operator, product and operation), so their key only names rows in the raw payload archive.
+ */
+export const NATURAL_KEY_DATASETS = ['unit_steps', 'defects'] as const satisfies readonly DatasetName[];
+
+/** Settings key of the `MappingKeyHistory`. */
+export const MAPPING_KEY_HISTORY = 'mapping_key_history';
+
+/**
+ * The natural keys a dataset stored by natural key had before its current one, oldest first. The
+ * API adds the old key whenever a saved mapping changes it or stops using the dataset. Rows stay
+ * stored under the key they were written with; the collector also reads these fields and, when it
+ * reads a row again, replaces the copy stored under an old key, so changing the key does not store
+ * the row twice (docs/MAPPING.md, "Changing the natural key").
+ */
+export type MappingKeyHistory = Partial<Record<DatasetName, string[][]>>;
+
+function isKey(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((field) => typeof field === 'string' && field.length > 0);
+}
+
+function sameKey(a: string[], b: string[] | null): boolean {
+  return b !== null && a.length === b.length && a.every((field, i) => field === b[i]);
+}
+
+/** A stored `mapping_key_history` value: the well-formed keys of the datasets stored by natural key. */
+export function parseMappingKeyHistory(value: unknown): MappingKeyHistory {
+  const history: MappingKeyHistory = {};
+  if (!value || typeof value !== 'object') return history;
+  for (const dataset of NATURAL_KEY_DATASETS) {
+    const keys = (value as Record<string, unknown>)[dataset];
+    const valid = Array.isArray(keys) ? keys.filter(isKey) : [];
+    if (valid.length > 0) history[dataset] = valid;
+  }
+  return history;
+}
+
+/**
+ * `history` once `next` is saved over `prev`: a dataset stored by natural key keeps the key it had
+ * when the new mapping gives it another one or stops using it. The key in use is never listed.
+ */
+export function nextMappingKeyHistory(history: MappingKeyHistory, prev: MappingConfig | null, next: MappingConfig): MappingKeyHistory {
+  const out: MappingKeyHistory = {};
+  for (const dataset of NATURAL_KEY_DATASETS) {
+    // `prev` is the stored value as it is, which may predate today's schema.
+    const before = prev?.[dataset]?.key;
+    const current = next[dataset]?.key ?? null;
+    const keys = [...(history[dataset] ?? []), ...(isKey(before) ? [before] : [])]
+      .filter((key) => !sameKey(key, current))
+      .filter((key, i, all) => all.findIndex((other) => sameKey(other, key)) === i);
+    if (keys.length > 0) out[dataset] = keys;
+  }
+  return out;
+}
+
+/** `mapping` with the keys in `history` as the `previous_keys` of its datasets. */
+export function withPreviousKeys(mapping: MappingConfig, history: MappingKeyHistory): MappingConfig {
+  const out = { ...mapping };
+  for (const dataset of NATURAL_KEY_DATASETS) {
+    const current = out[dataset];
+    const keys = history[dataset];
+    if (current && keys) out[dataset] = { ...current, previous_keys: keys };
+  }
+  return out;
 }
 
 /** Illustrative default mapping (spec 4.8). Real names come from $metadata. */

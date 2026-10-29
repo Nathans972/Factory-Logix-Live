@@ -51,15 +51,32 @@ describe('runMigrations', () => {
     expect(new Set(log.map((l) => l.client))).toEqual(new Set([1]));
     const sql = log.map((l) => l.sql);
     expect(sql.findIndex((s) => s.includes('pg_advisory_lock'))).toBeLessThan(sql.indexOf('CREATE TABLE b (id int)'));
-    expect(sql.at(-1)).toContain('pg_advisory_unlock');
+    expect(sql.at(-2)).toContain('pg_advisory_unlock');
     expect(released).toEqual([{ client: 1, err: undefined }]);
   });
 
   it('unlocks and releases the client when a migration fails', async () => {
     const { pool, log, released } = fakePool({ failOn: 'CREATE TABLE c' });
     await expect(runMigrations(pool as unknown as MigrationPool, dir, quiet)).rejects.toThrow('boom');
-    expect(log.at(-1)).toEqual({ client: 1, sql: 'SELECT pg_advisory_unlock($1)' });
+    expect(log.slice(-2)).toEqual([
+      { client: 1, sql: 'SELECT pg_advisory_unlock($1)' },
+      { client: 1, sql: 'RESET statement_timeout' },
+    ]);
     expect(released).toEqual([{ client: 1, err: undefined }]);
+  });
+
+  it("lifts the pool's statement timeout before the lock and puts it back before releasing the client", async () => {
+    const { pool, log } = fakePool();
+    await runMigrations(pool as unknown as MigrationPool, dir, quiet);
+    const sql = log.map((l) => l.sql);
+    expect(sql[0]).toBe('SET statement_timeout = 0');
+    expect(sql.at(-1)).toBe('RESET statement_timeout');
+  });
+
+  it('destroys the client instead of pooling it without a statement timeout when the reset fails', async () => {
+    const { pool, released } = fakePool({ failOn: 'RESET statement_timeout' });
+    await runMigrations(pool as unknown as MigrationPool, dir, quiet);
+    expect(released[0]?.err).toBeInstanceOf(Error);
   });
 
   it('destroys the client instead of pooling it when the unlock fails', async () => {

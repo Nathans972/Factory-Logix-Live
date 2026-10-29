@@ -3,7 +3,8 @@
  *
  * `MockStore` owns the simulated world (generated lazily on first use), the admin state
  * that reviewers can edit (and that resets on reload), and one synchronous method per
- * `DataSource` operation. `MockDataSource` is a thin async wrapper around it.
+ * `DataSource` operation. `MockDataSource` is a thin async wrapper around it. The displays
+ * are also mirrored to the demo's other open tabs (`./tabs.ts`).
  *
  * Every view is assembled the same way the real API would assemble it: raw records in,
  * engine functions out. No calculation is reimplemented here.
@@ -78,6 +79,7 @@ import {
   pickEngineSettings,
 } from '@fld/shared';
 import {
+  addDays,
   buildFloorView,
   buildJobDetail,
   buildOperatorDetail,
@@ -95,6 +97,8 @@ import {
   hourColumns,
   hourStartUtc,
   listShiftInstances,
+  localDateString,
+  resolveShiftVersion,
   rollingWindowColumns,
 } from '@fld/engine';
 import { CellCache } from './simulator/cellcache';
@@ -152,11 +156,17 @@ export function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
-interface DeviceRecord {
+export interface DeviceRecord {
   device_token: string;
   display_id: number;
   registered_at: UtcMs;
   auto_claim: boolean;
+}
+
+/** A display as the demo's tabs share it (`./tabs.ts`): null once deleted, with the TVs bound to it. */
+export interface SharedDisplay {
+  display: Display | null;
+  devices: DeviceRecord[];
 }
 
 export class MockStore {
@@ -211,6 +221,8 @@ export class MockStore {
 
   private listeners = new Set<(e: SseEvent) => void>();
   private lastSyncStatus: 'ok' | 'degraded' = 'ok';
+  /** Set by `./tabs.ts`: told about every display change so the demo's other tabs get it too. */
+  onDisplayChanged: ((display_id: number) => void) | null = null;
 
   readonly cells = new CellCache({
     steps: () => this.steps,
@@ -479,8 +491,9 @@ export class MockStore {
     this.emit({ type: 'data_updated', at: this.now(), hours });
   }
 
-  emitDisplayUpdated(display_id: number, device_token?: string): void {
-    this.emit({ type: 'display_updated', at: this.now(), display_id, device_token });
+  emitDisplayUpdated(display_id: number): void {
+    this.emit({ type: 'display_updated', at: this.now(), display_id });
+    this.onDisplayChanged?.(display_id);
   }
 
   emitSettingsUpdated(): void {
@@ -753,7 +766,7 @@ export class MockStore {
         };
         this.displays.push(display);
         rec = { device_token, display_id: display.id, registered_at: now, auto_claim: true };
-        this.emitDisplayUpdated(display.id, device_token);
+        this.emitDisplayUpdated(display.id);
       }
       this.devices.set(device_token, rec);
     }
@@ -775,7 +788,7 @@ export class MockStore {
         d.job_number = FEATURED_JOB;
         d.group_operators = false;
         this.audit('claim', 'display', String(d.id), null, d);
-        this.emitDisplayUpdated(d.id, device_token);
+        this.emitDisplayUpdated(d.id);
       }
       rec.auto_claim = false;
     }
@@ -942,7 +955,8 @@ export class MockStore {
     if (valid && Number.isFinite(anchor)) {
       if (shift_id != null) {
         const def = this.shiftDefs.find((s) => s.id === shift_id);
-        if (def !== undefined) return expandShiftInstance(def, date, this.tz);
+        const version = def === undefined ? null : resolveShiftVersion(this.shiftDefs, def, date);
+        if (version !== null) return expandShiftInstance(version, date, this.tz);
       }
       const insts = listShiftInstances(
         this.shiftDefs,
@@ -1183,6 +1197,17 @@ export class MockStore {
       created_at: this.now(),
       note: req.note,
     };
+    // Replaces the adjustment on the same scope instead of stacking on it, as the API does.
+    const replaced = this.adjustments.filter(
+      (a) =>
+        a.scope === adj.scope &&
+        (adj.scope === 'global' || adj.scope === 'operation' || a.product_number === adj.product_number) &&
+        (adj.scope === 'global' || adj.scope === 'product' || a.operation === adj.operation),
+    );
+    for (const old of replaced) {
+      this.audit('replace', 'standard_adjustment', String(old.id), old, adj);
+      this.adjustments.splice(this.adjustments.indexOf(old), 1);
+    }
     this.adjustments.push(adj);
     this.bumpStandards();
     this.audit('create', 'standard_adjustment', String(adj.id), null, adj);
@@ -1210,6 +1235,17 @@ export class MockStore {
       note: req.note,
       active: true,
     };
+    const replaced = this.overrides.filter(
+      (o) =>
+        o.active &&
+        o.scope === ov.scope &&
+        o.product_number === ov.product_number &&
+        (ov.scope === 'product' || o.operation === ov.operation),
+    );
+    for (const old of replaced) {
+      this.audit('replace', 'standard_override', String(old.id), old, ov);
+      old.active = false;
+    }
     this.overrides.push(ov);
     this.bumpStandards();
     this.audit('create', 'standard_override', String(ov.id), null, ov);
@@ -1278,7 +1314,10 @@ export class MockStore {
     const idx = this.pins.findIndex((p) => p.id === id);
     if (idx < 0) return;
     const before = this.pins[idx]!;
-    this.pins.splice(idx, 1);
+    const now = this.now();
+    if (before.expires_at !== null && before.expires_at <= now) return;
+    // Ended, not dropped: the hours that ended while it was in force keep it (spec 7.3).
+    this.pins[idx] = { ...before, expires_at: now };
     this.cells.clear();
     this.audit('delete', 'pin', String(id), before, null);
   }
@@ -1333,7 +1372,9 @@ export class MockStore {
       if (rec.display_id === temp.id) this.devices.set(token, { ...rec, display_id: id });
     }
     this.audit('repair', 'display', String(id), before, display);
+    // Both, like the API: until it refetches, the TV knows itself as the temporary display.
     this.emitDisplayUpdated(id);
+    this.emitDisplayUpdated(temp.id);
     return display;
   }
 
@@ -1348,6 +1389,42 @@ export class MockStore {
     this.emitDisplayUpdated(id);
   }
 
+  /** One display and the TVs bound to it, for the demo's other tabs (`./tabs.ts`). */
+  sharedDisplay(id: number): SharedDisplay {
+    return {
+      display: this.displayById(id),
+      devices: [...this.devices.values()].filter((r) => r.display_id === id),
+    };
+  }
+
+  get nextDisplayId(): number {
+    return this.nextIds.display ?? 1;
+  }
+
+  /**
+   * Takes on displays another demo tab changed (`./tabs.ts`). Announced to this tab's pages
+   * only, not back to the other tabs: they have them already.
+   */
+  adoptDisplays(changes: (SharedDisplay & { id: number })[], next_display_id: number): void {
+    this.ensureWorld();
+    for (const { id, display, devices } of changes) {
+      const idx = this.displays.findIndex((d) => d.id === id);
+      if (display === null) {
+        if (idx >= 0) this.displays.splice(idx, 1);
+      } else if (idx >= 0) {
+        this.displays[idx] = display;
+      } else {
+        this.displays.push(display);
+      }
+      for (const [token, rec] of this.devices) {
+        if (rec.display_id === id) this.devices.delete(token);
+      }
+      for (const rec of devices) this.devices.set(rec.device_token, rec);
+    }
+    this.nextIds.display = Math.max(this.nextDisplayId, next_display_id);
+    for (const { id } of changes) this.emit({ type: 'display_updated', at: this.now(), display_id: id });
+  }
+
   // ------------------------------------------------------------ shifts/breaks
 
   createShift(req: ShiftWrite): ShiftDef {
@@ -1359,10 +1436,37 @@ export class MockStore {
     return shift;
   }
 
+  /**
+   * As the API does it (spec 10.2): a later effective-from ends this version the day before (unless it
+   * ended earlier) and adds a new one, which the breaks scoped to this one apply to as well. Any other
+   * edit is in place, so it may not change the times or days of a version in effect before today.
+   */
   updateShift(id: number, req: ShiftWrite): ShiftDef {
     const idx = this.shiftDefs.findIndex((s) => s.id === id);
     if (idx < 0) throw new Error('Shift not found');
     const before = { ...this.shiftDefs[idx]! };
+    if (req.effective_from > before.effective_from) {
+      const dayBefore = addDays(req.effective_from, -1);
+      if (before.effective_to === null || before.effective_to > dayBefore) {
+        this.shiftDefs[idx] = { ...before, effective_to: dayBefore };
+      }
+      const version: ShiftDef = { id: this.id('shift'), ...req };
+      this.shiftDefs.push(version);
+      this.breakDefs = this.breakDefs.map((b) =>
+        b.shift_ids?.includes(id) && !b.shift_ids.includes(version.id) ? { ...b, shift_ids: [...b.shift_ids, version.id] } : b,
+      );
+      this.cells.clear();
+      this.audit('version', 'shift', String(version.id), before, version);
+      this.emitSettingsUpdated();
+      return version;
+    }
+    const days = (s: ShiftWrite) => [...new Set(s.days_of_week)].sort((a, b) => a - b).join(',');
+    const newTimes = req.start_local !== before.start_local || req.end_local !== before.end_local || days(req) !== days(before);
+    if (newTimes && before.effective_from < localDateString(this.now(), this.tz)) {
+      throw new Error(
+        `"${before.name}" has been in effect since ${before.effective_from}: new times or days need a later "Effective from", so the days already recorded keep the old ones`,
+      );
+    }
     const next: ShiftDef = { id, ...req };
     this.shiftDefs[idx] = next;
     this.cells.clear();

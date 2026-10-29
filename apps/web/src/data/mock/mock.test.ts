@@ -4,7 +4,7 @@
  * 12 columns and legal colours, working portal views, and in-memory admin CRUD.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CellColor, SseEvent } from '@fld/shared';
+import type { CellColor, ShiftWrite, SseEvent } from '@fld/shared';
 import { expandBreaks } from '@fld/engine';
 import { MockDataSource } from './MockDataSource';
 import { AUTO_CLAIM_MS, MockStore } from './state';
@@ -13,6 +13,7 @@ import { startLiveSimulation } from './simulator/live';
 import { mulberry32 } from './simulator/rng';
 import {
   BASE_RATES,
+  DAY_SHIFT_ID,
   FEATURED_JOB,
   JOBS,
   OPERATIONS,
@@ -551,6 +552,58 @@ describe('admin (in memory)', () => {
     await ds.setDisplayJob(tv.id, { job_number: tv.job_number });
     off();
     await expect(ds.setDisplayJob(99_999, { job_number: other })).rejects.toThrow();
+  });
+
+  it('announces both displays on a re-pair, like the API, so the TV on the temporary one refetches', async () => {
+    const token = () => 'repair-' + Math.random().toString(36).slice(2);
+    const first = await ds.tvRegister(token());
+    const existing = await ds.claimDisplay({ pairing_code: first.pairing_code, name: 'Re-pair test' });
+    const replacement = await ds.tvRegister(token());
+    const seen: SseEvent[] = [];
+    const off = ds.subscribe((e) => seen.push(e));
+    await ds.repairDisplay(existing.id, { pairing_code: replacement.pairing_code });
+    off();
+    const ids = seen.flatMap((e) => (e.type === 'display_updated' ? [e.display_id] : []));
+    expect(ids).toEqual(expect.arrayContaining([existing.id, replacement.display!.id]));
+  });
+
+  it('versions a shift edit like the API, so the days already recorded keep their times', () => {
+    const s = new MockStore();
+    const day: ShiftWrite = {
+      name: 'Day',
+      start_local: '06:00',
+      end_local: '18:00',
+      days_of_week: [0, 1, 2, 3, 4, 5, 6],
+      effective_from: '2026-01-01',
+      effective_to: null,
+    };
+    // The Day shift has been in effect since 2026-01-01: new times need a later effective-from.
+    expect(() => s.updateShift(DAY_SHIFT_ID, day)).toThrow('need a later "Effective from"');
+    expect(s.shiftDefs.find((d) => d.id === DAY_SHIFT_ID)?.start_local).toBe('07:00');
+
+    const version = s.updateShift(DAY_SHIFT_ID, { ...day, effective_from: '2026-11-08' });
+    expect(s.shiftDefs.filter((d) => d.name === 'Day').map((d) => [d.id, d.start_local, d.effective_from, d.effective_to])).toEqual([
+      [DAY_SHIFT_ID, '07:00', '2026-01-01', '2026-11-07'],
+      [version.id, '06:00', '2026-11-08', null],
+    ]);
+    expect(s.breakDefs.find((b) => b.name === 'Lunch')?.shift_ids).toEqual([DAY_SHIFT_ID, version.id]);
+  });
+
+  it('replaces an override or adjustment on the same scope like the API, so clearing it goes back to the base', async () => {
+    const pack = async () => (await ds.productView('PB-2200')).rows.find((r) => r.operation === 'Pack')!.effective;
+    const base = await pack();
+    const target = { scope: 'product_operation', product_number: 'PB-2200', operation: 'Pack', note: 'n' } as const;
+
+    await ds.createOverride('PB-2200', { ...target, std_hr: 40 });
+    const override = await ds.createOverride('PB-2200', { ...target, std_hr: 36 });
+    expect((await pack()).effective).toBe(36);
+    await ds.deleteOverride(override.id);
+    expect(await pack()).toEqual(base);
+
+    await ds.createProductAdjustment('PB-2200', { ...target, percent: 20 });
+    const adjustment = await ds.createProductAdjustment('PB-2200', { ...target, percent: 10 });
+    await ds.deleteAdjustment(adjustment.id);
+    expect(await pack()).toEqual(base);
   });
 });
 

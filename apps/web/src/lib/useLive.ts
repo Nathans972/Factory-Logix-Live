@@ -2,7 +2,8 @@
  * Live refresh plumbing (spec 8.4, WEB_NOTES "Conventions").
  *
  * `useLiveRefetch(types, onEvent)` subscribes to the DataSource event stream and reacts to
- * the given event types. `onEvent` may be:
+ * the given event types, and to `resync` (some may have been missed) when `types` is not empty.
+ * `onEvent` may be:
  *   - a query key (or list of query keys) to invalidate, e.g. `['shiftView']`
  *   - a callback, for pages that need custom handling
  *   - omitted, in which case every active query is invalidated
@@ -12,9 +13,10 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { SseEvent } from '@fld/shared';
+import type { LiveEvent } from '../data/DataSource';
 import { useDataSource } from '../data/DataSourceContext';
 
-export type LiveTarget = QueryKey | QueryKey[] | ((e: SseEvent) => void) | undefined;
+export type LiveTarget = QueryKey | QueryKey[] | ((e: LiveEvent) => void) | undefined;
 
 function isQueryKeyList(v: unknown): v is QueryKey[] {
   return Array.isArray(v) && v.length > 0 && Array.isArray(v[0]);
@@ -30,7 +32,8 @@ export function useLiveRefetch(types: SseEvent['type'][], onEvent?: LiveTarget):
 
   useEffect(() => {
     const unsubscribe = ds.subscribe((e) => {
-      if (!typesRef.current.includes(e.type)) return;
+      const listening = typesRef.current;
+      if (e.type === 'resync' ? listening.length === 0 : !listening.includes(e.type)) return;
       const target = targetRef.current;
       if (typeof target === 'function') {
         target(e);
@@ -57,7 +60,7 @@ export function useLiveEvent(types: SseEvent['type'][], handler: (e: SseEvent) =
 
   useEffect(() => {
     return ds.subscribe((e) => {
-      if (typesRef.current.includes(e.type)) handlerRef.current(e);
+      if (e.type !== 'resync' && typesRef.current.includes(e.type)) handlerRef.current(e);
     });
   }, [ds]);
 }

@@ -150,11 +150,39 @@
   letter-spacing: 0.06em;
 }
 
-/* output table is anchored to the top; the slack below is left for more rows */
+/* output table is anchored to the top; the slack below is left for more rows. Rows that would not
+   fit shrink instead of being cut off: fitRows (tvLogic.ts) sets --tv-fit here, which scales the
+   table's type and padding, and the rows that still do not fit are covered by .tv-more */
 .tv-output {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  --tv-fs-row: calc(var(--tv-fs-cell) * var(--tv-fit, 1));
+  --tv-pad-row: calc(var(--tv-pad-y) * var(--tv-fit, 1));
+}
+
+.tv-output-table {
+  --tv-fs-cell: var(--tv-fs-row);
+  --tv-pad-y: var(--tv-pad-row);
+}
+
+/* "+3 more rows: Final Inspection, Pack", one row high, from the first row that does not fit down */
+.tv-more {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: var(--tv-pad-row) var(--tv-pad-x);
+  border-top: 1px solid var(--tv-grid);
+  background: var(--tv-bg);
+  color: var(--tv-label);
+  font-size: var(--tv-fs-row);
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------------------------------------------------------------- tables */

@@ -44,15 +44,21 @@ export async function registerSetupRoutes(app: FastifyInstance, ctx: AppContext)
     };
   });
 
-  // Works only while `users` is empty.
-  app.post('/api/setup/admin', async (req, reply): Promise<AuthMe> => {
-    const body = parseWith(setupAdminSchema, req.body);
-    const hash = await hashPassword(body.password);
-    const user = await createFirstAdmin(ctx.pool, body.username, hash);
-    if (!user) throw conflict('setup has already been completed');
-    req.auth = user;
-    await audit(req, 'setup.admin_created', 'user', user.id, null, { username: user.username, role: user.role });
-    await setSessionCookie(reply, user, ctx.env.sessionSecret);
-    return { user };
-  });
+  // Works only while `users` is empty. Checked before the argon2 hash, so a request once setup is done
+  // costs one count; createFirstAdmin checks again under its lock for two setups at once.
+  app.post(
+    '/api/setup/admin',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (req, reply): Promise<AuthMe> => {
+      const body = parseWith(setupAdminSchema, req.body);
+      if ((await countUsers(ctx.db)) > 0) throw conflict('setup has already been completed');
+      const hash = await hashPassword(body.password);
+      const user = await createFirstAdmin(ctx.pool, body.username, hash);
+      if (!user) throw conflict('setup has already been completed');
+      req.auth = user;
+      await audit(req, 'setup.admin_created', 'user', user.id, null, { username: user.username, role: user.role });
+      await setSessionCookie(reply, user, 0, ctx.env.sessionSecret); // a new user starts at session version 0
+      return { user };
+    },
+  );
 }

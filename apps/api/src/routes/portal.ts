@@ -36,6 +36,8 @@ import {
   getOverride,
   insertAdjustment,
   insertOverride,
+  retireReplacedAdjustments,
+  retireReplacedOverrides,
 } from '../db/repo/standards.js';
 import { isJobActive, listJobsWithActivity } from '../db/repo/work-orders.js';
 import { badRequest, notFound } from '../errors.js';
@@ -179,6 +181,9 @@ export async function registerPortalRoutes(app: FastifyInstance, ctx: AppContext
       note: body.note,
     });
     await audit(req, 'standards.adjustment_created', 'standard_adjustment', created.id, null, created);
+    for (const old of await retireReplacedAdjustments(ctx.db, created)) {
+      await audit(req, 'standards.adjustment_replaced', 'standard_adjustment', old.id, old, created);
+    }
     return created;
   });
 
@@ -186,6 +191,9 @@ export async function registerPortalRoutes(app: FastifyInstance, ctx: AppContext
     const id = requireIdParam((req.params as { id: string }).id);
     const before = await getAdjustment(ctx.db, id);
     if (!before) throw notFound('unknown adjustment');
+    if (before.scope !== 'product' && before.scope !== 'product_operation') {
+      throw badRequest('scope must be product or product_operation here; use /api/admin/standards/adjustments/:id for global and operation scopes');
+    }
     await deactivateAdjustment(ctx.db, id);
     await audit(req, 'standards.adjustment_deleted', 'standard_adjustment', id, before, null);
     return { ok: true };
@@ -205,6 +213,9 @@ export async function registerPortalRoutes(app: FastifyInstance, ctx: AppContext
       note: body.note,
     });
     await audit(req, 'standards.override_created', 'standard_override', created.id, null, created);
+    for (const old of await retireReplacedOverrides(ctx.db, created)) {
+      await audit(req, 'standards.override_replaced', 'standard_override', old.id, old, created);
+    }
     return created;
   });
 
@@ -231,6 +242,7 @@ export async function registerPortalRoutes(app: FastifyInstance, ctx: AppContext
     const pins = await listPins(ctx.db, {
       operator_id: qStr(query.operator_id),
       job_number: qStr(query.job_number),
+      activeOnly: true,
     });
     return { pins };
   });

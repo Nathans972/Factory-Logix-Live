@@ -35,7 +35,10 @@ export interface SourceSyncState {
 }
 
 export interface BackfillProgress {
-  /** `recoloring`: the download finished; standards are recomputed and hour cells re-colored day by day. */
+  /**
+   * `recoloring`: the download finished; standards are recomputed and hour cells re-colored day by day.
+   * `error`: `breaker_failure_threshold` chunks in a row failed; the backfill waits until `retry_at`, then tries again.
+   */
   status: 'idle' | 'scheduled' | 'running' | 'paused' | 'recoloring' | 'done' | 'error';
   requested_now: boolean;
   days_total: number;
@@ -47,6 +50,10 @@ export interface BackfillProgress {
   standards_done?: boolean;
   /** Days whose hour cells were recomputed with standards (recoloring phase). */
   recolor_days_done?: number;
+  /** Chunks that failed in a row, in either phase; one that goes through resets it. Absent in older saved progress. */
+  failures?: number;
+  /** No chunk before this time: the backfill backs off after failed chunks, as the poll's breaker does. */
+  retry_at?: UtcMs | null;
   started_at: UtcMs | null;
   finished_at: UtcMs | null;
   error: string | null;
@@ -152,9 +159,14 @@ export interface TvState {
 
 // ---------- SSE ----------
 
+/**
+ * `/api/events` needs no login, so an event must never carry a TV's `device_token`: it is the only
+ * credential the TV endpoints check. A TV refetches its state on a `display_updated` for its own
+ * `display_id` only: one is sent for every display, each new TV that registers included.
+ */
 export type SseEvent =
   | { type: 'data_updated'; at: UtcMs; hours: UtcMs[] }
-  | { type: 'display_updated'; at: UtcMs; display_id: number; device_token?: string }
+  | { type: 'display_updated'; at: UtcMs; display_id: number }
   | { type: 'sync_health'; at: UtcMs; status: SyncStatus; delayed: boolean }
   | { type: 'settings_updated'; at: UtcMs }
   | { type: 'heartbeat'; at: UtcMs };

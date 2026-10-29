@@ -88,6 +88,10 @@ active. The product page (`/products/:z`) shows all four numbers — base, adjus
 effective — and where each one came from, and every change is written to the audit log with
 the note the manager entered.
 
+Setting an adjustment or override again on the same scope (say an override of 40, then 36 the
+next day) replaces the old one. Clearing it later goes back to whatever applies without it,
+never to the 40.
+
 ## 3. Eligibility and visitors
 
 Operators frequently "scan through" a handful of boards on a job they are not actually
@@ -116,7 +120,10 @@ distinguishes:
   to a visitor at the top of every hour while evidence catches up.
 - **Manager pins** (Admin/portal, manager role) force an operator eligible or force them to be
   treated as a visitor on a job (optionally a specific operation), overriding the rule above
-  until the pin is removed or expires.
+  until the pin is removed or expires. Each hour is judged by the pins in force when it ended
+  (the current hour: right now), so the hours a pin covered keep it after it expires or is
+  removed, and a new pin starts with the hour it is created in; it does not change hours that
+  had already ended.
 
 Slow operations are naturally safe under this rule: a 5-units/hour operation gives an operator
 about 12 minutes of work time on a single board (60 ÷ 5), which still clears the 10-minute bar.
@@ -224,8 +231,15 @@ anything across different operations, so roll-ups use **earned hours** instead:
 - `charged_hours = charged_minutes / 60`.
 - `efficiency = (sum of earned_hours) / (sum of charged_hours)` across the rows being rolled
   up. 100% means the group produced exactly at standard overall. It is colored with the same
-  70/90/105 bands as pace. Rows with no StdHr are left out of the efficiency number and flagged
-  in the UI rather than silently treated as zero.
+  70/90/105 bands as pace. Rows with no StdHr are left out of the efficiency number (both their
+  output and their charged hours) and flagged in the UI rather than silently treated as zero;
+  they still count in the units and charged-hours totals. Efficiency is a dash only when no row
+  in the group has a StdHr.
+
+The operator page's **Pace** tile is this efficiency for one operator over the range picked
+there, so for a shift it matches that operator's row in the shift view's breakdown (with no
+filter set). Adding up the operator's units and targets instead would lean towards whichever
+operation has the higher StdHr.
 
 **Worked example (spec scenario 13):** two rows in a shift — 60 units at StdHr 30 with 60
 charged minutes, and 10 units at StdHr 12 with 60 charged minutes.
@@ -235,6 +249,18 @@ earned = 60/30 + 10/12 = 2.0 + 0.833 = 2.833 hours
 charged = 60/60 + 60/60 = 1.0 + 1.0 = 2.0 hours
 efficiency = 2.833 / 2.0 = 1.42  ->  blue (142%, well above the 105% blue threshold)
 ```
+
+**Worked example (a row without a standard):** Weld ran 30 units at StdHr 30 in 60 charged
+minutes; Pack, a new operation with no StdHr yet, ran 12 units in 60 charged minutes.
+
+```
+earned = 30/30 = 1.0 hour (Pack has no StdHr, so no earned hours)
+charged = 60/60 = 1.0 hour (Pack's hour is left out)
+efficiency = 1.0 / 1.0 = 1.00  ->  green
+```
+
+The shift view still shows 42 units and 2.0 charged hours, and "Rows without standard: 1" with
+"1.0 h excluded from efficiency".
 
 ## More worked examples
 
@@ -276,6 +302,29 @@ final time and stops changing.
 Either they were a **visitor** (not eligible) in every hour currently on screen — the row is
 intentionally omitted rather than shown as an all-gray row (spec 8.5) — or their idle timeout
 expired with no scans in the visible window, so they have no open window on any job right now.
+
+**What happens when a standard changes during a shift?**
+Each hour is judged against the standard in force while it runs. A change (an override, an
+adjustment, or the nightly recompute) applies from the next poll to the hour that is running, all
+of it, and to every hour after it. An hour that has already ended keeps the StdHr it was judged
+against, even when it is computed again (late rows, a settings change, a collector restart), so
+the hours that ended before the change all keep the old one. Only the backfill's recoloring
+judges past days against the standards of the day it runs. A row on the shift view or the
+operator page adds its hours up: its target is the sum of each hour's own target, and its pace
+is earned hours over charged hours — the same arithmetic as the job efficiency, so the two always
+agree for the same work (with a single standard it is simply units / target). The StdHr column
+shows the latest standard. If part of the row ran with no standard at all, those hours are left
+out of its pace, just like the job efficiency; the row is left unjudged only when none of it had
+a standard.
+
+**What happens to past hours when I change an engine setting, a shift or a break?**
+Hour cells are stored as they were computed. Saving an engine setting the cells depend on
+(eligibility, neutral or idle timeout minutes, work during breaks, the color bands), the plant
+time zone, a shift or a break recomputes the cells of today and yesterday with it, so the TVs and
+the shifts of those two days follow one rule (each hour keeps its StdHr, as above). Earlier days
+keep the cells they were computed with: there, a row's or a shift's total is still colored with
+the current bands, but its hourly cells keep their old colors. "Run backfill now" recomputes the
+whole backfill range.
 
 **Why is StdHr a dash?**
 There is not yet enough sampled history for that product/operation (fewer than the configured

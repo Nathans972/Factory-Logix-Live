@@ -1,10 +1,12 @@
 /**
  * apps/api bootstrap: env -> database -> migrations -> settings seed -> SSE listener -> HTTP server.
  */
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { checkExtraCaFile } from '@fld/shared';
 import { EnvError, loadEnv, type AppEnv } from './env.js';
-import { createLogger, type Logger } from './logger.js';
-import { createPool, pingDb } from './db/pool.js';
+import { createLogger } from './logger.js';
+import { createPool, waitForDb } from './db/pool.js';
 import { migrate } from './db/migrate.js';
 import { seedSettingValue } from './db/repo/settings.js';
 import { SseHub } from './sse.js';
@@ -24,20 +26,15 @@ async function readVersion(env: AppEnv): Promise<string> {
   return '0.0.0';
 }
 
-async function waitForDb(pool: ReturnType<typeof createPool>, log: Logger): Promise<void> {
-  const maxAttempts = 30;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    if (await pingDb(pool)) return;
-    log.warn(`database not reachable yet (attempt ${attempt}/${maxAttempts})`);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-  throw new Error('database is not reachable');
-}
-
 async function main(): Promise<void> {
   const env = loadEnv();
   const log = createLogger(env);
   const version = await readVersion(env);
+
+  // FACTORYLOGIX_CA_CERT: Node skips a CA file it cannot use without saying so.
+  const ca = checkExtraCaFile(process.env.NODE_EXTRA_CA_CERTS, (path) => readFileSync(path, 'latin1'));
+  if (ca?.ok) log.info(ca.message);
+  else if (ca) log.error(ca.message);
 
   const pool = createPool(env, log);
   await waitForDb(pool, log);

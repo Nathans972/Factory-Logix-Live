@@ -1,7 +1,7 @@
 import type { SyncHealth } from '@fld/shared';
 import type { Db } from '../db/pool.js';
 import { getSettings } from '../db/repo/settings.js';
-import { getCollectorState, listSyncStates } from '../db/repo/sync.js';
+import { getCollectorState, listSyncStates, STANDARDS_SOURCE } from '../db/repo/sync.js';
 
 /** `SyncHealth` assembled from collector_state + sync_state + settings. */
 export async function buildSyncHealth(db: Db, now = Date.now()): Promise<SyncHealth> {
@@ -14,7 +14,11 @@ export async function buildSyncHealth(db: Db, now = Date.now()): Promise<SyncHea
   const pollIntervalSeconds = settings.poll_interval_seconds;
   const staleMs = pollIntervalSeconds * 3 * 1000;
 
-  const sourceSuccesses = sources.map((s) => s.last_success_at).filter((v): v is number => v !== null);
+  // A standards recompute that went through says nothing about how current the data is.
+  const sourceSuccesses = sources
+    .filter((s) => s.source !== STANDARDS_SOURCE)
+    .map((s) => s.last_success_at)
+    .filter((v): v is number => v !== null);
   const lastSuccessAt =
     state.last_success_at ?? (sourceSuccesses.length > 0 ? Math.max(...sourceSuccesses) : null);
 

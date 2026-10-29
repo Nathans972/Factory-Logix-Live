@@ -6,6 +6,7 @@ import type { ErrorResponse } from '@fld/shared';
 import { registerAuth } from './auth/index.js';
 import type { AppContext } from './context.js';
 import { ApiError } from './errors.js';
+import { proxyTrust } from './proxy.js';
 import { registerAdminDisplayRoutes } from './routes/admin/displays.js';
 import { registerAdminOpsRoutes } from './routes/admin/ops.js';
 import { registerAdminScheduleRoutes } from './routes/admin/schedule.js';
@@ -44,7 +45,8 @@ function codeForStatus(status: number): string {
 export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   const app = Fastify({
     loggerInstance: ctx.log as FastifyBaseLogger,
-    trustProxy: true,
+    // Not `true`: that makes req.ip the leftmost X-Forwarded-For entry, which the client writes.
+    trustProxy: proxyTrust(ctx.env.trustedProxies),
     bodyLimit: 4 * 1024 * 1024,
   });
 
@@ -93,6 +95,11 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
     const dbDown = anyErr.code === 'ECONNREFUSED' || anyErr.code === '57P01' || anyErr.code === '08006';
     if (status >= 500 && dbDown) {
       reply.code(503).send(errorBody(503, 'unavailable', 'the database is unavailable'));
+      return;
+    }
+    // query_canceled: the statement ran past the pool's statement timeout (createPool).
+    if (status >= 500 && anyErr.code === '57014') {
+      reply.code(503).send(errorBody(503, 'unavailable', 'the database took too long to answer'));
       return;
     }
     reply

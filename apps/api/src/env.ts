@@ -1,6 +1,7 @@
 /**
  * Environment loading. Fails fast with one clear message listing everything that is missing.
  */
+import { isAddressOrRange } from './proxy.js';
 
 export interface AppEnv {
   nodeEnv: string;
@@ -15,6 +16,8 @@ export interface AppEnv {
   logLevel: string;
   migrationsDir: string | null;
   appVersion: string;
+  /** Addresses or CIDR ranges of the site's own reverse proxies in front of the bundled nginx. */
+  trustedProxies: string[];
 }
 
 export class EnvError extends Error {
@@ -23,6 +26,11 @@ export class EnvError extends Error {
     this.name = 'EnvError';
   }
 }
+
+/** `.env.example`'s SESSION_SECRET. It is public: anyone could sign an admin session cookie with it. */
+const EXAMPLE_SESSION_SECRET = 'change-me-64-random-characters';
+/** Anyone holding one session cookie can test guesses at the secret offline. `openssl rand -hex 32` gives 64. */
+const MIN_SESSION_SECRET_LENGTH = 32;
 
 function str(src: NodeJS.ProcessEnv, key: string): string | null {
   const v = src[key];
@@ -55,7 +63,17 @@ export function loadEnv(src: NodeJS.ProcessEnv = process.env): AppEnv {
 
   const sessionSecret = str(src, 'SESSION_SECRET');
   if (!sessionSecret) {
-    problems.push('SESSION_SECRET is required (any long random string; used to sign login cookies)');
+    problems.push(
+      'SESSION_SECRET is required (a long random string: `openssl rand -hex 32`; used to sign login cookies)',
+    );
+  } else if (sessionSecret === EXAMPLE_SESSION_SECRET) {
+    problems.push(
+      'SESSION_SECRET is still the placeholder from .env.example; generate a real one with `openssl rand -hex 32`',
+    );
+  } else if (sessionSecret.length < MIN_SESSION_SECRET_LENGTH) {
+    problems.push(
+      `SESSION_SECRET must be at least ${MIN_SESSION_SECRET_LENGTH} characters; generate one with \`openssl rand -hex 32\``,
+    );
   }
 
   const encryptionKeyHex = str(src, 'ENCRYPTION_KEY');
@@ -63,6 +81,11 @@ export function loadEnv(src: NodeJS.ProcessEnv = process.env): AppEnv {
     problems.push('ENCRYPTION_KEY is required (32 bytes hex-encoded: `openssl rand -hex 32`)');
   } else if (!/^[0-9a-fA-F]{64}$/.test(encryptionKeyHex)) {
     problems.push('ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)');
+  } else if (/^(.)\1*$/.test(encryptionKeyHex.toLowerCase())) {
+    // .env.example ships 64 zeros, and that file is public. No generated key is one character repeated.
+    problems.push(
+      'ENCRYPTION_KEY is a placeholder like the all-zero key in .env.example; generate a real one with `openssl rand -hex 32`',
+    );
   }
 
   const portRaw = str(src, 'PORT');
@@ -78,6 +101,15 @@ export function loadEnv(src: NodeJS.ProcessEnv = process.env): AppEnv {
     }
   }
 
+  const trustedProxies = (str(src, 'TRUSTED_PROXIES') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const badProxies = trustedProxies.filter((p) => !isAddressOrRange(p));
+  if (badProxies.length > 0) {
+    problems.push(`TRUSTED_PROXIES must be IP addresses or CIDR ranges, comma-separated: ${badProxies.join(', ')}`);
+  }
+
   if (problems.length > 0) throw new EnvError(problems);
 
   return {
@@ -91,5 +123,6 @@ export function loadEnv(src: NodeJS.ProcessEnv = process.env): AppEnv {
     logLevel: str(src, 'LOG_LEVEL') ?? 'info',
     migrationsDir: str(src, 'MIGRATIONS_DIR'),
     appVersion: str(src, 'APP_VERSION') ?? '',
+    trustedProxies,
   };
 }

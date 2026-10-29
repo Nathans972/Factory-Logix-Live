@@ -73,6 +73,12 @@ describe('insertRawEvents', () => {
     ]);
   });
 
+  it('stores strings jsonb refuses (NUL, half of a surrogate pair) as storableText makes them', async () => {
+    const { db, rawEvents } = fakeDb();
+    await insertRawEvents(db, [{ source: 'defects', natural_key: 'd1', payload: { Id: 'd1', Name: 'Bracket\u0000', Notes: ['Scratch \ud83d'] } }]);
+    expect(rawEvents.map((e) => e.payload)).toEqual([{ Id: 'd1', Name: 'Bracket', Notes: ['Scratch \u{FFFD}'] }]);
+  });
+
   it('skips the raw_events insert when nothing changed, and does nothing for an empty batch', async () => {
     const { db, sql } = fakeDb();
     await insertRawEvents(db, page);

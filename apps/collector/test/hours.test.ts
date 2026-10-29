@@ -15,6 +15,16 @@ describe('touched hour merging', () => {
     ]);
   });
 
+  it('splits a long contiguous stretch into ranges of at most maxHours', () => {
+    const hours = Array.from({ length: 7 }, (_, i) => H(i));
+    expect(mergeHourRanges(hours, 3)).toEqual([
+      { from: H(0), to: H(3) },
+      { from: H(3), to: H(6) },
+      { from: H(6), to: H(7) },
+    ]);
+    expect(mergeHourRanges(hours, 7)).toEqual([{ from: H(0), to: H(7) }]);
+  });
+
   it('handles an empty or invalid input', () => {
     expect(mergeHourRanges([])).toEqual([]);
     expect(mergeHourRanges([Number.NaN])).toEqual([]);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TV_CELL_TEXT, TV_COLORS } from '@fld/shared';
+import { TV_CELL_TEXT, TV_COLORS, tvRegisterSchema } from '@fld/shared';
 import {
   DEVICE_TOKEN_KEY,
   cellClass,
@@ -10,6 +10,7 @@ import {
   deviceCookieString,
   formatProgressPct,
   formatStd,
+  getDeviceToken,
   operatorLabel,
   rowOperatorLabel,
   msUntilNextHour,
@@ -19,6 +20,7 @@ import {
   resolveDeviceToken,
   TV_STYLE_VARS,
   nextDashboard,
+  shouldRefetch,
   tvScreen,
 } from './tvLogic';
 import type { Display, TvDashboard, TvState } from '@fld/shared';
@@ -91,8 +93,25 @@ describe('nextDashboard', () => {
   });
 });
 
+describe('shouldRefetch', () => {
+  it('acts on new data and sync health, and on display changes only for its own display', () => {
+    expect(shouldRefetch({ type: 'data_updated', at: 1, hours: [] }, 7)).toBe(true);
+    expect(shouldRefetch({ type: 'sync_health', at: 1, status: 'ok', delayed: false }, 7)).toBe(true);
+    expect(shouldRefetch({ type: 'display_updated', at: 1, display_id: 7 }, 7)).toBe(true);
+    // Another TV registering (anyone may) or being edited is not news to this one.
+    expect(shouldRefetch({ type: 'display_updated', at: 1, display_id: 8 }, 7)).toBe(false);
+    // Before its first response the TV cannot tell, so any display change counts.
+    expect(shouldRefetch({ type: 'display_updated', at: 1, display_id: 8 }, null)).toBe(true);
+    expect(shouldRefetch({ type: 'settings_updated', at: 1 }, 7)).toBe(false);
+    expect(shouldRefetch({ type: 'heartbeat', at: 1 }, 7)).toBe(false);
+    // Shown again after its stream was closed while hidden: anything may have changed.
+    expect(shouldRefetch({ type: 'resync', at: 1 }, 7)).toBe(true);
+  });
+});
+
 describe('resolveDeviceToken', () => {
   const generate = () => 'generated-uuid';
+  const STORED = '6f1c2b0e-3d4a-4b5c-8d6e-7f8091a2b3c4';
 
   it('uses the demo shortcut only in mock mode and never persists it', () => {
     expect(resolveDeviceToken({ search: '?demo=1', stored: null, isMock: true, generate })).toEqual({
@@ -106,17 +125,24 @@ describe('resolveDeviceToken', () => {
       source: 'demo',
     });
     // outside mock mode ?demo is ignored
-    expect(resolveDeviceToken({ search: '?demo=1', stored: 'abc', isMock: false, generate }).token).toBe('abc');
+    expect(resolveDeviceToken({ search: '?demo=1', stored: STORED, isMock: false, generate }).token).toBe(STORED);
   });
 
   it('prefers ?token= over storage and persists it (spec 8.1 bookmark restore)', () => {
-    const r = resolveDeviceToken({ search: '?token=1234-abcd&x=1', stored: 'stored-one', isMock: false, generate });
-    expect(r).toEqual({ token: '1234-abcd', persist: true, source: 'query' });
+    const QUERY = '2a7d4e91-8c3b-4f6a-9e1d-0b5c7a3f2e18';
+    const r = resolveDeviceToken({ search: `?token=${QUERY}&x=1`, stored: STORED, isMock: false, generate });
+    expect(r).toEqual({ token: QUERY, persist: true, source: 'query' });
+    // the mock DataSource accepts any token, so a mock bookmark need not be a UUID
+    expect(resolveDeviceToken({ search: '?token=demo-2', stored: STORED, isMock: true, generate })).toEqual({
+      token: 'demo-2',
+      persist: true,
+      source: 'query',
+    });
   });
 
   it('falls back to the stored token, re-persisting so the cookie expiry rolls forward', () => {
-    expect(resolveDeviceToken({ search: '', stored: 'stored-one', isMock: false, generate })).toEqual({
-      token: 'stored-one',
+    expect(resolveDeviceToken({ search: '', stored: STORED, isMock: false, generate })).toEqual({
+      token: STORED,
       persist: true,
       source: 'stored',
     });
@@ -130,6 +156,26 @@ describe('resolveDeviceToken', () => {
     });
     // blank values are treated as absent
     expect(resolveDeviceToken({ search: '?token=%20', stored: '  ', isMock: false, generate }).source).toBe('generated');
+  });
+
+  it('replaces a stored token the API can never register (a `tv-…` token from a plain-HTTP page)', () => {
+    expect(resolveDeviceToken({ search: '', stored: 'tv-eutgqgrumzomvrxc2pr', isMock: false, generate })).toEqual({
+      token: 'generated-uuid',
+      persist: true,
+      source: 'generated',
+    });
+    // the mock DataSource accepts any token
+    expect(resolveDeviceToken({ search: '', stored: 'tv-eutgqgrumzomvrxc2pr', isMock: true, generate }).source).toBe('stored');
+  });
+});
+
+describe('getDeviceToken', () => {
+  it('generates a fresh v4 UUID the API accepts', () => {
+    const a = getDeviceToken(false);
+    const b = getDeviceToken(false);
+    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(tvRegisterSchema.safeParse({ device_token: a }).success).toBe(true);
+    expect(b).not.toBe(a);
   });
 });
 

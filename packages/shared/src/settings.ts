@@ -104,6 +104,22 @@ export type SettingsKey = keyof Settings;
 
 export const SETTINGS_KEYS = Object.keys(DEFAULT_SETTINGS) as SettingsKey[];
 
+/**
+ * The settings the hour cells are computed and stored with (the plant's hours and breaks,
+ * eligibility, charged time, colour). Changing one makes the API ask the collector to recompute
+ * the cells of today and yesterday (`recompute_cells`, docs/API.md).
+ */
+export const HOUR_CELL_SETTINGS_KEYS: readonly SettingsKey[] = [
+  'plant_timezone',
+  'eligibility_minutes',
+  'neutral_minutes',
+  'idle_timeout_minutes',
+  'count_work_during_breaks',
+  'color_red_below',
+  'color_yellow_below',
+  'color_blue_above',
+];
+
 export function pickEngineSettings(s: Settings): EngineSettings {
   return {
     plant_timezone: s.plant_timezone,
@@ -130,7 +146,26 @@ export interface FlConnection {
   /** Present only in write payloads. Read payloads set `has_password` instead. */
   password?: string;
   has_password?: boolean;
+  /** Read payloads: a password is stored, but this server's ENCRYPTION_KEY cannot decrypt it, so it must be typed again. */
+  password_unreadable?: boolean;
 }
+
+/**
+ * True when the URL holds a user name or password (`http://svc:secret@server:6065/odata`). The
+ * FactoryLogix connection refuses such a URL: it is stored and audited in clear text (only the
+ * password field is encrypted), and fetch rejects it with an error that repeats it, password included.
+ */
+export function urlHasCredentials(url: string): boolean {
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.username !== '' || parsed.password !== '';
+  } catch {
+    return false;
+  }
+}
+
+export const URL_CREDENTIALS_MESSAGE =
+  'the FactoryLogix server URL must not contain a user name or password: in Admin > Connection, enter the URL without them and the password in its own field';
 
 export const TIME_CONSTANTS = {
   HOUR_MS: 3_600_000,

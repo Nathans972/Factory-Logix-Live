@@ -3,6 +3,7 @@
  * Rendered full-screen by `TvPage` and embedded (with `compact`) by the portal job page.
  */
 import type { CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type {
   TvCell,
   TvDashboard as TvDashboardData,
@@ -12,7 +13,7 @@ import type {
 } from '@fld/shared';
 import { TvClock } from './TvClock';
 import { TvGauge } from './TvGauge';
-import { TV_STYLE_VARS, cellClass, cellText, formatStd, rowOperatorLabel } from './tvLogic';
+import { TV_STYLE_VARS, cellClass, cellText, fitRows, formatStd, rowOperatorLabel, type RowsCut } from './tvLogic';
 import './tv.css';
 
 export interface TvDashboardProps {
@@ -29,15 +30,19 @@ export interface TvDashboardProps {
 
 const ROOT_STYLE = TV_STYLE_VARS as unknown as CSSProperties;
 
+/** Layout effects in the browser, so rows are fitted before they are painted; the tests render on the server. */
+const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
 export function TvDashboard({ dashboard, showGauge, tz, updatedAt, compact = false }: TvDashboardProps) {
   const { job, columns, rows, defect_rows, show_std_day } = dashboard;
+  const { boxRef, tableRef, cut } = useRowFit(!compact);
 
   return (
     <div className={`tv-root tv-dash${compact ? ' tv-compact' : ''}`} style={ROOT_STYLE}>
       <TvHeader job={job} />
 
-      <div className="tv-output">
-        <table className="tv-table tv-output-table">
+      <div className="tv-output" ref={boxRef}>
+        <table className="tv-table tv-output-table" ref={tableRef}>
           <colgroup>
             <col className="c-op" />
             <col className="c-operator" />
@@ -68,6 +73,7 @@ export function TvDashboard({ dashboard, showGauge, tz, updatedAt, compact = fal
             ))}
           </tbody>
         </table>
+        {cut && <MoreRows rows={rows.slice(-cut.hidden)} top={cut.top} />}
       </div>
 
       <div className="tv-bottom">
@@ -87,8 +93,49 @@ export function TvDashboard({ dashboard, showGauge, tz, updatedAt, compact = fal
   );
 }
 
+/**
+ * Keeps every output row on screen (`fitRows`). Measured after every render, so a new banner or a
+ * longer defect table is fitted before it is painted, and again when the screen is resized. The
+ * embedded (compact) dashboard grows with its rows instead.
+ */
+function useRowFit(enabled: boolean) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [cut, setCut] = useState<RowsCut | null>(null);
+
+  useBrowserLayoutEffect(() => {
+    const box = boxRef.current;
+    const table = tableRef.current;
+    if (!box || !table) return;
+    if (!enabled) {
+      box.style.removeProperty('--tv-fit');
+      setCut(null);
+      return;
+    }
+    const fit = () => {
+      const next = fitRows(box, table);
+      setCut((prev) => (prev?.hidden === next?.hidden && prev?.top === next?.top ? prev : next));
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  });
+
+  return { boxRef, tableRef, cut };
+}
+
 function rowKey(row: TvRow): string {
   return `${row.operation_seq}|${row.operation}|${row.operator_id ?? '*'}`;
+}
+
+/** Covers the rows that do not fit even at the smallest size, and names their operations. */
+function MoreRows({ rows, top }: { rows: TvRow[]; top: number }) {
+  const operations = [...new Set(rows.map((r) => r.operation))];
+  return (
+    <div className="tv-more" style={{ top }}>
+      +{rows.length} more {rows.length === 1 ? 'row' : 'rows'}: {operations.join(', ')}
+    </div>
+  );
 }
 
 function TvHeader({ job }: { job: TvDashboardData['job'] }) {

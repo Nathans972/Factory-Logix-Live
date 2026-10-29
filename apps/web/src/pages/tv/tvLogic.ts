@@ -1,11 +1,13 @@
 /**
  * Pure helpers for the TV display (spec 8).
  *
- * Everything in this module is side-effect free and unit tested (`tvLogic.test.ts`), except the
- * three thin wrappers at the bottom that touch `window` / `localStorage` / `document.cookie`.
+ * Everything in this module is side-effect free and unit tested (`tvLogic.test.ts`), except
+ * `fitRows`, which sets one CSS variable on the element it is given, and the three thin wrappers at
+ * the bottom that touch `window` / `localStorage` / `document.cookie`.
  * Those guard every browser access so the module can also be imported in a node test environment.
  */
 import { TV_CELL_TEXT, TV_COLORS, type CellColor, type TvDashboard, type TvRow, type TvState } from '@fld/shared';
+import type { LiveEvent } from '../../data/DataSource';
 
 export const DEVICE_TOKEN_KEY = 'fld_device_token';
 /** 10 years, in seconds (spec 8.1: the token survives reboots and normal cache behavior). */
@@ -91,6 +93,58 @@ export function clampProgress(progress: number | null | undefined): number {
   return Math.min(1, Math.max(0, progress));
 }
 
+// ---------------------------------------------------------------- fitting the rows (spec 8.3)
+
+/** The output rows never shrink below half size (14 px type on a 1080p screen, from 28 px). */
+export const MIN_ROW_SCALE = 0.5;
+
+/** The `.tv-output` box, as `fitRows` uses it (an `HTMLElement` in the browser). */
+export interface RowFitBox {
+  style: { setProperty(name: string, value: string): void };
+  getBoundingClientRect(): { top: number; height: number };
+}
+
+/** The output table inside the box (an `HTMLTableElement`). */
+export interface RowFitTable {
+  getBoundingClientRect(): { height: number };
+  tBodies: ArrayLike<{ rows: ArrayLike<{ getBoundingClientRect(): { top: number; bottom: number; height: number } }> }>;
+}
+
+/** The "+N more rows" line: how many rows it covers, and where it starts (px below the top of the box). */
+export interface RowsCut {
+  hidden: number;
+  top: number;
+}
+
+/**
+ * Fits the output table into its box. The TV never scrolls (spec 8.3), and a row cut off without a
+ * word would be one of the last operations of the route, the ones that make Qty Complete. Starting
+ * from full size every time, the rows shrink (type and padding, through `--tv-fit` on the box) in
+ * steps proportional to the overflow, down to MIN_ROW_SCALE; it takes a few steps because the 1 px
+ * grid lines do not shrink. The rows that still do not fit give way to a "+N more rows" line one
+ * row high: returns where it goes, or null when every row is shown. Writes nothing but `--tv-fit`.
+ */
+export function fitRows(box: RowFitBox, table: RowFitTable): RowsCut | null {
+  box.style.setProperty('--tv-fit', '1');
+  const space = box.getBoundingClientRect().height;
+  let used = table.getBoundingClientRect().height;
+  let scale = 1;
+  for (let step = 0; used > space && scale > MIN_ROW_SCALE && step < 10; step++) {
+    scale = Math.max(MIN_ROW_SCALE, Math.min(scale * 0.99, (scale * space) / used));
+    box.style.setProperty('--tv-fit', String(scale));
+    used = table.getBoundingClientRect().height;
+  }
+  if (used <= space) return null;
+
+  const boxTop = box.getBoundingClientRect().top;
+  const rows = Array.from(table.tBodies[0]?.rows ?? [], (r) => r.getBoundingClientRect());
+  if (rows.length === 0) return null;
+  const line = Math.min(...rows.map((r) => r.height));
+  const first = rows.findIndex((r) => r.bottom - boxTop > space - line);
+  if (first < 0) return null;
+  return { hidden: rows.length - first, top: Math.floor(Math.max(0, Math.min(rows[first]!.top - boxTop, space - line))) };
+}
+
 // ---------------------------------------------------------------- hour boundary
 
 /**
@@ -129,6 +183,9 @@ export function nextHourBoundary(now: number, tz: string): number {
 
 export type TokenSource = 'demo' | 'query' | 'stored' | 'generated';
 
+/** Mirrors `tvRegisterSchema`: the API only registers a UUID (`displays.device_token` is a uuid column). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface TokenResolution {
   token: string;
   /** whether the token should be written to localStorage + cookie */
@@ -150,9 +207,15 @@ export interface ResolveTokenInput {
  * Identity resolution (spec 8.1):
  *   `?demo=N` in mock mode (never persisted) → `?token=<uuid>` (persisted) →
  *   stored token (re-persisted so the cookie expiry rolls forward) → a fresh UUID.
+ * Outside mock mode a token that is not a UUID can never register, so it is skipped, never adopted
+ * or persisted: a bookmark typed with the pairing code (`?token=4821`) falls through to the stored
+ * token, and a stored `tv-…` token (older builds wrote one on TVs that loaded the page over plain
+ * HTTP) is replaced.
  */
 export function resolveDeviceToken(input: ResolveTokenInput): TokenResolution {
   const params = new URLSearchParams(input.search.startsWith('?') ? input.search.slice(1) : input.search);
+  // The mock DataSource accepts any token.
+  const usable = (token: string) => token !== '' && (input.isMock || UUID_RE.test(token));
 
   if (input.isMock) {
     const demo = (params.get('demo') ?? '').trim();
@@ -160,10 +223,10 @@ export function resolveDeviceToken(input: ResolveTokenInput): TokenResolution {
   }
 
   const fromQuery = (params.get('token') ?? '').trim();
-  if (fromQuery) return { token: fromQuery, persist: true, source: 'query' };
+  if (usable(fromQuery)) return { token: fromQuery, persist: true, source: 'query' };
 
   const stored = (input.stored ?? '').trim();
-  if (stored) return { token: stored, persist: true, source: 'stored' };
+  if (usable(stored)) return { token: stored, persist: true, source: 'stored' };
 
   return { token: input.generate(), persist: true, source: 'generated' };
 }
@@ -226,13 +289,18 @@ export function persistDeviceToken(token: string): void {
   }
 }
 
+/**
+ * A random v4 UUID. Built from `crypto.getRandomValues()` because `crypto.randomUUID()` only exists
+ * in secure contexts (HTTPS or localhost) and TVs load the page over plain HTTP; one path everywhere,
+ * so development exercises what the TVs run. No Math.random fallback: the token is the TV's only
+ * credential.
+ */
 function randomToken(): string {
-  try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  } catch {
-    /* fall through */
-  }
-  return `tv-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** Resolve (and persist) this device's token. Safe to call outside a browser. */
@@ -266,6 +334,19 @@ export function rowOperatorLabel(row: Pick<TvRow, 'operator_id' | 'operator_name
   if (row.operators.length > 1) return MULTIPLE_OPERATORS;
   const id = row.operator_id ?? row.operators[0] ?? null;
   return operatorLabel(id, row.operator_name);
+}
+
+// ---------------------------------------------------------------- live refresh (spec 8.4)
+
+/**
+ * Whether a live event is a reason for the TV to fetch its state again. Every page gets a
+ * `display_updated` for every display, including each new TV that registers (no login needed), so
+ * a TV acts only on its own display's, or on any while it does not know which display it is yet.
+ * A `resync` means events were missed while the page was hidden, so it always is.
+ */
+export function shouldRefetch(event: LiveEvent, displayId: number | null): boolean {
+  if (event.type === 'display_updated') return displayId === null || event.display_id === displayId;
+  return event.type === 'data_updated' || event.type === 'sync_health' || event.type === 'resync';
 }
 
 // ---------------------------------------------------------------- screen selection (spec 8.2)

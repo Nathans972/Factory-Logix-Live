@@ -17,6 +17,7 @@ import {
   nextLocalTime,
   overlapWithIntervals,
   parseLocalTime,
+  resolveShiftVersion,
   rollingWindowColumns,
   utcToLocalParts,
 } from '../src/time.js';
@@ -167,6 +168,17 @@ describe('shifts', () => {
       TZ,
     );
     expect(list.map((s) => s.date)).toEqual(['2025-06-09']);
+  });
+
+  it('resolves a shift id to the version in effect on the date', () => {
+    const oldDay = shiftDef({ id: 1, name: 'Day', start_local: '07:00', end_local: '19:00', effective_to: '2025-06-01' });
+    const newDay = shiftDef({ id: 3, name: 'Day', start_local: '06:00', end_local: '18:00', effective_from: '2025-06-02' });
+    const oldNight = shiftDef({ id: 2, name: 'Night', start_local: '19:00', end_local: '07:00', effective_to: '2025-06-01' });
+    const shifts = [oldDay, oldNight, newDay];
+    expect(resolveShiftVersion(shifts, newDay, '2025-05-20')).toBe(oldDay);
+    expect(resolveShiftVersion(shifts, oldDay, '2025-06-10')).toBe(newDay);
+    expect(resolveShiftVersion(shifts, newDay, '2025-06-02')).toBe(newDay);
+    expect(resolveShiftVersion(shifts, oldNight, '2025-06-10')).toBeNull();
   });
 
   it('finds the current shift across midnight', () => {

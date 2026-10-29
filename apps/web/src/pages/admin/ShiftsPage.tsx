@@ -45,10 +45,10 @@ function ShiftsPageInner() {
 
   const updateM = useMutation({
     mutationFn: (v: { id: number; req: ShiftWrite }) => ds.updateShift(v.id, v.req),
-    onSuccess: () => {
+    onSuccess: (saved, v) => {
       invalidate();
       setEditing(null);
-      flash.show('Shift saved as a new version.');
+      flash.show(saved.id === v.id ? 'Shift saved.' : 'Shift saved as a new version.');
     },
   });
 

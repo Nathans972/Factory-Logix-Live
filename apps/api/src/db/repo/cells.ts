@@ -1,4 +1,4 @@
-import type { CellColor, DefectHourCell, HourCell, PriorCount, UtcMs } from '@fld/shared';
+import type { CellColor, CellSpans, DefectHourCell, HourCell, PriorCount, UtcMs } from '@fld/shared';
 import type { Db } from '../pool.js';
 import { toBool, toMsOr, toNum, toNumOr, tsParam } from '../util.js';
 
@@ -19,11 +19,12 @@ type CellRow = {
   target_units: number;
   pace: number | null;
   color: CellColor;
+  spans?: CellSpans | null;
 };
 
 const CELL_COLUMNS = `c.hour_start_utc, c.job_number, c.product_number, o.name AS operation, c.operator_id,
     c.units, c.work_minutes, c.window_minutes, c.break_minutes, c.charged_minutes,
-    c.eligible, c.provisional, c.std_hr, c.target_units, c.pace, c.color`;
+    c.eligible, c.provisional, c.std_hr, c.target_units, c.pace, c.color, c.spans`;
 
 const CELL_FROM = 'FROM hour_cells c JOIN operations o ON o.id = c.operation_id';
 
@@ -45,6 +46,7 @@ export function mapHourCell(row: CellRow): HourCell {
     target_units: toNumOr(row.target_units, 0),
     pace: toNum(row.pace),
     color: row.color,
+    ...(row.spans ? { spans: row.spans } : {}),
   };
 }
 
@@ -135,11 +137,22 @@ export async function getPriorDefectsForJob(
   return rows.map((r) => ({ operation: r.operation, count: toNumOr(r.count, 0) }));
 }
 
-/** Distinct jobs with a unit_step starting or completing inside [fromUtc, toUtc). */
+/**
+ * Distinct jobs with a unit_step starting or completing inside [fromUtc, toUtc) (spec 7.11).
+ *
+ * unit_steps is a hypertable on start_ts, and TimescaleDB only skips chunks on a start_ts bound
+ * outside any OR, so this is two branches rather than one OR. The steps that started in the
+ * interval are bounded on start_ts on both sides and read only the chunks it falls in. Those that
+ * started before it and completed in it are found by complete_ts, bounded on both sides, like the
+ * collector's long steps: the complete_ts index in recent chunks, the per-batch min/max in
+ * compressed ones. That branch has no lower start_ts bound: a step can stay open for any length
+ * of time and still makes its job active when it completes.
+ */
 export async function getActiveJobNumbers(db: Db, fromUtc: UtcMs, toUtc: UtcMs): Promise<string[]> {
   const { rows } = await db.query<{ job_number: string }>(
-    `SELECT DISTINCT job_number FROM unit_steps
-     WHERE (start_ts >= $1 AND start_ts < $2) OR (complete_ts >= $1 AND complete_ts < $2)`,
+    `SELECT job_number FROM unit_steps WHERE start_ts >= $1 AND start_ts < $2
+     UNION
+     SELECT job_number FROM unit_steps WHERE start_ts < $1 AND complete_ts >= $1 AND complete_ts < $2`,
     [tsParam(fromUtc), tsParam(toUtc)],
   );
   return rows.map((r) => r.job_number);

@@ -20,8 +20,8 @@ import { requireIdParam } from '../../util/query.js';
 export async function registerAdminDisplayRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const admin = { preHandler: requireRole('admin') };
 
-  const emit = (id: number, deviceToken?: string): void => {
-    ctx.sse.broadcast({ type: 'display_updated', at: Date.now(), display_id: id, device_token: deviceToken });
+  const emit = (id: number): void => {
+    ctx.sse.broadcast({ type: 'display_updated', at: Date.now(), display_id: id });
   };
 
   app.get('/api/admin/displays', admin, async (): Promise<Display[]> => {
@@ -49,7 +49,7 @@ export async function registerAdminDisplayRoutes(app: FastifyInstance, ctx: AppC
     if (!updated) throw notFound('display disappeared');
     const display = mapDisplay(updated, settings.poll_interval_seconds);
     await audit(req, 'display.claimed', 'display', display.id, before, display);
-    emit(display.id, updated.device_token);
+    emit(display.id);
     return display;
   });
 
@@ -64,7 +64,7 @@ export async function registerAdminDisplayRoutes(app: FastifyInstance, ctx: AppC
     if (!updated) throw notFound('unknown display');
     const display = mapDisplay(updated, settings.poll_interval_seconds);
     await audit(req, 'display.updated', 'display', id, before, display);
-    emit(id, updated.device_token);
+    emit(id);
     return display;
   });
 
@@ -89,8 +89,8 @@ export async function registerAdminDisplayRoutes(app: FastifyInstance, ctx: AppC
       moved_from_display_id: temp.id,
       pairing_code_used: body.pairing_code,
     });
-    emit(id, updatedRow.device_token);
-    emit(temp.id, temp.device_token);
+    emit(id);
+    emit(temp.id);
     return display;
   });
 
@@ -101,7 +101,7 @@ export async function registerAdminDisplayRoutes(app: FastifyInstance, ctx: AppC
     if (!row) throw notFound('unknown display');
     await deleteDisplay(ctx.db, id);
     await audit(req, 'display.deleted', 'display', id, mapDisplay(row, settings.poll_interval_seconds), null);
-    emit(id, row.device_token);
+    emit(id);
     return { ok: true };
   });
 }

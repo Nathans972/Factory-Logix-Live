@@ -39,7 +39,10 @@ export class OperationCache {
     return this.byId.get(id);
   }
 
-  /** Resolve many operation names at once, inserting the ones we have never seen. */
+  /**
+   * Resolve many operation names at once, inserting the ones we have never seen. On a transaction's
+   * client the new ids are cached before it commits: clear() the cache if it rolls back.
+   */
   async resolveMany(names: Iterable<string>, db: Queryable = this.pool): Promise<Map<string, number>> {
     const wanted = new Set<string>();
     const out = new Map<string, number>();

@@ -116,6 +116,30 @@ export async function deactivateAdjustment(db: Db, id: number): Promise<boolean>
   return (res.rowCount ?? 0) > 0;
 }
 
+/** Same scope, and the same product and operation where the scope names them (spec 7.2). */
+function sameAdjustmentScope(a: StandardAdjustment, b: StandardAdjustment): boolean {
+  const byProduct = a.scope === 'product' || a.scope === 'product_operation';
+  const byOperation = a.scope === 'operation' || a.scope === 'product_operation';
+  return (
+    a.scope === b.scope &&
+    (!byProduct || a.product_number === b.product_number) &&
+    (!byOperation || a.operation === b.operation)
+  );
+}
+
+/**
+ * A saved adjustment replaces the one active on the same scope instead of stacking on it (they
+ * never both apply): the newest there stays active and the rest are turned off, so clearing it
+ * later goes back to what applies without it, not to an older value. Keeping the newest rather
+ * than `saved` lets two saves at the same moment settle on one. Returns the adjustments turned off.
+ */
+export async function retireReplacedAdjustments(db: Db, saved: StandardAdjustment): Promise<StandardAdjustment[]> {
+  const [, ...older] = (await listAdjustments(db, { activeOnly: true })).filter((a) => sameAdjustmentScope(a, saved));
+  const retired: StandardAdjustment[] = [];
+  for (const a of older) if (await deactivateAdjustment(db, a.id)) retired.push(a);
+  return retired;
+}
+
 type OverrideRow = {
   id: number;
   scope: OverrideScope;
@@ -190,4 +214,14 @@ export async function insertOverride(
 export async function deactivateOverride(db: Db, id: number): Promise<boolean> {
   const res = await db.query('UPDATE standard_overrides SET active = false WHERE id = $1 AND active', [id]);
   return (res.rowCount ?? 0) > 0;
+}
+
+/** Overrides replace one another the same way as adjustments (retireReplacedAdjustments). */
+export async function retireReplacedOverrides(db: Db, saved: StandardOverride): Promise<StandardOverride[]> {
+  const [, ...older] = (await listOverrides(db, { productNumber: saved.product_number })).filter(
+    (v) => v.scope === saved.scope && (v.scope !== 'product_operation' || v.operation === saved.operation),
+  );
+  const retired: StandardOverride[] = [];
+  for (const v of older) if (await deactivateOverride(db, v.id)) retired.push(v);
+  return retired;
 }

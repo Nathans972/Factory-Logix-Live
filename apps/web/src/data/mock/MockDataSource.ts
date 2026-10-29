@@ -1,8 +1,9 @@
 /**
  * In-browser demo data source (spec 12): a seeded factory simulator + the shared engine.
  *
- * No network. All admin state is in memory and resets on reload. Every method resolves
- * asynchronously and returns fresh objects so React state comparisons behave like they
+ * No network. All admin state is in memory and resets on reload; the displays are shared with
+ * the demo's other open tabs, since every TV link opens a new one (`./tabs.ts`). Every method
+ * resolves asynchronously and returns fresh objects so React state comparisons behave like they
  * do against the real API.
  */
 import type {
@@ -70,6 +71,7 @@ import {
 } from '../DataSource';
 import { MockStore, clone } from './state';
 import { startLiveSimulation, type DemoControl } from './simulator/live';
+import { connectTabs } from './tabs';
 
 const HEARTBEAT_MS = 25_000;
 
@@ -94,6 +96,8 @@ export class MockDataSource implements DataSource {
 
   constructor(store?: MockStore) {
     this.store = store ?? new MockStore();
+    // From construction, so a tab hears about TVs registered in other tabs before its first use.
+    connectTabs(this.store);
   }
 
   /** Boots the world + live scheduler on first use (never at module import). */

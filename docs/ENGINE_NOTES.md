@@ -31,7 +31,7 @@ canonical interpretation. They are binding for the implementation and its tests.
 Input steps are all steps for one (product, operation) in the lookback. Algorithm:
 
 1. Filter: `complete_ts != null`, `complete_ts >= now - std_lookback_days`, `complete_ts > start_ts`, duration `<= std_max_unit_minutes`, `complete_ts < hourStartUtc(now)` (current hour excluded), and `rework_flag !== true` when `rework_flag_mapped`.
-2. Eligibility: compute work minutes per (operator, job, hour) from **all** input steps (before the duration filter, using `[start, complete ?? now]` clipped to the hour), and mark eligible when `>= eligibility_minutes` (completed-hour rule only; no scaling, no continuing rule, no pins). Keep only units whose `complete_ts` hour is eligible for that operator/job.
+2. Eligibility: compute work minutes per (operator, job, hour) from **all** input steps (before the duration filter, using `[start, complete ?? now]` clipped to the hour), and mark eligible when `>= eligibility_minutes` (completed-hour rule only; no scaling, no continuing rule, no pins). Keep only units whose `complete_ts` hour is eligible for that operator/job. Only those hours are computed, and an hour stops taking work once it is eligible, so a step with a zero-date start (1900) is not walked hour by hour and many of them do not add to the same hours again and again.
 3. Sessions per operator (across jobs of the same product/operation): sort by start; a unit joins the current session if `start <= sessionEnd + session_gap_minutes` where `sessionEnd` is the max complete seen so far; otherwise a new session starts. Busy minutes = union length of the session's intervals minus overlap with breaks (union of breaks). Per-unit minutes = busy / n. If busy is 0 (all inside a break), skip those units.
 4. `median_minutes_per_unit` = median of all per-unit values (average of the two middle values for even counts). `computed_std_hr = round(60 / median, 1)`.
 5. `sample_units`, `sample_operators` (distinct operator_ids among sampled units), `sample_from/to` = min/max complete_ts of sampled units.
@@ -57,7 +57,7 @@ For every step of the operator, for every hour bucket overlapped by `[start, com
 Also record "scan events": a start event at `start_ts` and, if present, a complete event at `complete_ts`. Units are counted in the hour of `complete_ts`.
 
 Eligibility for `(hour, job, op)`:
-- Pins: an active pin (`expires_at` null or `> now`) for `(operator, job)` with `operation` null or equal forces the result (`force_eligible` => true, `force_visitor` => false). Pins win over everything.
+- Pins: a pin for `(operator, job)` with `operation` null or equal, in force at the hour's last moment `at = min(now, hourEnd - 1)` (`created_at <= at`, `expires_at` null or `> at`), forces the result (`force_eligible` => true, `force_visitor` => false); the most specific, then the newest, wins. Pins win over everything. So an hour that has ended keeps the pins in force when it ended, however long after their expiry (or removal, which ends a pin now) it is computed again, and a new pin starts with the hour it is created in.
 - If `hour` is the current hour (`hour == hourStartUtc(now)`): `elapsed = (now - hour)/60000`, `threshold = max(1, eligibility_minutes * elapsed / 60)`; eligible if `work_minutes >= threshold` OR the operator was eligible on the same `(job, op)` in the previous hour bucket (`hour - 1h`, evaluated with the completed-hour rule).
 - Else (completed hour): eligible if `work_minutes >= eligibility_minutes`.
 - A `(hour, job, op)` with zero work minutes and zero units and no events is not evaluated.
@@ -91,7 +91,7 @@ after last event: if assigned: end = min(idleDeadline(lastScan), now, to_utc); c
 
 The pre-`from_utc` steps supplied by the caller establish the state at `from_utc` naturally because the sweep starts at the earliest supplied step. Emit only cells whose hour is in `[from_utc, to_utc)`.
 
-Note: eligibility for an event's hour must be known before the sweep. Pass 1 covers every hour touched by the supplied steps. For the current-hour "continuing operator" rule, pass 1 evaluates the previous hour first (it is a completed hour).
+Note: eligibility for an event's hour must be known before the sweep. Pass 1 covers every hour whose work minutes are read: the hours in `[from_utc, to_utc)`, the hours of the events and the hour before the current one. A step's other hours are skipped, not walked (a zero-date start, 1900 or 1970, is a million hours). For the current-hour "continuing operator" rule, pass 1 evaluates the previous hour first (it is a completed hour).
 
 ### Pass 3: cell assembly
 
@@ -101,7 +101,7 @@ For each `(hour, job, op)` the operator touched (has work minutes, units, events
 - `window_minutes` = sum of segment overlap with the hour (0 for visitors).
 - `break_minutes` = overlap of those segment pieces with breaks (union). If `count_work_during_breaks` is true, a break interval is not subtracted when the operator completed at least one unit inside that break interval on this job/op.
 - `charged_minutes = window_minutes - break_minutes` (never negative).
-- `std_hr` from the lookup (`effective` or null).
+- `std_hr` from `kept_std_hr[hour][stdKey(product, op)]` when it has that entry (null included: an hour that has ended keeps the StdHr it was judged against, spec 7.7; the collector passes it), else from the lookup (`effective` or null).
 - `target_units = std_hr * charged_minutes / 60` (0 when std null).
 - `pace = units / target_units` when `target_units > 0` and std non-null, else null.
 - `provisional = hour == currentHour`.
@@ -127,7 +127,7 @@ Bucket defects by `hourStartUtc(found_ts)`, `(job, op)`, count. Only `found_ts` 
 
 ## Roll-ups (spec 7.11)
 
-Over per-operator cells: visitor cells contribute only to `visitor_units` (not units, not charged, not earned). For eligible cells: `units`, `charged_minutes`, `earned_hours += units / std_hr` when std non-null, else increment `rows_without_std`. `efficiency = earned / charged_hours` when `charged_hours > 0` and `rows_without_std == 0`, else null (flag). Color: `colorForEfficiency` uses the same bands; null => neutral. `eligible_operators` = distinct operators among eligible cells. Groupings: by_job (key = job), by_operation (key = op), by_operator (key = operator_id, label = display name or id), by_job_operation (key = `${job}|${op}`). Sort each list by key. `overall` key `'overall'`.
+Over per-operator cells: visitor cells contribute only to `visitor_units` (not units, not charged, not earned). For eligible cells: `units`, `charged_minutes`, and when std non-null `earned_hours += units / std_hr` and the cell's charged minutes count toward efficiency; else increment `rows_without_std` (flag). Cells without a std are excluded from efficiency, not used to blank it: `efficiency = earned / (charged hours of the cells with a std)`, null when those are 0 (every cell lacks a std, or no charged time). `charged_hours_without_std` = the charged hours of the cells without a std (part of `charged_hours`), so the UI can show what was left out. Color: `colorForEfficiency` uses the same bands; null => neutral. `eligible_operators` = distinct operators among eligible cells. Groupings: by_job (key = job), by_operation (key = op), by_operator (key = operator_id, label = display name or id), by_job_operation (key = `${job}|${op}`). Sort each list by key. `overall` key `'overall'`.
 
 ## Views
 
@@ -147,7 +147,8 @@ Over per-operator cells: visitor cells contribute only to `visitor_units` (not u
 ### ShiftView (spec 9.2)
 
 - Apply filters (job, product, operation, operator) to cells first; a job section is included when its job is in `active_job_numbers` and passes the filters. Jobs with no cells still appear (with zero rows) if active.
-- Per job: operations ordered by route; each operation row aggregates eligible cells (`charged`, `units`, `target = std * charged/60`, `pace`, color with no neutral rule except `charged < neutral_minutes`), `visitor_units` separately; `operators` = per-operator aggregates (eligible and visitors; visitors flagged, color `'visitor'`). Job efficiency via `computeRollups` on the job's cells.
+- Per job: operations ordered by route; each operation row aggregates eligible cells (`charged`, `units`, `target`, `pace`, color with no neutral rule except `charged < neutral_minutes`), `visitor_units` separately; `operators` = per-operator aggregates (eligible and visitors; visitors flagged, color `'visitor'`). Job efficiency via `computeRollups` on the job's cells.
+- Row totals (here and in OperatorDetail): a cell keeps the StdHr in force when it was computed, so a standard changed mid-range gives one row several. `target` = sum of the cells' own `std * charged / 60`; `pace` = earned hours / charged hours over the same cells, the `computeRollups` arithmetic (with a single StdHr that is `units / target`), so an operation row always equals the efficiency of the same cells. Cells without a StdHr are left out of the pace as they are out of efficiency (pace null when none has one), and the `charged < neutral_minutes` neutral rule looks at the charged minutes of the cells with one, the time actually judged. The row's `std_hr` is the latest hour's (the standard in force now, as the TV and product page show it); null only when no cell has one.
 - Summary from `computeRollups(all filtered cells)`; `active_jobs` = number of job sections; `eligible_operators` = distinct operators with an eligible cell.
 - `in_progress = shift.start_utc <= now < shift.end_utc`.
 
@@ -157,8 +158,9 @@ One row per `(operator, job, op)` with an **eligible** cell in the current hour;
 
 ### OperatorDetail (spec 9.4)
 
-- `strips`: one per `(job, op)` the operator touched within `columns`, cells aligned to columns like the TV.
-- `rows`: per `(job, op)` over the full `range`: sums of window/charged/units, `target = std * charged / 60`, pace, color (same bands, neutral when charged < neutral_minutes), `eligible_hours`/`visitor_hours` counts, `pinned` from an active pin.
+- `strips`: one per `(job, op)` the operator touched within `columns`, cells aligned to columns like the TV; `std_hr` = the latest hour's.
+- `rows`: per `(job, op)` over the full `range`: sums of window/charged minutes, `units` over the eligible cells and `visitor_units` over the visitor cells (visitor units never enter the pace, spec 7.3, as in ShiftView), `target`, pace and `std_hr` as in the row totals above, color (same bands, neutral when charged < neutral_minutes), `eligible_hours`/`visitor_hours` counts, `pinned` from an active pin.
+- `summary`: `computeRollups` over the operator's cells in `range`, `.overall`: the earned-hours efficiency of the same cells as the operator's `by_operator` row in ShiftView (the page's Pace tile). Units and targets summed across rows with different StdHr would lean towards the fast operations.
 
 ### JobDetail (spec 9.5)
 

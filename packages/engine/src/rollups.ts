@@ -2,7 +2,8 @@
  * Earned-hours roll-ups (spec 7.11).
  *
  * Visitor cells contribute their units to `visitor_units` only: no charged minutes, no earned
- * hours, no operator count.
+ * hours, no operator count. Cells without a StdHr count in units and charged time but are left
+ * out of efficiency (both its earned and its charged hours) and counted in `rows_without_std`.
  */
 import type { CellColor, HourCell } from '@fld/shared';
 import type { EngineSettings, RollupRow, Rollups } from '@fld/shared';
@@ -22,6 +23,8 @@ interface Acc {
   units: number;
   visitor_units: number;
   charged_minutes: number;
+  /** charged minutes of the cells with a StdHr: the efficiency's denominator */
+  std_charged_minutes: number;
   earned_hours: number;
   rows_without_std: number;
   operators: Set<string>;
@@ -47,6 +50,7 @@ function newAcc(
     units: 0,
     visitor_units: 0,
     charged_minutes: 0,
+    std_charged_minutes: 0,
     earned_hours: 0,
     rows_without_std: 0,
     operators: new Set<string>(),
@@ -62,6 +66,7 @@ function addCell(acc: Acc, cell: HourCell): void {
   acc.charged_minutes += cell.charged_minutes;
   acc.operators.add(cell.operator_id);
   if (cell.std_hr !== null && cell.std_hr > 0) {
+    acc.std_charged_minutes += cell.charged_minutes;
     acc.earned_hours += cell.units / cell.std_hr;
   } else {
     acc.rows_without_std += 1;
@@ -70,8 +75,8 @@ function addCell(acc: Acc, cell: HourCell): void {
 
 function finish(acc: Acc, settings: EngineSettings): RollupRow {
   const charged_hours = acc.charged_minutes / 60;
-  const efficiency =
-    charged_hours > 0 && acc.rows_without_std === 0 ? acc.earned_hours / charged_hours : null;
+  const std_charged_hours = acc.std_charged_minutes / 60;
+  const efficiency = std_charged_hours > 0 ? acc.earned_hours / std_charged_hours : null;
   return {
     key: acc.key,
     label: acc.label,
@@ -88,6 +93,7 @@ function finish(acc: Acc, settings: EngineSettings): RollupRow {
     color: colorForEfficiency(efficiency, settings),
     eligible_operators: acc.operators.size,
     rows_without_std: acc.rows_without_std,
+    charged_hours_without_std: charged_hours - std_charged_hours,
   };
 }
 

@@ -96,8 +96,10 @@ openssl rand -hex 32   # use once for SESSION_SECRET
 openssl rand -hex 32   # use once for ENCRYPTION_KEY
 ```
 
-`ENCRYPTION_KEY` must be exactly 64 hex characters (32 bytes) — the app validates this at
-startup and refuses to start otherwise. Also set `POSTGRES_PASSWORD` and `PLANT_TIMEZONE`.
+`ENCRYPTION_KEY` must be exactly 64 hex characters (32 bytes) and `SESSION_SECRET` at least
+32 characters — the app validates both at startup and refuses to start otherwise, or while
+either is still the public placeholder from `.env.example`. Also set `POSTGRES_PASSWORD` and
+`PLANT_TIMEZONE`.
 
 ```bash
 docker compose up -d
@@ -158,6 +160,8 @@ Pages demo), so the numbers you see in the demo and in production come from the 
     web/                        React app: /tv, /, /admin; DataSource abstraction + mock simulator
   db/
     migrations/                 SQL migrations, applied automatically on API start
+  scripts/
+    backup.sh                   nightly pg_dump of the database, for cron (docs/OPERATIONS.md)
   .github/workflows/
     ci.yml                      install, build the shared packages, typecheck, lint, every test suite, build the demo
     pages.yml                   build the mock bundle and deploy to GitHub Pages
@@ -192,8 +196,8 @@ pnpm typecheck                # TypeScript project-wide typecheck
 ## Known issues and roadmap
 
 Known gaps and planned improvements (the hourly late-data re-pull's load, keyset paging,
-which extra fields `raw_events` keeps, shift efficiency with missing standards, and TV and
-cookie hardening) are listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+which extra fields `raw_events` keeps, and TV and cookie hardening) are listed in
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Further reading
 

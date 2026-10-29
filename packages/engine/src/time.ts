@@ -207,6 +207,18 @@ export function prevHourStartUtc(hourStart: UtcMs, tz: string): UtcMs {
   return hourStartUtc(hourStart - 1, tz);
 }
 
+/** Index of the first of the ascending hour starts `hours` at or after `t` (`hours.length` if none is). */
+export function firstHourAtOrAfter(hours: UtcMs[], t: UtcMs): number {
+  let lo = 0;
+  let hi = hours.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (hours[mid]! < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
@@ -278,6 +290,18 @@ function appliesOn(
   if (date < def.effective_from) return false;
   if (def.effective_to !== null && date > def.effective_to) return false;
   return def.days_of_week.includes(dayOfWeek(date));
+}
+
+/**
+ * The version of `shift` in effect on `date` (spec 10.2: past shifts are evaluated against the
+ * definition in effect that day). A versioned edit gives the new version a new id, so another
+ * version's id resolves to the same-named one whose effective range covers `date`; null if none does.
+ */
+export function resolveShiftVersion(shifts: ShiftDef[], shift: ShiftDef, date: LocalDate): ShiftDef | null {
+  const inEffect = (s: ShiftDef) => date >= s.effective_from && (s.effective_to === null || date <= s.effective_to);
+  if (inEffect(shift)) return shift;
+  const versions = shifts.filter((s) => s.name === shift.name && inEffect(s));
+  return versions.find((s) => s.days_of_week.includes(dayOfWeek(date))) ?? versions[0] ?? null;
 }
 
 function localDateRange(fromUtc: UtcMs, toUtc: UtcMs, tz: string): LocalDate[] {

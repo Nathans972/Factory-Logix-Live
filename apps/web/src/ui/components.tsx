@@ -309,11 +309,10 @@ export function HourCellBox({ units, color, current, title }: { units: number | 
 
 // ------------------------------------------------------------------ avatar
 
-/** "JRivera" → "JR", "nathan sessions" → "NS". */
+/** "JRivera" → "JR", "nathan sessions" → "NS"; "?" when there is nothing but separators ("", "-", "."). */
 export function initials(name: string): string {
-  const clean = (name ?? '').trim();
-  if (!clean) return '?';
-  const words = clean.split(/[\s._-]+/).filter(Boolean);
+  const words = (name ?? '').split(/[\s._-]+/).filter(Boolean);
+  if (!words.length) return '?';
   if (words.length > 1) return (words[0]![0]! + words[1]![0]!).toUpperCase();
   const w = words[0]!;
   const caps = w.replace(/[^A-Z]/g, '');

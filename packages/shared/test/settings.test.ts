@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, SETTINGS_KEYS } from '../src/settings.js';
+import { DEFAULT_SETTINGS, SETTINGS_KEYS, urlHasCredentials } from '../src/settings.js';
 import { settingsPatchSchema, settingsSchema } from '../src/schemas.js';
+
+describe('urlHasCredentials', () => {
+  it.each([
+    'http://svc:s3cretPass@factorylogix.plant.local:6065/odata',
+    'http://svc@factorylogix.plant.local:6065/odata',
+    'http://:s3cretPass@factorylogix.plant.local:6065/odata',
+    ' https://svc:s3cretPass@factorylogix.plant.local/odata ',
+    'http:\\\\svc:s3cretPass@factorylogix.plant.local:6065\\odata',
+  ])('finds the user name or password in %s', (url) => {
+    expect(urlHasCredentials(url)).toBe(true);
+  });
+
+  it.each([
+    'http://factorylogix.plant.local:6065/odata',
+    'http://@factorylogix.plant.local:6065/odata',
+    'http://factorylogix.plant.local:6065/odata?$filter=Owner eq \'a@b\'',
+    'not a url',
+    '',
+  ])('finds none in %s', (url) => {
+    expect(urlHasCredentials(url)).toBe(false);
+  });
+});
 
 describe('settings validation', () => {
   it('accepts the default settings', () => {

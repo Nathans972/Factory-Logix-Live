@@ -73,6 +73,12 @@ export function findOverlappingShift(
   return null;
 }
 
+/** Whether an edit changes when the shift runs (its times or days), not just its name or dates. */
+export function changesShiftTimes(before: ShiftWrite, after: ShiftWrite): boolean {
+  const days = (s: ShiftWrite) => [...new Set(s.days_of_week)].sort((a, b) => a - b).join(',');
+  return before.start_local !== after.start_local || before.end_local !== after.end_local || days(before) !== days(after);
+}
+
 /** effective_from minus one day, as 'YYYY-MM-DD' (used when versioning a shift). */
 export function previousDay(date: string): string {
   const [y, m, d] = date.split('-').map(Number);

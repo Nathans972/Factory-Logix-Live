@@ -50,7 +50,8 @@ export async function buildOperatorDetailForQuery(
   const columns = hourColumns(columnsFrom, to, tz);
 
   const [cells, assignment, pins, operator] = await Promise.all([
-    getCellsForOperator(db, operatorId, from, to),
+    // From the start of `from`'s hour: a range starting mid-hour (a 06:30 shift) takes part of it.
+    getCellsForOperator(db, operatorId, hourStartUtc(from, tz), to),
     getAssignment(db, operatorId),
     listPins(db, { operator_id: operatorId, activeOnly: true }),
     getOperator(db, operatorId),

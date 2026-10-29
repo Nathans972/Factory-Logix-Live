@@ -2,6 +2,8 @@
  * Circuit breaker and backoff (spec 4.6).
  * After `breaker_failure_threshold` consecutive failures the poll interval is multiplied by
  * 2, then 4, then 8 ... capped at `breaker_max_backoff_minutes`. Any success resets it.
+ * A refused login opens it at once, with no retry on a timer: the collector polls again once the
+ * FactoryLogix connection is saved again (see `Collector.refusedLogin` in index.ts).
  */
 import type { SyncStatus } from '@fld/shared';
 
@@ -24,6 +26,8 @@ export interface BreakerSnapshot {
   lastError: string | null;
   openUntil: number | null;
   everPolled: boolean;
+  /** FactoryLogix refused the login: open, with no retry on a timer (see `recordLoginRefused`). */
+  loginRefused: boolean;
 }
 
 export class CircuitBreaker {
@@ -32,6 +36,7 @@ export class CircuitBreaker {
   lastError: string | null = null;
   openUntil: number | null = null;
   everPolled = false;
+  loginRefused = false;
 
   hydrate(snapshot: Partial<BreakerSnapshot>): void {
     if (snapshot.consecutiveFailures !== undefined) this.consecutiveFailures = snapshot.consecutiveFailures;
@@ -41,12 +46,31 @@ export class CircuitBreaker {
     this.everPolled = Boolean(this.lastSuccessAt !== null || this.consecutiveFailures > 0);
   }
 
-  recordSuccess(now: number): void {
+  /**
+   * `error` is an optional data source that failed while the required ones came in: the data is
+   * current (no backoff, not delayed), but the status stays degraded and shows the error.
+   */
+  recordSuccess(now: number, error: string | null = null): void {
     this.consecutiveFailures = 0;
     this.lastSuccessAt = now;
-    this.lastError = null;
+    this.lastError = error;
     this.openUntil = null;
     this.everPolled = true;
+    this.loginRefused = false;
+  }
+
+  /**
+   * The required data sources came in but the hour cells could not be recomputed from them
+   * (`error`), so the numbers on screen stop changing. FactoryLogix answered (no backoff), but the
+   * last success stays where it was: the status is degraded with the error at once, and "Data
+   * delayed" shows once that is older than 3x the poll interval.
+   */
+  recordNotRecomputed(error: string): void {
+    this.consecutiveFailures = 0;
+    this.lastError = error;
+    this.openUntil = null;
+    this.everPolled = true;
+    this.loginRefused = false;
   }
 
   recordFailure(now: number, error: string, opts: BreakerOptions): void {
@@ -54,6 +78,20 @@ export class CircuitBreaker {
     this.lastError = error;
     this.everPolled = true;
     this.openUntil = this.consecutiveFailures >= opts.threshold ? now + backoffMs(this.consecutiveFailures, opts) : null;
+    this.loginRefused = false;
+  }
+
+  /**
+   * FactoryLogix refused the login. Asking again would get the same answer until someone changes
+   * the login or the account, and every refused login counts towards locking the account: there
+   * is no time for the next attempt (`openUntil` stays empty).
+   */
+  recordLoginRefused(error: string): void {
+    this.consecutiveFailures += 1;
+    this.lastError = error;
+    this.everPolled = true;
+    this.openUntil = null;
+    this.loginRefused = true;
   }
 
   /** Delay until the next poll attempt. */
@@ -72,6 +110,7 @@ export class CircuitBreaker {
       lastError: this.lastError,
       openUntil: this.openUntil,
       everPolled: this.everPolled,
+      loginRefused: this.loginRefused,
     };
   }
 }
@@ -84,8 +123,11 @@ export function isDelayed(lastSuccessAt: number | null, now: number, intervalMs:
 
 /**
  * ok        - last poll succeeded
- * degraded  - some failures (under threshold) or in backoff but with a recent success
- * down      - breaker open and the last success is older than 3x the interval (or never)
+ * degraded  - some failures (under threshold) or in backoff but with a recent success, an
+ *             optional data source failing while the required ones come in, or hour cells that
+ *             could not be recomputed
+ * down      - breaker open (or the login refused) and the last success is older than 3x the
+ *             interval (or never)
  * never     - nothing has ever been polled (no mapping/connection yet)
  */
 export function computeStatus(
@@ -96,8 +138,8 @@ export function computeStatus(
   if (!opts.configured) return 'never';
   if (!snapshot.everPolled && snapshot.lastSuccessAt === null) return 'never';
   const delayed = isDelayed(snapshot.lastSuccessAt, now, opts.intervalMs);
-  const breakerOpen = snapshot.consecutiveFailures >= opts.threshold;
+  const breakerOpen = snapshot.loginRefused || snapshot.consecutiveFailures >= opts.threshold;
   if (breakerOpen && delayed) return 'down';
-  if (snapshot.consecutiveFailures > 0 || delayed) return 'degraded';
+  if (snapshot.consecutiveFailures > 0 || snapshot.lastError !== null || delayed) return 'degraded';
   return 'ok';
 }

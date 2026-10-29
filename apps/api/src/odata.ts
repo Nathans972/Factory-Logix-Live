@@ -2,12 +2,17 @@
  * OData helpers: `$metadata` (EDMX) parsing, preview query building and the derived checks shown by
  * the mapping wizard (spec 10.7 step 4).
  */
+import http from 'node:http';
+import https from 'node:https';
+import { localToUtc } from '@fld/engine';
 import { XMLParser } from 'fast-xml-parser';
 import {
   DATASET_SPECS,
+  describeFetchError,
   edmTypeToKind,
   type DatasetMapping,
   type DatasetName,
+  type FlTimestampMode,
   type MappingPreviewResult,
   type ODataEntityField,
   type ODataEntitySet,
@@ -35,10 +40,18 @@ const parser = new XMLParser({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type XmlNode = Record<string, any>;
 
+/** The `<edmx:Edmx>` root of a parsed document, or null when it is something else (an HTML page, an OData error, JSON). */
+function edmxRoot(doc: XmlNode): XmlNode | null {
+  const edmx: unknown = doc?.Edmx ?? doc?.['edmx:Edmx'];
+  return edmx !== null && typeof edmx === 'object' ? (edmx as XmlNode) : null;
+}
+
 /** Parse an EDMX document into the entity sets + fields the mapping wizard needs. */
 export function parseEdmx(xml: string, fetchedAt = Date.now()): ODataMetadata {
-  const doc = parser.parse(xml) as XmlNode;
-  const edmx: XmlNode = doc?.Edmx ?? doc?.['edmx:Edmx'] ?? {};
+  return readEdmx(edmxRoot(parser.parse(xml) as XmlNode) ?? {}, fetchedAt);
+}
+
+function readEdmx(edmx: XmlNode, fetchedAt: number): ODataMetadata {
   const dataServices: XmlNode = edmx?.DataServices ?? {};
   const schemas = toArray<XmlNode>(dataServices?.Schema);
 
@@ -115,13 +128,54 @@ export interface FetchResult<T> {
   status: number;
   data: T | null;
   error: string | null;
+  content_type: string | null;
   latency_ms: number;
+}
+
+/**
+ * `fetch`, but it also reaches the ports fetch turns down. Node's fetch keeps the Fetch standard's "bad port"
+ * list (1, 5060, 6000, 6665-6669, 10080 and about 70 more, a browser's guard against cross-protocol requests)
+ * and rejects them at once with "fetch failed", cause "bad port", without connecting: a FactoryLogix on one
+ * could never be reached, and one that is down there would never read as refused. Those requests go out
+ * through node:http(s) instead (the GETs here have no body; a redirect is not followed and shows as its HTTP
+ * status), and fail the way fetch does: with the signal's reason when it fires, else a "fetch failed" with
+ * Node's error as `cause`, which describeFetchError reads.
+ */
+async function fetchAnyPort(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if (!(err instanceof TypeError) || (err.cause as Error | undefined)?.message !== 'bad port') throw err;
+  }
+  const signal = init.signal ?? undefined;
+  try {
+    const target = new URL(url);
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      // The body is read as it comes, so ask for it without a content coding (fetch would undo one).
+      const headers = { ...Object.fromEntries(new Headers(init.headers)), 'accept-encoding': 'identity' };
+      const client = target.protocol === 'https:' ? https : http;
+      const req = client.request(target, { method: init.method ?? 'GET', headers, signal }, resolve);
+      req.on('error', reject);
+      req.end();
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of res) chunks.push(chunk as Buffer);
+    const headers = new Headers();
+    for (let i = 0; i + 1 < res.rawHeaders.length; i += 2) headers.append(res.rawHeaders[i], res.rawHeaders[i + 1]);
+    const status = res.statusCode ?? 0;
+    // A Response with one of these statuses may not have a body, even an empty one.
+    const body = status === 204 || status === 205 || status === 304 ? null : Buffer.concat(chunks);
+    return new Response(body, { status, statusText: res.statusMessage, headers });
+  } catch (err) {
+    if (signal?.aborted) throw signal.reason;
+    throw new TypeError('fetch failed', { cause: err });
+  }
 }
 
 async function request(url: string, creds: ODataCredentials, timeoutMs: number, accept: string): Promise<FetchResult<string>> {
   const started = Date.now();
   try {
-    const res = await fetch(url, {
+    const res = await fetchAnyPort(url, {
       method: 'GET',
       headers: {
         Authorization: basicAuthHeader(creds.username, creds.password),
@@ -130,24 +184,24 @@ async function request(url: string, creds: ODataCredentials, timeoutMs: number, 
       signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
+    const contentType = res.headers.get('content-type');
     if (!res.ok) {
       return {
         ok: false,
         status: res.status,
         data: null,
         error: `HTTP ${res.status} ${res.statusText}${text ? `: ${text.slice(0, 400)}` : ''}`,
+        content_type: contentType,
         latency_ms: Date.now() - started,
       };
     }
-    return { ok: true, status: res.status, data: text, error: null, latency_ms: Date.now() - started };
+    return { ok: true, status: res.status, data: text, error: null, content_type: contentType, latency_ms: Date.now() - started };
   } catch (err) {
     const message =
-      err instanceof Error
-        ? err.name === 'TimeoutError' || err.name === 'AbortError'
-          ? `request timed out after ${timeoutMs} ms`
-          : err.message
-        : String(err);
-    return { ok: false, status: 0, data: null, error: message, latency_ms: Date.now() - started };
+      err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+        ? `request timed out after ${timeoutMs} ms`
+        : describeFetchError(err);
+    return { ok: false, status: 0, data: null, error: message, content_type: null, latency_ms: Date.now() - started };
   }
 }
 
@@ -158,7 +212,17 @@ export async function fetchMetadata(
   const res = await request(joinUrl(creds.base_url, '$metadata'), creds, timeoutMs, 'application/xml');
   if (!res.ok || !res.data) return { metadata: null, error: res.error ?? 'no response', latency_ms: res.latency_ms };
   try {
-    return { metadata: parseEdmx(res.data), error: null, latency_ms: res.latency_ms };
+    // A login page, a web server's default page or an OData error document can answer 200 too.
+    const edmx = edmxRoot(parser.parse(res.data) as XmlNode);
+    if (!edmx) {
+      const got = res.content_type?.split(';')[0].trim() || 'no Content-Type';
+      return {
+        metadata: null,
+        error: `the address answered, but not with OData $metadata (got ${got}); check that it is the OData service root`,
+        latency_ms: res.latency_ms,
+      };
+    }
+    return { metadata: readEdmx(edmx, Date.now()), error: null, latency_ms: res.latency_ms };
   } catch (err) {
     return {
       metadata: null,
@@ -232,13 +296,53 @@ export function buildPreviewUrl(baseUrl: string, dataset: DatasetName, mapping: 
   return joinUrl(baseUrl, buildPreviewPath(dataset, mapping, top));
 }
 
-function parseTs(value: unknown): number | null {
+/**
+ * `fl_timestamp_mode` + plant zone (spec 5.5), so the checks read FactoryLogix timestamps the way the
+ * collector does: an offset-less value is plant wall-clock time in `local_no_offset` mode, else UTC.
+ */
+export interface PreviewTimestampOptions {
+  mode?: FlTimestampMode;
+  timezone?: string;
+}
+
+const NAIVE_RE = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,7}))?)?)?$/;
+const OFFSET_RE = /(?:Z|z|[+-]\d{2}:?\d{2})$/;
+
+/** The instant an offset-less value names; `wallMs` is its wall-clock time counted as if it were UTC. */
+function wallClockToUtc(wallMs: number, opts: PreviewTimestampOptions): number | null {
+  if (opts.mode !== 'local_no_offset' || !opts.timezone) return wallMs;
+  const d = new Date(wallMs);
+  if (Number.isNaN(d.getTime())) return null;
+  const local = {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+    second: d.getUTCSeconds(),
+  };
+  return localToUtc(opts.timezone, local) + d.getUTCMilliseconds();
+}
+
+function parseTs(value: unknown, opts: PreviewTimestampOptions): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return value;
-  const raw = String(value);
-  // OData v2/v3 "/Date(1700000000000)/"
+  const raw = String(value).trim();
+  // OData v2/v3 "/Date(1700000000000)/"; with no offset the number is the wall clock counted as if it were UTC
   const legacy = /^\/Date\((-?\d+)([+-]\d+)?\)\/$/.exec(raw);
-  if (legacy) return Number(legacy[1]);
+  if (legacy) return legacy[2] ? Number(legacy[1]) : wallClockToUtc(Number(legacy[1]), opts);
+  if (OFFSET_RE.test(raw)) {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  // Not Date.parse: it reads an offset-less date-time in the API process's own zone.
+  const naive = NAIVE_RE.exec(raw);
+  if (naive) {
+    const [, year, month, day, hour = '0', minute = '0', second = '0', frac = ''] = naive;
+    const ms = frac ? Number(frac.padEnd(3, '0').slice(0, 3)) : 0;
+    const wallMs = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), ms);
+    return wallClockToUtc(wallMs, opts);
+  }
   const parsed = Date.parse(raw);
   return Number.isNaN(parsed) ? null : parsed;
 }
@@ -258,6 +362,7 @@ export function computePreviewChecks(
   mapping: DatasetMapping,
   rows: Record<string, unknown>[],
   now: number,
+  timestamps: PreviewTimestampOptions = {},
 ): MappingPreviewResult['checks'] {
   const warnings: string[] = [];
   const f = mapping.fields ?? {};
@@ -290,8 +395,8 @@ export function computePreviewChecks(
       const completeRaw = completeField ? row[completeField] : null;
       if (isPresent(startRaw)) startPresent += 1;
       if (isPresent(completeRaw)) completePresent += 1;
-      const start = parseTs(startRaw);
-      const complete = parseTs(completeRaw);
+      const start = parseTs(startRaw, timestamps);
+      const complete = parseTs(completeRaw, timestamps);
       if (start !== null && complete !== null && complete >= start && sample_durations_minutes.length < 20) {
         sample_durations_minutes.push(Math.round(((complete - start) / 60_000) * 100) / 100);
       }
@@ -315,7 +420,7 @@ export function computePreviewChecks(
     for (const row of rows) {
       const v = row[tsField];
       if (!isPresent(v)) continue;
-      const ms = parseTs(v);
+      const ms = parseTs(v, timestamps);
       if (ms === null) {
         unparsed += 1;
         continue;
@@ -360,6 +465,7 @@ export async function runPreview(
   creds: ODataCredentials,
   dataset: DatasetName,
   mapping: DatasetMapping,
+  timestamps: PreviewTimestampOptions,
   timeoutMs = 20_000,
   now = Date.now(),
 ): Promise<MappingPreviewResult> {
@@ -396,6 +502,6 @@ export async function runPreview(
     error,
     query: url,
     rows,
-    checks: computePreviewChecks(dataset, mapping, rows, now),
+    checks: computePreviewChecks(dataset, mapping, rows, now, timestamps),
   };
 }

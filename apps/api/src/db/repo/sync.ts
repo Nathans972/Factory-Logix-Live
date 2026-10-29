@@ -13,6 +13,8 @@ export interface CollectorState {
 }
 
 export const BACKFILL_SOURCE = 'backfill';
+/** The collector's standards recomputes of every product (nightly, on demand, after a backfill): not a poll. */
+export const STANDARDS_SOURCE = 'standards_recompute';
 
 export async function getCollectorState(db: Db): Promise<CollectorState> {
   const { rows } = await db.query<{
@@ -119,8 +121,9 @@ export async function listSyncLog(db: Db, limit: number): Promise<SyncLogEntry[]
 
 /**
  * Persist `backfill_progress.requested_now = true` so the request survives a collector restart.
- * A finished or failed backfill starts over (same reset as the collector's `requestNow`); one in
- * progress keeps its days and phase, which the collector derives from the counters.
+ * A finished backfill starts over (same reset as the collector's `requestNow`); one in progress
+ * keeps its days and phase, which the collector derives from the counters, and one backing off
+ * after failed chunks (`error`) tries the failed chunk again at once.
  */
 export async function requestBackfillNow(db: Db): Promise<BackfillProgress> {
   const { rows } = await db.query<{ backfill_progress: BackfillProgress }>(
@@ -130,11 +133,11 @@ export async function requestBackfillNow(db: Db): Promise<BackfillProgress> {
              'first_day',NULL,'standards_done',false,'recolor_days_done',0), now())
      ON CONFLICT (source) DO UPDATE
        SET backfill_progress = COALESCE(sync_state.backfill_progress, '{}'::jsonb)
-             || CASE WHEN sync_state.backfill_progress->>'status' IN ('done', 'error')
+             || CASE WHEN sync_state.backfill_progress->>'status' = 'done'
                   THEN jsonb_build_object('days_done', 0, 'finished_at', NULL, 'error', NULL,
-                         'first_day', NULL, 'standards_done', false, 'recolor_days_done', 0)
+                         'first_day', NULL, 'standards_done', false, 'recolor_days_done', 0, 'failures', 0)
                   ELSE '{}'::jsonb END
-             || jsonb_build_object('requested_now', true, 'status', 'scheduled'),
+             || jsonb_build_object('requested_now', true, 'status', 'scheduled', 'retry_at', NULL),
            updated_at = now()
      RETURNING backfill_progress`,
     [BACKFILL_SOURCE],

@@ -117,16 +117,32 @@ history on every poll (spec 4.5):
 - **Watermark mode** (preferred): you pick a `watermark_field` — a timestamp or
   monotonically-increasing ID field, e.g. `ModifiedDate`. Each poll asks FactoryLogix for rows
   with `watermark_field >= last_watermark - overlap`, in ascending order. After a successful
-  pull the watermark advances to the maximum value seen. The overlap (`poll_overlap_minutes`,
-  default 10) re-fetches a few extra minutes each time so nothing is lost to clock skew; upserts
-  by natural key make the re-fetched rows harmless.
+  pull the watermark advances to the maximum value seen. Timestamps after the time of the poll
+  don't count, so one row stamped in the future (a station clock that is wrong, a 9999-12-31
+  placeholder) is still ingested but can't make later polls skip new rows. The overlap
+  (`poll_overlap_minutes`, default 10) re-fetches a few extra minutes each time so nothing is
+  lost to clock skew; upserts by natural key make the re-fetched rows harmless. A row that
+  changes while a pull pages through it moves to the end of the order, and every row behind its
+  old place moves up one, so the next page would start one row late. The collector sees the row
+  come back (by natural key) and reads again from where it was, so no row is stepped over
+  (spec 4.5). A poll reads at most 200 pages. When more rows than that fall inside the overlap
+  (a bulk update that gives thousands of rows one ModifiedDate), the next poll goes on where the
+  last one stopped instead of starting again from the watermark, so the collector gets past them
+  over a few polls.
 - **Time-window mode**: choose "none" for the watermark field in step 3 of the wizard. The
   collector instead filters on that dataset's primary timestamp (`complete_ts`/`start_ts` for
   unit steps, `found_ts` for defects, `modified_at`/`created_at` for work orders) using the
   same overlap. Use this when the entity set has no reliable last-modified field.
+- **Changing the watermark field later** from a numeric ID to a timestamp field or to "none"
+  needs nothing else: the stored watermark is an ID, not a time, and is not used. That dataset's
+  next poll reads as its first run did (2 h back; work orders as far back as `late_data_hours`)
+  and goes on from there; the collector log says so.
 - Small dimension datasets with **no timestamp at all** (`operators`, `routes`, `standards`,
-  and `work_orders` if nothing else is available) are pulled in full each time, capped at a
-  small number of pages — acceptable because these lists are short.
+  and `work_orders` if nothing else is available) are pulled in full, at most 20 pages per poll
+  (10,000 rows at the default page size). A longer list is read over several polls: each poll
+  goes on where the last one stopped and starts over at the top once it has reached the end
+  (after a collector restart, the pass starts again from the top). The backfill pulls such a
+  `work_orders` whole in one go.
 - `unit_steps` and `defects` **must** have either a watermark field or a primary timestamp
   field mapped; the collector refuses to run an unbounded pull against a high-volume table.
 
@@ -152,6 +168,22 @@ duplicating it. Typical keys:
 Pick fields that are always present and that do not change between the initial scan and a
 later update to the same row.
 
+### Changing the natural key
+
+You can change the natural key of a dataset that already has rows. `unit_steps` and `defects`
+rows stay stored under the key they were written with, so when you save a mapping that changes
+their key (or stops using the dataset), the old key is kept in the `mapping_key_history` setting.
+The collector then also reads the fields of every old key, and when it reads a row again (the
+overlap, the hourly late-data re-pull, "Run backfill now") it replaces the copy stored under an
+old key with the row under the new one. That copy is found at the row's time, or, if the time
+also changed (a timestamp mode or plant time zone fix), within two days for the same unit, job
+and operation. Rows that are never read again keep their old key and are still counted once.
+
+An old key field that FactoryLogix no longer lists in `$metadata` is not read, because
+FactoryLogix would refuse the whole request. Rows stored under that key cannot be matched, and
+are stored a second time when they are read again. So change the key before FactoryLogix
+drops the field, not after.
+
 The natural key also de-duplicates the raw payload archive: `raw_events` gets a new row for a
 key only when the payload FactoryLogix sent differs from the last one stored for that key, so
 re-reading unchanged rows costs no disk.
@@ -159,6 +191,19 @@ re-reading unchanged rows costs no disk.
 A row that arrives without one of its required target fields (or whose product or operation
 cannot be resolved) is skipped rather than stored half-filled. Admin > Sync shows the skipped
 count per pull; if it stays above zero, check the mapping of the required fields.
+
+Text values are trimmed. FactoryLogix can hold characters PostgreSQL cannot store: NUL padding
+from fixed-width columns or scanners, and half of an emoji where a column cut a value to length.
+The collector drops NUL characters and stores half an emoji as `�` (U+FFFD), in the mapped
+fields, the natural key and the raw payload, so `Bracket` followed by NUL padding is stored as
+`Bracket`.
+
+Whole numbers stored in `int` columns (`qty_released`, `qty_complete`, `operation_seq` and a
+route's `sequence`) are kept within the int range: a "no limit" quantity of 9,999,999,999 is
+stored as 2,147,483,647. If PostgreSQL still refuses a value in a row (for example a scanner's
+whole buffer in the operator field, too long for its index), the collector stores the rest of the
+page without that row. The row is counted as skipped, and the collector log gives its natural key
+and the database error.
 
 ## Timestamp modes
 
@@ -182,7 +227,9 @@ sample rows during the Test & preview step:
 - **Writing.** Time filters the collector sends (`$filter=... ge datetime'...'`) use the same
   form FactoryLogix returns: on an OData v2/v3 service, an `Edm.DateTime` (or untyped) field is
   compared against plant-local wall-clock time, e.g. `datetime'2025-06-01T10:30:00'` for
-  14:30 UTC in New York in summer.
+  14:30 UTC in New York in summer. On the fall-back night, a filter that starts in the first
+  pass through the repeated hour (say 01:40 EDT) is written an hour earlier (`00:40`), so it
+  also finds the rows written in the second pass (01:00-01:40 EST), whose clock times are lower.
 - **Not changed:** OData v4 literals and `Edm.DateTimeOffset` fields always carry an offset, so
   they stay in UTC (`2025-06-01T14:30:00Z`) and mean the same instant whatever the mode.
   If a v4 FactoryLogix service ever returns offset-less values for a `DateTimeOffset` field,
@@ -193,10 +240,12 @@ The `utc` and `offset_present` modes read and write exactly as before.
 **The fall-back-night rule (`local_no_offset` only):** on the one night per year clocks fall
 back, one local hour occurs twice and a naive timestamp in that hour is ambiguous. The
 collector resolves it by watching the order rows arrive in: if a row's naive timestamp is more
-than 30 minutes earlier than the previous row from the same source, it is treated as the
-*second* occurrence of that hour. In the normal case (no fall-back in progress) it resolves to
-the first (earlier) occurrence. This only matters for one night a year and does not require any
-action from you.
+than 30 minutes earlier than the previous row from the same source, the clock has gone back, and
+that row and the source's following rows in that hour are treated as the *second* occurrence. A
+row the collector reads again (the poll overlap and the late-data re-pull re-read recent rows)
+keeps the time it was given the first time. In the normal case (no fall-back in progress) it
+resolves to the first (earlier) occurrence. This only matters for one night a year and does not
+require any action from you.
 
 **Verify which mode applies** by checking the EDM type of the timestamp fields in `$metadata`
 (`Edm.DateTimeOffset` fields normally carry an offset; `Edm.DateTime` usually does not) and by
@@ -284,8 +333,9 @@ What each one means:
   can sanity-check they look like real work times (seconds to tens of minutes), not zero or
   wildly large.
 - **Timestamp skew** — the newest mapped timestamp in the sample compared to the server's own
-  clock, in minutes. A large skew usually means the wrong `fl_timestamp_mode` or the wrong
-  plant time zone.
+  clock, in minutes. The sample is read the way the collector reads it, with the saved
+  `fl_timestamp_mode` and plant time zone, so a large skew usually means one of them is wrong;
+  fix it in Admin > Connection, save, and run the preview again.
 
 Warnings you may see, and what to do about them:
 
@@ -305,6 +355,10 @@ the app from running; specific features fall back instead:
 
 - **`qty_complete` not mapped** — derived as the count of distinct units that completed the
   last operation in the product's route on that job.
+- **`unit_steps.product_number` not mapped** — each step takes the product of its work order.
+  When a step's work order is not in the database yet (on install day, a job still running that
+  FactoryLogix has not changed in the last day), the collector fetches that work order by job
+  number before writing the step. A step whose job FactoryLogix does not have is skipped.
 - **`routes` dataset not mapped** — the route (ordered operation list) for each product is
   derived from `unit_steps`: distinct operations per product, ordered by `operation_seq` when
   present, otherwise by first-seen order.
@@ -323,6 +377,10 @@ the app from running; specific features fall back instead:
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Connection test fails with `HTTP 401` or `HTTP 403` | Wrong FactoryLogix user name/password, or the account lacks OData rights | Re-enter credentials in Admin > Connection; confirm the account can open `$metadata` in a browser |
+| Connection test fails with "the address answered, but not with OData $metadata (got text/html)" | The URL reaches a web server, but not the OData service: a sign-in page, the IIS default page, a proxy page, or an OData error | Use the OData service root (e.g. `http://<factorylogix-server>:6065/odata`); `<that URL>/$metadata` must show EDMX XML in a browser |
+| Connection test or Admin > Sync says `connection refused`, `host not found` or `host name lookup failed` | Wrong host name or port, the OData service is not running, or the dashboard server cannot resolve the name | Check the host and port in the URL (`6065` by default) and that the Report Scheduler Service is running; if the name does not resolve, use the server's IP address |
+| Connection test or Admin > Sync says `no answer, a firewall may be dropping the connection` | A firewall between the dashboard server and FactoryLogix drops the traffic instead of refusing it | Allow TCP from the dashboard server to the FactoryLogix server on the OData port |
+| Connection test or Admin > Sync says `certificate not trusted` or `TLS handshake failed` | An `https://` URL whose certificate is self-signed, issued by an internal CA, made out to another host name or out of date; or `https://` on a port that only speaks plain HTTP | Self-signed or from your own CA: give the dashboard that CA's certificate with `FACTORYLOGIX_CA_CERT` (`docs/INSTALL.md`, section 10, "FactoryLogix over https"). Made out to another host name: use that name in the URL. Out of date: renew it on the FactoryLogix server. `the server may not use https on this port`: use the OData service's `http://` URL (the default is `http://<factorylogix-server>:6065/odata`) |
 | Preview or poll returns no rows | Wrong entity set name, or no recent activity in the filtered time range | Check the entity set name against live `$metadata`; widen the preview window by checking activity on the floor in the last hour |
 | Timestamp skew warning / hour columns look shifted | `fl_timestamp_mode` does not match how FactoryLogix serializes dates, or `plant_timezone` is wrong | Compare a sample value in the preview grid to the EDM type in `$metadata` (`Edm.DateTimeOffset` vs `Edm.DateTime`); fix the mode and/or the plant time zone in Admin > Connection |
 | "field X -> Y is missing from the returned rows" (structural mismatch) | Field name typo, wrong case beyond what the app tolerates, or the field is on a related/nested entity | Re-check the field name in `$metadata`; if it is a navigation property, map it with a `/`-separated path, e.g. `Operator/UserName` |

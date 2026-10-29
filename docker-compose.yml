@@ -20,6 +20,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    # Without a cap Docker keeps every log line for as long as the container exists, on the same
+    # disk as the database. Each service here keeps at most 5 files of 50 MB, deleting the oldest,
+    # so the four logs stay under about 1 GB together (docs/OPERATIONS.md → Logs).
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks: [fld]
 
   api:
@@ -33,17 +41,35 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3001"
-      DATABASE_URL: postgres://${POSTGRES_USER:-fld}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-fld}
+      # The database login goes in as parts, not as one postgres:// URL: the api builds the URL
+      # itself and percent-encodes the user and password, so a / ? # or @ in the password
+      # (openssl rand -base64, a password manager) cannot break it.
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-fld}
+      POSTGRES_USER: ${POSTGRES_USER:-fld}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
       PLANT_TIMEZONE: ${PLANT_TIMEZONE:-America/New_York}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       MIGRATIONS_DIR: /app/db/migrations
+      # An https:// FactoryLogix whose certificate is self-signed or from the plant's own CA: that CA's
+      # certificate goes in certs/ and FACTORYLOGIX_CA_CERT in .env names it (docs/INSTALL.md, section 10).
+      # Empty without it, and Node trusts only its built-in public CAs.
+      NODE_EXTRA_CA_CERTS: ${FACTORYLOGIX_CA_CERT:+/app/certs/}${FACTORYLOGIX_CA_CERT:-}
+    volumes:
+      - ./certs:/app/certs:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/health"]
       interval: 15s
       timeout: 5s
       retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks: [fld]
 
   collector:
@@ -58,10 +84,23 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER:-fld}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-fld}
+      # As parts, not as a URL, for the same reason as the api.
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-fld}
+      POSTGRES_USER: ${POSTGRES_USER:-fld}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       PLANT_TIMEZONE: ${PLANT_TIMEZONE:-America/New_York}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # The same CA as the api: the api tests the connection, the collector polls.
+      NODE_EXTRA_CA_CERTS: ${FACTORYLOGIX_CA_CERT:+/app/certs/}${FACTORYLOGIX_CA_CERT:-}
+    volumes:
+      - ./certs:/app/certs:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks: [fld]
 
   web:
@@ -73,6 +112,11 @@ services:
       - api
     ports:
       - "${WEB_PORT:-8080}:80"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks: [fld]
 
 volumes:

@@ -30,13 +30,7 @@ only the mapped columns (`$select`), so unmapped fields never arrive. Decide whi
 are worth keeping (and the extra transfer), and add them to `$select`, for example as an
 "also keep" list in the mapping.
 
-## 4. Shift efficiency when some rows lack a standard
-
-Shift efficiency shows a dash as soon as any row in the shift has no standard (StdHr). Consider
-computing it over the rows that have one and showing the excluded share next to it (e.g.
-"1.08, 12% of hours without a standard").
-
-## 5. TV device-token check and a Secure session cookie
+## 4. TV device-token check and a Secure session cookie
 
 - Optional TV device-token check: TV endpoints are unauthenticated by design and identify a
   TV by its token. Offer an optional allow-list or signed token for plants that want one.

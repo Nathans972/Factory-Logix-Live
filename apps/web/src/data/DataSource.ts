@@ -99,6 +99,13 @@ export interface DashboardQuery {
 
 export type Unsubscribe = () => void;
 
+/**
+ * What `subscribe` delivers: the server's events, and `resync` when some of them may have been
+ * missed (the stream was closed while the page was hidden). A subscriber refetches on `resync`
+ * whatever its events would have refreshed.
+ */
+export type LiveEvent = SseEvent | { type: 'resync'; at: UtcMs };
+
 export interface DataSource {
   /** 'api' | 'mock' */
   readonly kind: 'api' | 'mock';
@@ -107,7 +114,7 @@ export interface DataSource {
   health(): Promise<AppHealth>;
   syncHealth(): Promise<SyncHealth>;
   /** Subscribe to server events. The callback also receives a synthetic {type:'heartbeat'} periodically. */
-  subscribe(cb: (e: SseEvent) => void): Unsubscribe;
+  subscribe(cb: (e: LiveEvent) => void): Unsubscribe;
 
   // setup / auth
   setupStatus(): Promise<SetupStatus>;

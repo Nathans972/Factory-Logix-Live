@@ -95,6 +95,22 @@ export async function insertDisplay(db: Db, deviceToken: string): Promise<Displa
   throw new Error('could not allocate a unique pairing code');
 }
 
+/**
+ * Free pairing codes held by unclaimed displays that are no longer showing them: those not seen
+ * for a day, and all but the `keep` most recently seen. Claimed displays are never touched.
+ * Returns how many were deleted.
+ */
+export async function pruneUnclaimedDisplays(db: Db, keep: number): Promise<number> {
+  const res = await db.query(
+    `DELETE FROM displays WHERE claimed_at IS NULL AND (
+       COALESCE(last_seen_at, created_at) < now() - interval '1 day'
+       OR id NOT IN (SELECT id FROM displays WHERE claimed_at IS NULL
+                     ORDER BY COALESCE(last_seen_at, created_at) DESC, id DESC LIMIT $1))`,
+    [keep],
+  );
+  return res.rowCount ?? 0;
+}
+
 export async function touchDisplay(db: Db, id: number): Promise<void> {
   await db.query('UPDATE displays SET last_seen_at = now() WHERE id = $1', [id]);
 }

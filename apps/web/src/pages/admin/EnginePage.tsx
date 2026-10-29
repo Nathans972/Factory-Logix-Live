@@ -1,6 +1,6 @@
 /** Engine settings (spec 10.6 / 11): eligibility, idle, break handling, colour bands, retention. */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { SettingsPatch } from '@fld/shared';
+import { HOUR_CELL_SETTINGS_KEYS, type SettingsPatch } from '@fld/shared';
 import { useDataSource } from '../../data/DataSourceContext';
 import { PageHeader, Spinner } from '../../ui';
 import { AdminOnly, ApiError, Flash, useFlash } from './components/common';
@@ -106,9 +106,14 @@ function EnginePageInner() {
 
   const saveM = useMutation({
     mutationFn: (patch: SettingsPatch) => ds.updateSettings(patch),
-    onSuccess: () => {
+    onSuccess: (_res, patch) => {
       void qc.invalidateQueries({ queryKey: ['settings'] });
-      flash.show('Engine settings saved. Hour cells are recomputed on the next refresh.');
+      // The form sends only the keys that changed; the API asks the collector for the same recompute.
+      flash.show(
+        HOUR_CELL_SETTINGS_KEYS.some((key) => key in patch)
+          ? 'Engine settings saved. The hour cells of today and yesterday are recomputed with them; earlier days keep the settings they were computed with.'
+          : 'Engine settings saved.',
+      );
     },
   });
 

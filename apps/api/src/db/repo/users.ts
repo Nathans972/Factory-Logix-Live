@@ -7,6 +7,7 @@ export type UserRow = {
   id: number;
   username: string;
   password_hash?: string;
+  session_version?: number;
   role: Role;
   active: boolean;
   created_at: Date;
@@ -48,13 +49,26 @@ export async function getUserById(db: Db, id: number): Promise<User | null> {
   return rows.length > 0 ? mapUser(rows[0]) : null;
 }
 
-export async function getUserWithHash(db: Db, username: string): Promise<(User & { password_hash: string }) | null> {
+/** The user a session cookie names, and the session version the cookie must carry to still count. */
+export async function getSessionUser(db: Db, id: number): Promise<{ user: User; sessionVersion: number } | null> {
+  const { rows } = await db.query<UserRow>(`SELECT ${PUBLIC_COLUMNS}, session_version FROM users WHERE id = $1`, [id]);
+  return rows.length > 0 ? { user: mapUser(rows[0]), sessionVersion: rows[0].session_version ?? 0 } : null;
+}
+
+export async function getUserWithHash(
+  db: Db,
+  username: string,
+): Promise<(User & { password_hash: string; session_version: number }) | null> {
   const { rows } = await db.query<UserRow>(
-    `SELECT ${PUBLIC_COLUMNS}, password_hash FROM users WHERE lower(username) = lower($1)`,
+    `SELECT ${PUBLIC_COLUMNS}, password_hash, session_version FROM users WHERE lower(username) = lower($1)`,
     [username],
   );
   if (rows.length === 0) return null;
-  return { ...mapUser(rows[0]), password_hash: rows[0].password_hash ?? '' };
+  return {
+    ...mapUser(rows[0]),
+    password_hash: rows[0].password_hash ?? '',
+    session_version: rows[0].session_version ?? 0,
+  };
 }
 
 export async function createUser(
@@ -108,6 +122,8 @@ export async function updateUser(
     params.push(patch.password_hash);
     sets.push(`password_hash = $${params.length}`);
   }
+  // A new password or deactivation also ends every session the user already has.
+  if (patch.password_hash !== undefined || patch.active === false) sets.push('session_version = session_version + 1');
   if (sets.length === 0) return getUserById(db, id);
   params.push(id);
   const { rows } = await db.query<UserRow>(
@@ -119,4 +135,9 @@ export async function updateUser(
 
 export async function recordLogin(db: Db, id: number): Promise<void> {
   await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [id]);
+}
+
+/** Ends every session the user has: cookies signed with the old session version stop counting. */
+export async function revokeSessions(db: Db, id: number): Promise<void> {
+  await db.query('UPDATE users SET session_version = session_version + 1 WHERE id = $1', [id]);
 }

@@ -6,8 +6,9 @@ import {
   formatTimestampLiteral,
   isLegacyVersion,
   quoteString,
+  type TimestampLiteralOptions,
 } from '../src/odata/literals.js';
-import { ODataClient, buildQueryString, extractNextLink, extractRows } from '../src/odata/client.js';
+import { ODataClient, ODataError, buildQueryString, extractNextLink, extractRows } from '../src/odata/client.js';
 import { edmTypeOf, parseEdmx } from '../src/odata/metadata.js';
 
 const TS = Date.parse('2025-01-01T00:00:00.000Z');
@@ -40,6 +41,24 @@ describe('$filter literals', () => {
     expect(formatTimestampLiteral(TS, 'Edm.DateTimeOffset', '2.0', local)).toBe("datetimeoffset'2025-01-01T00:00:00Z'");
     expect(formatTimestampLiteral(TS, 'Edm.DateTimeOffset', '4.0', local)).toBe('2025-01-01T00:00:00Z');
     expect(formatTimestampLiteral(TS, null, null, local)).toBe('2025-01-01T00:00:00Z');
+  });
+
+  it('local_no_offset: a lower bound in the first pass through the repeated hour also covers the second pass', () => {
+    const local = { mode: 'local_no_offset' as const, timezone: 'America/New_York' };
+    const from = (iso: string, edmType: string | null = 'Edm.DateTime', opts: TimestampLiteralOptions = local) =>
+      formatLiteral({ kind: 'timestamp', ms: Date.parse(iso), lowerBound: true }, edmType, '2.0', opts);
+    // 2026-11-01 05:40Z is 01:40 EDT; 01:00-01:40 EST (06:00Z-06:40Z) come after it and read earlier.
+    expect(from('2026-11-01T05:40:00Z')).toBe("datetime'2026-11-01T00:40:00'");
+    expect(from('2026-11-01T05:00:00Z', null)).toBe("datetime'2026-11-01T00:00:00'");
+    expect(formatTimestampLiteral(Date.parse('2026-11-01T05:40:00Z'), 'Edm.DateTime', '2.0', local)).toBe("datetime'2026-11-01T01:40:00'");
+    // Second pass, before the repeated hour, spring forward and an ordinary day: the plain wall clock.
+    expect(from('2026-11-01T06:20:00Z')).toBe("datetime'2026-11-01T01:20:00'");
+    expect(from('2026-11-01T04:59:00Z')).toBe("datetime'2026-11-01T00:59:00'");
+    expect(from('2026-03-08T06:30:00Z')).toBe("datetime'2026-03-08T01:30:00'");
+    expect(from('2026-06-01T14:30:00Z')).toBe("datetime'2026-06-01T10:30:00'");
+    // Offset-carrying literals and the other modes are instants: nothing to widen.
+    expect(from('2026-11-01T05:40:00Z', 'Edm.DateTimeOffset')).toBe("datetimeoffset'2026-11-01T05:40:00Z'");
+    expect(from('2026-11-01T05:40:00Z', 'Edm.DateTime', { mode: 'utc', timezone: 'America/New_York' })).toBe("datetime'2026-11-01T05:40:00'");
   });
 
   it('utc and offset_present modes write the same literals as without a mode', () => {
@@ -143,5 +162,52 @@ describe('$metadata parsing', () => {
     expect(set.fields[2]!.kind).toBe('number');
     expect(set.fields[0]!.nullable).toBe(false);
     expect(edmTypeOf(metadata, 'UnitProcessHistory', 'CompletedDate')).toBe('Edm.DateTimeOffset');
+  });
+});
+
+describe('request failures', () => {
+  it('says why FactoryLogix could not be reached, not just "fetch failed"', async () => {
+    const refused = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:6065'), { code: 'ECONNREFUSED' });
+    const client = new ODataClient({
+      baseUrl: 'http://10.0.0.5:6065/odata',
+      username: 'u',
+      password: 'p',
+      timeoutSeconds: 5,
+      fetchImpl: () => Promise.reject(new TypeError('fetch failed', { cause: refused })),
+    });
+    const err = await client.fetchMetadata().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ODataError);
+    expect((err as ODataError).message).toBe('OData request failed: connection refused (connect ECONNREFUSED 10.0.0.5:6065)');
+    expect((err as ODataError).status).toBeNull();
+  });
+
+  /** A client whose answer starts (HTTP 200) and then fails while the body is read. */
+  function failingBody(reason: unknown): ODataClient {
+    return new ODataClient({
+      baseUrl: 'http://10.0.0.5:6065/odata',
+      username: 'u',
+      password: 'p',
+      timeoutSeconds: 5,
+      fetchImpl: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.reject(reason) } as unknown as Response),
+    });
+  }
+
+  it('says why when the connection drops halfway through the answer, not just "terminated"', async () => {
+    const closed = Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' });
+    const err = await failingBody(new TypeError('terminated', { cause: closed }))
+      .fetchPage('UnitProcessHistory')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ODataError);
+    expect((err as ODataError).message).toBe('OData request failed: connection closed by the server (other side closed, UND_ERR_SOCKET)');
+    expect((err as ODataError).status).toBeNull();
+  });
+
+  it('reports the timeout firing while the answer is still coming in as a timeout', async () => {
+    const err = await failingBody(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+      .fetchPage('UnitProcessHistory')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ODataError);
+    expect((err as ODataError).message).toBe('OData request timed out after 5s');
+    expect((err as ODataError).isTimeout).toBe(true);
   });
 });

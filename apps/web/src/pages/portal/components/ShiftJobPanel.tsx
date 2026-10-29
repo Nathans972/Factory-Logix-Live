@@ -106,8 +106,12 @@ export function ShiftJobPanel({ section }: { section: ShiftJobSection }) {
             </span>
             <ProgressBar value={section.progress} />
             <PaceChip pace={section.efficiency} color={section.color} />
-            <span className="card-sub nowrap" title="Charged / earned hours in this shift">
+            <span
+              className="card-sub nowrap"
+              title="Charged / earned hours in this shift. Hours without a StdHr are left out of the efficiency."
+            >
               {formatHours(section.charged_hours, 1)} charged · {formatHours(section.earned_hours, 1)} earned
+              {section.charged_hours_without_std > 0 && ` · ${formatHours(section.charged_hours_without_std, 1)} without StdHr`}
             </span>
             <Button
               variant="ghost"

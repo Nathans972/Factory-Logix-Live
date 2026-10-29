@@ -154,7 +154,7 @@ This product replaces the floor dashboard and gives managers a single live view,
 
 1. Collector polls FactoryLogix OData on an interval (default 90 seconds).
 2. Each poll pulls only rows changed since the last watermark for each data source, with an overlap margin, and upserts them into normalized tables. The raw JSON payload is stored alongside.
-3. After each successful poll, the engine recomputes hour cells for the affected time range (current hour and previous hour, plus any older hours touched by late-arriving rows).
+3. After each successful poll, the engine recomputes hour cells for the affected time range (current hour and previous hour, plus any older hours touched by late-arriving rows). Hours whose recompute fails are recomputed again after the next poll, and until they are the poll does not count as successful for the health state (4.6).
 4. The API pushes a "data updated" event over SSE. TV pages and portal views refetch their data.
 5. Nightly (configurable time), the engine recomputes standards for every (Z-number, operation) that received new data.
 
@@ -226,22 +226,34 @@ on each poll:
            with HTTP timeout settings.odata_timeout_seconds (default 20)
     upsert rows by natural key (see 6.1)          // idempotent; overlap re-pulls are harmless
     store raw payload in raw_events                // only when new or changed (raw_event_hashes)
-    if rows.length < page_size: break
-    offset += page_size
-  watermark[S] = max watermark value seen (only after the whole pull succeeds)
+    if rows.length == 0: break
+    if rows.length < page_size and an earlier request of this pull came back full: break
+    offset += rows.length
+  watermark[S] = max watermark value seen, not counting timestamps after the poll time
+                 (only after the whole pull succeeds)
   record poll stats (rows, ingested, skipped, duration, status) in sync_log
 ```
 
 Rules:
+- A row stamped in the future (a station with a wrong clock, a 9999-12-31 placeholder) is ingested but does not move a timestamp watermark: a watermark ahead of real time would make every later poll skip new rows. A stored watermark found ahead of the poll time is replaced; that poll reads from the first-run lookback (2 h).
+- A stored watermark is used only as the kind of value it is. After the mapping changes the watermark field from a numeric ID to a timestamp field or to none, the stored ID is not a timestamp (read as one, `5000` would be the year 5000 and every later poll would get no rows; `150` the year 150, and the poll would pull the whole history): that poll reads from where a first run does, and that time replaces it. After a change from a timestamp to a numeric ID on a data source with no primary timestamp, the stored timestamp is not an ID: the data source is read as on a first run, in ID order, with no `$filter` (never `ID ge '<timestamp>'`).
 - If a data source has no usable watermark field, use a time window on the primary timestamp with the same overlap, and additionally re-pull the last `settings.late_data_hours` (default 24) once per hour to catch late updates (defect closed later, unit reworked).
+- A data source with no watermark yet (the first run) reads from 2 h back; work_orders reads from as far back as the late-data re-pull reads unit steps (`late_data_hours`), so the jobs of the first run's unit steps are in the database. A unit step whose job is still not in the database (a job still running that FactoryLogix last changed before that) fetches its work order by job number first (`<job field> eq '<job>'`, 10 jobs a request joined by `or`). Otherwise the job is missing from the job lists, and a step that takes its product from the work order is skipped every time it is read, until the backfill reaches the job (never with `backfill_days` 0). A job FactoryLogix does not have is asked for at most once an hour; a lookup that fails is logged and the steps are written as they would be without it.
 - Page size and overlap are settings. Keep pages small (500) so no single query is heavy.
+- A service that pages on its own side answers with `@odata.nextLink`. Follow the links: `rows` above is what the request and its links returned together. `$top` still caps that total, so a full answer is not the end; the next request skips past it.
+- A service with a result limit below `page_size` answers with fewer rows than `$top` and no nextLink even when more rows match. Read as the end, that would stop every pull at the limit: once the overlap holds more rows than that, every poll reads the same oldest rows and the watermark never moves again. So a short answer is the end only after a request of the same pull came back full (the service sends `$top` rows when it has them). Until then the next request skips past the short answer's rows, and only an empty answer ends the pull. A pull of one short page costs one more, empty request. A service that ignores `$skip` answers that request with the short answer again; the pull ends there instead of reading it again up to the page cap.
+- FactoryLogix answers each page request from the table as it is at that moment. A row read on one page that changes before the next request moves to the end of the order, every row behind its old place moves up one, and the next `$skip` steps over a row that no later poll reads (it is behind the new watermark). So a pull notes the natural key and watermark value of every row it reads. A row that comes back on a later page of the same pull with another value means rows moved (a row inserted ahead only brings the last row read back unchanged, which loses nothing): the pull reads again from the watermark at the end of the page that row was first read on (`ge` that value, no overlap, offset 0), until a pass reads through with nothing moving; the watermark is that pass's. If rows are still moving at the page cap, or the place to read again from has not moved on, the watermark stops there and the next poll reads on from it. The late-data re-pull and the backfill windows do the same; the backfill's work-order window is open at the end, so a job changed during it comes back instead of leaving the window.
+- A poll reads at most 200 pages; the watermark is the maximum read so far. When more rows than that fall in the overlap window (a bulk update giving them all one ModifiedDate), a poll that started again from the watermark would read the same rows every time and never get past them. So a poll that stops at the page cap with nothing moving notes where it stopped, and the next poll, while the watermark is still the one it stored, goes on with the same query from a page before that offset. Rows read before that point that changed in between have moved to the end and the rows behind them have moved up, so it first looks for the last row read: found unchanged within the first two pages, nothing was stepped over; otherwise it reads again from the watermark. The stop point is kept in memory; after a restart the poll reads from the watermark.
+- The late-data re-pull and the backfill read a window in passes of at most 1,000 pages. No later pull goes on where a window pull stops, so a pass the page cap stops is followed by one from the watermark it ended with (`ge` that value, offset 0); a whole data source with no timestamp goes on from the row after the last one read. A window counts as read only once a pass reaches its end. A pass that gets no further (more rows with one timestamp than a pass reads; for a whole data source, a service that ignores `$skip`) fails the pull: its sync_log row shows the error, the backfill day is not counted and is tried again, and the late-data re-pull is recorded as failed and backs off.
 - Poll data sources sequentially, not in parallel, to keep FactoryLogix load flat.
 - Every query has a hard timeout. A timed-out query counts as a failure for the circuit breaker.
 
 ### 4.6 Throttling and circuit breaker
 
-- After `settings.breaker_failure_threshold` (default 3) consecutive failed polls (HTTP error, timeout, auth failure), the collector enters backoff: retry after 2× interval, then 4×, up to `settings.breaker_max_backoff_minutes` (default 10). A successful poll resets it.
+- After `settings.breaker_failure_threshold` (default 3) consecutive failed polls (HTTP error, timeout), the collector enters backoff: retry after 2× interval, then 4×, up to `settings.breaker_max_backoff_minutes` (default 10). A successful poll resets it.
+- A refused login (HTTP 401, or 403 while nothing else came back that poll) is not retried: it does not heal by itself, and repeated failed logins can lock the FactoryLogix account. The collector stops polling with it (no backfill chunk, no `$metadata` either), says so in Sync health, and polls again once the FactoryLogix connection is saved again (any save, including one that keeps the password) or the collector restarts. A refused backfill chunk stops the backfill until the next poll.
 - Health state (`ok`, `degraded`, `down`, last success time) is exposed by the API and shown in admin and as the "data delayed" banner on TV/portal when the last successful poll is older than 3× the poll interval.
+- No poll goes out while a standards recompute or a backfill chunk runs; the next one goes out as soon as it is done. The collector's heartbeat goes on every 30 s meanwhile, so it is not shown as stopped, and once the data is delayed the health state's last error says what the collector is busy with.
 
 ### 4.7 Historical backfill
 
@@ -250,6 +262,7 @@ Rules:
 - The first day of the range is saved when the backfill starts and every chunk counts from it, so a backfill that runs across midnight processes every day exactly once.
 - When the download completes, standards are computed, then the hour cells of every backfilled day are recomputed one day per chunk (status `recoloring`, same window and pause rules) so the history gets standards and colors.
 - Progress (days downloaded, the saved first day, the recoloring counters) is persisted, so after a restart the backfill resumes at the next day of the phase it was in.
+- A chunk that fails is tried again after the pause. After `settings.breaker_failure_threshold` failed chunks in a row the backfill has its own breaker: status `error`, with the error, the count and the time of the next try, and the next try after 2× the poll interval, then 4×, up to `settings.breaker_max_backoff_minutes` (persisted, like the poll's breaker, and still inside the window unless run now). A chunk that goes through resets it. "Run backfill now" on a backfill in `error` tries the failed chunk again at once and keeps its progress; on a `done` one it starts a new backfill.
 
 ### 4.8 Field mapping
 
@@ -303,7 +316,7 @@ The existing dashboard does not handle daylight saving time. This system must.
 2. **Plant time zone:** a single IANA time zone in settings (e.g. `America/New_York`). All clock-hour bucketing, column labels, shift and break definitions, and display clocks use it.
 3. **Hour buckets:** an hour cell is the local clock hour `[HH:00, HH+1:00)` converted to a UTC range. On the fall-back night one local hour occurs twice; the engine keys hour cells by `hour_start_utc`, so both occurrences are distinct cells, and the TV label shows the local hour for each (two columns may share a label that night; acceptable). On the spring-forward night one local hour does not exist; the rolling window simply contains 12 consecutive UTC hours.
 4. **Rolling windows** are computed in UTC (now minus 11 full hours), so DST transitions do not create gaps or overlaps.
-5. **FactoryLogix timestamp interpretation:** a setting `fl_timestamp_mode` with values `offset_present` (ISO strings include offset; parse directly), `utc` (naive strings are UTC), or `local_no_offset` (naive strings are plant-local). For `local_no_offset`, the ambiguous repeated hour on fall-back night is resolved by monotonic ordering: if a row's naive timestamp is more than 30 minutes earlier than the previous row from the same data source in ingestion order, treat it as the second occurrence. In `local_no_offset` mode offset-less `/Date(ms)/` values are read as plant wall-clock time too, and time filters on OData v2/v3 `Edm.DateTime` fields are written in plant wall-clock time (`datetime'...'`); OData v4 and `Edm.DateTimeOffset` literals stay UTC. **VERIFY** which mode applies by inspecting `$metadata` types and sample rows.
+5. **FactoryLogix timestamp interpretation:** a setting `fl_timestamp_mode` with values `offset_present` (ISO strings include offset; parse directly), `utc` (naive strings are UTC), or `local_no_offset` (naive strings are plant-local). For `local_no_offset`, the ambiguous repeated hour on fall-back night is resolved by monotonic ordering: if a row's naive timestamp is more than 30 minutes earlier than the previous row from the same data source in ingestion order (rows compared as instants), treat it and that source's following rows in the repeated hour as the second occurrence, until a row outside that hour. A row read again (overlap, late-data re-pull) keeps the reading it got first, and a second-occurrence reading later than the time the rows were fetched is never used. In `local_no_offset` mode offset-less `/Date(ms)/` values are read as plant wall-clock time too, and time filters on OData v2/v3 `Edm.DateTime` fields are written in plant wall-clock time (`datetime'...'`; a lower bound in the first pass through the fall-back night's repeated hour is written an hour earlier, so the second pass is not filtered out); OData v4 and `Edm.DateTimeOffset` literals stay UTC. **VERIFY** which mode applies by inspecting `$metadata` types and sample rows.
 6. **Shifts and breaks** are defined in local time and may cross midnight. They are expanded to concrete UTC intervals per calendar day when evaluated.
 
 ---
@@ -335,6 +348,8 @@ PostgreSQL. Names are suggestions; keep the semantics. `hour_cells`, `unit_steps
 
 **defects**  (hypertable on `found_ts`)
 - `id`, `unit_id`, `job_number`, `operation_id`, `operator_id`, `defect_code`, `description`, `found_ts`, `status`, `natural_key` unique
+
+A `unit_steps` or `defects` row keeps the natural key it was written with. Saving a mapping that changes the key of either dataset (or stops using it) adds the old key to the `mapping_key_history` setting. The collector reads the fields of those keys too (those `$metadata` still lists), and a row read again replaces its copy under an old key: at the row's time, or within two days for the same unit, job and operation. So changing the key never stores a row twice.
 
 **raw_events**  (hypertable on `received_at`)
 - `id`, `source` text, `natural_key`, `payload` jsonb, `received_at`
@@ -399,7 +414,7 @@ PostgreSQL. Names are suggestions; keep the semantics. `hour_cells`, `unit_steps
 - `key` PK, `value` jsonb, `updated_by`, `updated_at`  (see section 11)
 
 **users**
-- `id`, `username` unique, `password_hash` (argon2 or bcrypt), `role` enum('admin','manager','viewer'), `active`, `created_at`, `last_login_at`
+- `id`, `username` unique, `password_hash` (argon2 or bcrypt), `role` enum('admin','manager','viewer'), `active`, `created_at`, `last_login_at`, `session_version` (bumped by logout, password reset and deactivation to end the user's sessions)
 
 **audit_log**
 - `id`, `at`, `user_id`, `action`, `entity`, `entity_id`, `before` jsonb, `after` jsonb
@@ -449,6 +464,7 @@ Operators sometimes scan several boards in, work them, then scan several out, wh
 
 **Scheduling**
 - Nightly at `settings.std_recompute_time` (default 02:00 plant time), recompute every (Z, operation) that received new completed units since the last run. Also on demand from admin (single product or all). Write to `standards` and append to `standards_history`.
+- A nightly run that fails is tried again after 10 minutes, doubling up to every 2 hours, until a recompute of all products goes through. Until then the sync health (4.6) is `degraded` and its last error says the standards could not be recomputed. `sync_state` (source `standards_recompute`) keeps the last recompute of all products that went through, and how many nightly attempts have failed since.
 
 ### 7.2 Effective standard (adjustments and overrides)
 
@@ -460,6 +476,8 @@ Effective StdHr for (Z, operation) is resolved in this order:
 
 The portal's product view shows all four values (base, adjustment, override, effective) and their provenance. Changing any of them writes to `audit_log`.
 
+Saving an adjustment or override replaces the active one on the same scope (the same scope, and the same product and operation where the scope names them): the old one is turned off and the audit log records it as replaced. Clearing the new one then returns to what applies without it, never to the value it replaced.
+
 ### 7.3 Eligibility (visitor rule)
 
 Problem: operators frequently "scan through" a handful of boards on a job they are not working (boards missed earlier, rework). Counting them as operators would add a mostly empty, red row and skew grouped targets and standards.
@@ -470,7 +488,7 @@ Rule, evaluated per (operator, job, operation, hour):
 - **Completed hours:** eligible if `work_minutes >= settings.eligibility_minutes` (default 10).
 - **Current hour:** the threshold scales with elapsed time so the rule works from the first minutes: `threshold = max(1, eligibility_minutes × elapsed_minutes_in_hour / 60)`. An operator is also provisionally eligible if they were eligible on the same job/operation in the previous hour (continuing operator). Eligibility in the current hour may flip as evidence accumulates; that is expected.
 - Slow operations are safe: a step whose standard is 5 units/hour has about 12 minutes of work time on one board (60 / 5), so it still clears the 10-minute threshold.
-- Manager pins (`operator_pins`) force eligibility either way for a job (optionally a specific operation) until removed or expired.
+- Manager pins (`operator_pins`) force eligibility either way for a job (optionally a specific operation) until removed or expired. An hour that has ended is judged by the pins in force when it ended, so it keeps them after they expire or are removed (removing a pin ends it; the row is kept).
 
 **Consequences of being a visitor:** the operator's units on that job/operation still count toward job totals (Prior, Shift column, Qty Complete, defect counts). They do not create an operator row in separate mode with color (they appear as a gray "visitor" row, see 8.5), do not contribute charged minutes in grouped mode, do not count in the pace numerator, and their units are excluded from standards.
 
@@ -536,6 +554,7 @@ This replaces any "multiply by operator count" logic and remains correct when pe
 
 - The engine recomputes the current hour and the previous hour after every successful poll. Cells for the current hour are marked `provisional = true`.
 - When an hour ends, it is recomputed once more on the next poll and marked final. Late-arriving rows (detected by the overlap re-pull or the hourly late-data pull) trigger recomputation of exactly the hours they touch.
+- A standards change (override, adjustment, standards recompute) applies to the current hour and the hours after it. An hour that has ended keeps the StdHr it was judged against while it ran, whenever it is recomputed (as the previous hour, for late rows, after a settings change or a collector restart); only the backfill's recoloring (4.7) judges past days against the current standards.
 - Effective latency is one poll interval plus processing (target under 2 minutes end to end).
 - Cells for the current hour may change row membership, eligibility, and color as the hour progresses. This is correct and expected.
 
@@ -577,6 +596,7 @@ Given a shift instance (a concrete UTC interval from a shift definition and a ca
 - On first load the page generates a `device_token` (UUID), stores it in `localStorage` and a long-lived cookie, and registers with the API, which returns a 4-digit `pairing_code`.
 - Unclaimed state: full-screen message "This TV is **4821**. Claim it in the admin portal." with the internal admin URL.
 - The page polls (or subscribes via SSE) for its assignment. Once claimed and assigned a job, the dashboard renders.
+- If the API answers that it does not know the token (the first registration failed, or the display was deleted or re-paired onto another TV), the page registers the same token again and shows the new pairing code.
 - Persistence: token survives reboots and normal cache behavior. If storage is cleared, the TV shows a new code; the admin "re-pair" action lets a manager attach the new code to the existing display record (keeping name and settings). The page also accepts `?token=<uuid>` so a bookmark can restore identity.
 - Heartbeat: the TV pings every poll so admin shows "last seen".
 
@@ -621,6 +641,7 @@ The existing dashboard is a dark page with large yellow-green text, white grid l
 - Operation names are not truncated: widen the column or wrap to two lines.
 - One row per (operation, eligible operator) in separate mode; one row per operation in grouped mode. Visitor rows in separate mode: see 8.5.
 - Rows ordered by route sequence, then operator name.
+- Every row stays on screen (the TV never scrolls): when the rows do not fit above the bottom strip, they shrink until they do, down to half size. Rows that still do not fit are covered by a line "+N more rows: <their operations>", never cut off without a word.
 - Hour cell background per 7.5. Text color on filled cells must remain legible (dark text on yellow/green/blue, white on red).
 
 **Defect table (bottom):** Operation, Prior, 12 hour columns, ShiftQty. Combined across operators. Non-zero cells red.
@@ -713,6 +734,8 @@ Route `/admin`. Admin role only unless noted.
 
 - Plant-wide. Fields: name, start (local time), end (local time, may be next day), days of week, effective-from date, optional effective-to.
 - Editing creates a new version with a new effective-from; past shifts are always evaluated against the definition in effect on that day. Validation prevents overlapping shifts on the same day.
+- Editing the version in effect today starts the new version today unless another date is picked. Without a later effective-from, a version already in effect before today keeps its times and days (its name and dates can still change).
+- A break that applies to selected shifts keeps applying to a shift after it is edited: the new version is added to the break's `shift_ids`.
 
 ### 10.3 Breaks
 
@@ -722,6 +745,8 @@ Route `/admin`. Admin role only unless noted.
 ### 10.4 FactoryLogix connection
 
 - Server URL, user name, password (stored encrypted at rest), timestamp mode (5.5), plant time zone.
+- The server URL cannot hold a user name or password (`http://user:password@server/...`): they go in their own fields, where the password is stored encrypted. Save and "Test connection" refuse such a URL, and one saved before that is never used.
+- The stored password is only ever sent with the server URL and user name it was saved with. Changing either one (even just the path) needs the password typed again: "Test connection" sends no stored password, and Save is refused until the password is entered.
 - "Test connection": fetches `$metadata`, reports version/entity sets found.
 - Poll interval, page size, overlap, timeouts, breaker settings, backfill settings, "Run backfill now".
 
@@ -746,6 +771,7 @@ Route `/admin`. Admin role only unless noted.
 ### 10.8 Users
 
 - Create/disable users, set roles, reset passwords. First-run setup creates the initial admin.
+- Disabling a user or resetting their password ends every session they have; so does logging out.
 
 ### 10.9 Sync health
 

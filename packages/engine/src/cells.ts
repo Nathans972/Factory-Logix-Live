@@ -4,6 +4,7 @@
  */
 import type {
   CellColor,
+  CellSpans,
   Defect,
   DefectHourCell,
   GroupedHourCell,
@@ -14,7 +15,7 @@ import type {
   UtcMs,
 } from '@fld/shared';
 import type { ComputeHourCellsInput, ComputeHourCellsOutput, EngineSettings } from '@fld/shared';
-import { hourStartUtc, mergeIntervals, nextHourStartUtc, prevHourStartUtc } from './time.js';
+import { firstHourAtOrAfter, hourStartUtc, mergeIntervals, nextHourStartUtc, prevHourStartUtc } from './time.js';
 import { stdKey } from './standards.js';
 
 const MINUTE_MS = 60_000;
@@ -34,6 +35,8 @@ interface CellAcc {
   units: number;
   work_ms: number;
   pieces: Piece[];
+  completes: UtcMs[];
+  work: Piece[];
 }
 
 interface Ev {
@@ -70,7 +73,7 @@ export function colorForPace(pace: number | null, settings: EngineSettings): Cel
 // ---------------------------------------------------------------------------
 
 export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCellsOutput {
-  const { steps, breaks, standards, pins, settings, from_utc, to_utc, now } = input;
+  const { steps, breaks, standards, kept_std_hr, pins, settings, from_utc, to_utc, now } = input;
   const tz = settings.plant_timezone;
   const mergedBreaks = mergeIntervals(breaks);
   const currentHour = hourStartUtc(now, tz);
@@ -78,10 +81,10 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
   const idleMs = settings.idle_timeout_minutes * MINUTE_MS;
   const countWorkDuringBreaks = settings.count_work_during_breaks;
 
-  // --- Active pins indexed by operator|job.
+  // --- Pins indexed by operator|job. Expired ones too: an hour that has ended is judged by the pins in
+  // force when it ended (see pinFor), however long after their expiry or removal it is computed again.
   const pinIndex = new Map<string, Pin[]>();
   for (const p of pins) {
-    if (p.expires_at !== null && p.expires_at !== undefined && p.expires_at <= now) continue;
     const key = `${p.operator_id}|${p.job_number}`;
     let list = pinIndex.get(key);
     if (list === undefined) {
@@ -105,6 +108,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
 
   const cells: HourCell[] = [];
   const assignments: OperatorAssignment[] = [];
+  const windowFrom = Number.isFinite(from_utc) ? hourStartUtc(from_utc, tz) : from_utc;
 
   for (const [operator_id, opSteps] of byOperator) {
     const accs = new Map<string, CellAcc>();
@@ -124,42 +128,63 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
           units: 0,
           work_ms: 0,
           pieces: [],
+          completes: [],
+          work: [],
         };
         accs.set(key, acc);
       }
       return acc;
     };
 
-    // ---------------- Pass 1: work minutes, units, events ----------------
+    // ---------------- Pass 1: events, then work minutes and units ----------------
     for (let i = 0; i < opSteps.length; i++) {
       const s = opSteps[i]!;
-      const start = s.start_ts;
       const complete = s.complete_ts ?? null;
 
-      if (start <= horizon) {
+      if (s.start_ts <= horizon) {
         events.push({
-          t: start,
+          t: s.start_ts,
           kind: 1,
           job: s.job_number,
           op: s.operation,
           product: s.product_number,
         });
       }
+      if (complete !== null && complete <= horizon) {
+        events.push({
+          t: complete,
+          kind: 0,
+          job: s.job_number,
+          op: s.operation,
+          product: s.product_number,
+        });
+      }
+    }
+
+    // Work minutes are read for the window's hours (pass 3) and, for eligibility, for the hours of the
+    // events and the hour before the current one. A step's other hours are skipped, not walked: from
+    // a zero-date start (1900, 1970) that is a million hours.
+    const eventHours = events.map((e) => hourStartUtc(e.t, tz));
+    eventHours.push(prevHourStartUtc(currentHour, tz));
+    eventHours.sort((a, b) => a - b);
+    const nextReadHour = (h: UtcMs): UtcMs => {
+      if (h >= windowFrom && h < to_utc) return h;
+      const next = eventHours[firstHourAtOrAfter(eventHours, h)] ?? Infinity;
+      return h < windowFrom ? Math.min(next, windowFrom) : next;
+    };
+
+    for (let i = 0; i < opSteps.length; i++) {
+      const s = opSteps[i]!;
+      const start = s.start_ts;
+      const complete = s.complete_ts ?? null;
+
       if (start <= now) touch(hourStartUtc(start, tz), s);
 
       if (complete !== null) {
-        if (complete <= horizon) {
-          events.push({
-            t: complete,
-            kind: 0,
-            job: s.job_number,
-            op: s.operation,
-            product: s.product_number,
-          });
-        }
         if (complete <= now) {
           const acc = touch(hourStartUtc(complete, tz), s);
           acc.units += 1;
+          acc.completes.push(complete);
           const cKey = `${s.job_number}|${s.operation}`;
           let list = completesByJobOp.get(cKey);
           if (list === undefined) {
@@ -172,17 +197,18 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
 
       const end = Math.min(complete ?? now, now);
       if (end > start) {
-        let h = hourStartUtc(start, tz);
+        let h = nextReadHour(hourStartUtc(start, tz));
         while (h < end) {
           const hEnd = nextHourStartUtc(h, tz);
           const ov = Math.min(end, hEnd) - Math.max(start, h);
           if (ov > 0) {
             const acc = touch(h, s);
             acc.work_ms += ov;
+            acc.work.push({ from: Math.max(start, h), to: Math.min(end, hEnd) });
             const key = `${h}|${s.job_number}|${s.operation}`;
             workByKey.set(key, (workByKey.get(key) ?? 0) + ov / MINUTE_MS);
           }
-          h = hEnd;
+          h = nextReadHour(hEnd);
         }
       }
     }
@@ -192,12 +218,16 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
     // ---------------- Eligibility ----------------
     const eligibilityMemo = new Map<string, boolean>();
 
-    const pinFor = (job: string, op: string): Pin | null => {
+    /** The pin for the hour: of those in force at its last moment (the current hour: now), spec 7.3. */
+    const pinFor = (hour: UtcMs, job: string, op: string): Pin | null => {
       const list = pinIndex.get(`${operator_id}|${job}`);
       if (list === undefined) return null;
+      const at = Math.min(now, nextHourStartUtc(hour, tz) - 1);
       let best: Pin | null = null;
       let bestRank = 0;
       for (const p of list) {
+        if (p.created_at > at) continue;
+        if (p.expires_at !== null && p.expires_at !== undefined && p.expires_at <= at) continue;
         const rank = p.operation === op ? 2 : p.operation === null ? 1 : 0;
         if (rank === 0) continue;
         if (
@@ -218,7 +248,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
       if (memo !== undefined) return memo;
 
       let result: boolean;
-      const pin = pinFor(job, op);
+      const pin = pinFor(hour, job, op);
       if (pin !== null) {
         result = pin.mode === 'force_eligible';
       } else {
@@ -341,6 +371,8 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
               units: 0,
               work_ms: 0,
               pieces: [],
+              completes: [],
+              work: [],
             };
             accs.set(key, acc);
           }
@@ -357,6 +389,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
       const eligible = isEligible(acc.hour, acc.job, acc.op);
       let windowMs = 0;
       let breakMs = 0;
+      const breakPieces: Piece[] = [];
       if (eligible && acc.pieces.length > 0) {
         const completes = completesByJobOp.get(`${acc.job}|${acc.op}`);
         for (const piece of acc.pieces) {
@@ -372,6 +405,7 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
                 !completedInside(completes, b.start_utc, b.end_utc)
               ) {
                 breakMs += ov;
+                breakPieces.push({ from: Math.max(piece.from, b.start_utc), to: Math.min(piece.to, b.end_utc) });
               }
             }
             i++;
@@ -386,17 +420,14 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
 
       if (acc.units === 0 && work_minutes === 0 && charged_minutes === 0) continue;
 
-      const std_hr = standards.get(stdKey(acc.product, acc.op))?.effective ?? null;
+      const key = stdKey(acc.product, acc.op);
+      const kept = kept_std_hr?.get(acc.hour)?.get(key);
+      const std_hr = kept !== undefined ? kept : (standards.get(key)?.effective ?? null);
       const target_units = std_hr === null ? 0 : (std_hr * charged_minutes) / 60;
       const pace = std_hr !== null && target_units > 0 ? acc.units / target_units : null;
       const provisional = acc.hour === currentHour;
-
-      let color: CellColor;
-      if (!eligible) color = 'visitor';
-      else if (std_hr === null) color = 'neutral';
-      else if (provisional && charged_minutes < settings.neutral_minutes) color = 'neutral';
-      else if (charged_minutes === 0) color = 'neutral';
-      else color = colorForPace(pace, settings);
+      const color = cellColor(eligible, std_hr, provisional, charged_minutes, pace, settings);
+      const offsets = (list: Piece[]): [number, number][] => list.map((p) => [p.from - acc.hour, p.to - acc.hour]);
 
       cells.push({
         hour_start_utc: acc.hour,
@@ -415,6 +446,12 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
         target_units,
         pace,
         color,
+        spans: {
+          completes: acc.completes.map((t) => t - acc.hour),
+          work: offsets(acc.work),
+          window: eligible ? offsets(acc.pieces) : [],
+          breaks: offsets(breakPieces),
+        },
       });
     }
   }
@@ -429,6 +466,81 @@ export function computeHourCells(input: ComputeHourCellsInput): ComputeHourCells
   assignments.sort((a, b) => cmp(a.operator_id, b.operator_id));
 
   return { cells, assignments };
+}
+
+function cellColor(
+  eligible: boolean,
+  std_hr: number | null,
+  provisional: boolean,
+  charged_minutes: number,
+  pace: number | null,
+  settings: EngineSettings,
+): CellColor {
+  if (!eligible) return 'visitor';
+  if (std_hr === null) return 'neutral';
+  if (provisional && charged_minutes < settings.neutral_minutes) return 'neutral';
+  if (charged_minutes === 0) return 'neutral';
+  return colorForPace(pace, settings);
+}
+
+/**
+ * The part of a cell that falls in [from, to), for a shift that changes mid-hour (06:30): each shift
+ * takes only its part of the hour. A cell wholly inside comes back as it is; one without spans
+ * (written before they were recorded) goes whole to the range its hour starts in. Null when none of
+ * its units, work or window falls inside.
+ */
+export function clipHourCell(cell: HourCell, from: UtcMs, to: UtcMs, settings: EngineSettings): HourCell | null {
+  const hour = cell.hour_start_utc;
+  const spans = cell.spans;
+  if (spans === undefined) return hour >= from && hour < to ? cell : null;
+  const hourEnd = nextHourStartUtc(hour, settings.plant_timezone);
+  if (from <= hour && to >= hourEnd) return cell;
+  if (to <= hour || from >= hourEnd) return null;
+
+  const a = from - hour;
+  const b = to - hour;
+  const clip = (list: [number, number][]): [number, number][] =>
+    list.flatMap(([s, e]): [number, number][] => (Math.min(e, b) > Math.max(s, a) ? [[Math.max(s, a), Math.min(e, b)]] : []));
+  const minutes = (list: [number, number][]): number => list.reduce((sum, [s, e]) => sum + (e - s), 0) / MINUTE_MS;
+  const clipped: CellSpans = {
+    completes: spans.completes.filter((t) => t >= a && t < b),
+    work: clip(spans.work),
+    window: clip(spans.window),
+    breaks: clip(spans.breaks),
+  };
+
+  const units = clipped.completes.length;
+  const work_minutes = minutes(clipped.work);
+  const window_minutes = minutes(clipped.window);
+  const break_minutes = minutes(clipped.breaks);
+  const charged_minutes = Math.max(0, window_minutes - break_minutes);
+  if (units === 0 && work_minutes === 0 && charged_minutes === 0) return null;
+
+  const { std_hr, eligible, provisional } = cell;
+  const target_units = std_hr === null ? 0 : (std_hr * charged_minutes) / 60;
+  const pace = std_hr !== null && target_units > 0 ? units / target_units : null;
+  return {
+    ...cell,
+    units,
+    work_minutes,
+    window_minutes,
+    break_minutes,
+    charged_minutes,
+    target_units,
+    pace,
+    color: cellColor(eligible, std_hr, provisional, charged_minutes, pace, settings),
+    spans: clipped,
+  };
+}
+
+/** The cells' parts that fall in [from, to) (`clipHourCell`). */
+export function clipHourCells(cells: HourCell[], from: UtcMs, to: UtcMs, settings: EngineSettings): HourCell[] {
+  const out: HourCell[] = [];
+  for (const c of cells) {
+    const part = clipHourCell(c, from, to, settings);
+    if (part !== null) out.push(part);
+  }
+  return out;
 }
 
 function cmp(a: string, b: string): number {

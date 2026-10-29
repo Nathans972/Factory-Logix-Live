@@ -66,10 +66,11 @@ function BreaksPageInner() {
   const breaks = breaksQ.data ?? [];
   const totalMinutes = breaks.reduce((sum, b) => sum + b.duration_minutes, 0);
 
+  // A versioned shift edit adds the new version to the shift's breaks, and versions usually keep the name.
   const shiftNames = (b: BreakDef) =>
     b.shift_ids == null
       ? 'All shifts'
-      : b.shift_ids.map((id) => shifts.find((s) => s.id === id)?.name ?? `#${id}`).join(', ') || '(none)';
+      : [...new Set(b.shift_ids.map((id) => shifts.find((s) => s.id === id)?.name ?? `#${id}`))].join(', ') || '(none)';
 
   const columns: Column<BreakDef>[] = [
     { key: 'name', header: 'Name', render: (b) => b.name },

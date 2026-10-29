@@ -74,6 +74,7 @@ describe('paged pull', () => {
   it('follows @odata.nextLink instead of $skip when the service returns one', async () => {
     const { source, urls } = sourceWith((url) => {
       if (url.includes('$skiptoken=page2')) return json({ value: makeRows(1, 100) });
+      if (url.includes('$skip=')) return json({ value: [] });
       return json({ value: makeRows(2, 0), '@odata.nextLink': 'UnitProcessHistory?$skiptoken=page2' });
     });
 
@@ -84,8 +85,77 @@ describe('paged pull', () => {
     );
 
     expect(summary.rows).toBe(3);
-    expect(summary.pages).toBe(2);
+    // The answer and its link came back short, and no request had come back full: one more asks past it.
+    expect(summary.pages).toBe(3);
     expect(urls[1]).toBe(`${BASE}/UnitProcessHistory?$skiptoken=page2`);
+    expect(urls[2]).toContain('$skip=3');
+  });
+
+  it('reads on past short answers from a service with a result limit below $top, up to an empty one', async () => {
+    // At most 100 rows an answer, whatever $top asks for, and no nextLink.
+    const all = makeRows(250, 0);
+    const { source, urls } = sourceWith((url) => {
+      const skip = Number(/\$skip=(\d+)/.exec(url)?.[1] ?? '0');
+      return json({ value: all.slice(skip, skip + 100) });
+    });
+    const collected: unknown[] = [];
+
+    const summary = await pullPages(source, { entitySet: 'UnitProcessHistory', pageSize: 500, maxPages: 50 }, (rows) => {
+      collected.push(...rows.map((r) => r.UnitSerial));
+    });
+
+    expect(collected).toEqual(all.map((r) => r.UnitSerial));
+    expect(summary).toMatchObject({ rows: 250, pages: 4, truncated: false });
+    expect(urls[3]).toContain('$skip=250');
+
+    // Stopped at the page cap, it says where to go on from.
+    const capped = await pullPages(source, { entitySet: 'UnitProcessHistory', pageSize: 500, maxPages: 2 }, () => undefined);
+    expect(capped).toMatchObject({ rows: 200, truncated: true, nextSkip: 200 });
+  });
+
+  it('stops when the request past a short answer brings that answer back (a service that ignores $skip)', async () => {
+    const { source, urls } = sourceWith(() => json({ value: makeRows(37, 0) }));
+
+    const summary = await pullPages(source, { entitySet: 'UnitProcessHistory', pageSize: 500, maxPages: 200 }, () => undefined);
+
+    expect(summary).toMatchObject({ rows: 37, pages: 2, truncated: false });
+    expect(urls[1]).toContain('$skip=37');
+  });
+
+  it('reads every row once when the nextLinks ignore $top, with one request past the end', async () => {
+    const all = makeRows(1200, 0);
+    const { source, urls } = sourceWith((url) => {
+      const token = /\$skiptoken=(\d+)/.exec(url)?.[1];
+      const from = Number(token ?? /\$skip=(\d+)/.exec(url)?.[1] ?? '0');
+      const body: Record<string, unknown> = { value: all.slice(from, from + 100) };
+      if (from + 100 < all.length) body['@odata.nextLink'] = `UnitProcessHistory?$skiptoken=${from + 100}`;
+      return json(body);
+    });
+    const collected: Record<string, unknown>[] = [];
+
+    const summary = await pullPages(
+      source,
+      { entitySet: 'UnitProcessHistory', filter: null, orderBy: 'CompletedDate asc', select: null, pageSize: 500, maxPages: 50 },
+      (rows) => {
+        collected.push(...rows);
+      },
+    );
+
+    expect(summary.rows).toBe(1200);
+    expect(new Set(collected.map((r) => r.UnitSerial)).size).toBe(1200);
+    expect(urls).toHaveLength(13);
+    expect(urls[12]).toContain('$skip=1200');
+  });
+
+  it('skips past every row of a page that ignored $top', async () => {
+    const all = makeRows(600, 0);
+    const { source, urls } = sourceWith((url) => json({ value: all.slice(Number(/\$skip=(\d+)/.exec(url)?.[1] ?? '0')) }));
+
+    const summary = await pullPages(source, { entitySet: 'UnitProcessHistory', pageSize: 500, maxPages: 10 }, () => undefined);
+
+    expect(summary.rows).toBe(600);
+    expect(urls).toHaveLength(2);
+    expect(urls[1]).toContain('$skip=600');
   });
 
   it('stops at the page cap and reports truncation', async () => {
@@ -97,6 +167,34 @@ describe('paged pull', () => {
     );
     expect(summary.pages).toBe(3);
     expect(summary.truncated).toBe(true);
+  });
+
+  it('starts at startSkip and, stopped at the cap inside a server-paged answer, goes on after the rows read', async () => {
+    // Pages at 200 on its side; `$top` limits the whole answer across its links.
+    const all = makeRows(5000, 0);
+    const { source, urls } = sourceWith((url) => {
+      const skip = Number(/\$skip=(\d+)/.exec(url)?.[1] ?? '0');
+      const top = Number(/\$top=(\d+)/.exec(url)?.[1]);
+      const body: Record<string, unknown> = { value: all.slice(skip, skip + Math.min(top, 200)) };
+      if (top > 200 && skip + 200 < all.length) body['@odata.nextLink'] = `Things?$top=${top - 200}&$skip=${skip + 200}`;
+      return json(body);
+    });
+    const collected: unknown[] = [];
+    const pull = (startSkip: number) =>
+      pullPages(source, { entitySet: 'Things', pageSize: 500, maxPages: 4, startSkip }, (rows) => {
+        collected.push(...rows.map((r) => r.UnitSerial));
+      });
+
+    // $skip=300 answers 200 + 200 + 100 rows; $skip=800 is cut off after its first 200.
+    const first = await pull(300);
+    expect(urls[0]).toContain('$skip=300');
+    expect(first.truncated).toBe(true);
+    expect(first.nextSkip).toBe(1000);
+
+    let next = first.nextSkip;
+    for (let i = 0; next !== null && i < 20; i += 1) next = (await pull(next)).nextSkip;
+    expect(next).toBeNull();
+    expect(collected).toEqual(all.slice(300).map((r) => r.UnitSerial));
   });
 
   it('surfaces HTTP failures as errors', async () => {

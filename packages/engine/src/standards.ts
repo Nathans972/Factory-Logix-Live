@@ -10,7 +10,7 @@ import type {
   UtcMs,
 } from '@fld/shared';
 import type { ComputeStandardInput, StandardsLookup, StdKey } from '@fld/shared';
-import { hourStartUtc, mergeIntervals, nextHourStartUtc, overlapWithMerged } from './time.js';
+import { firstHourAtOrAfter, hourStartUtc, mergeIntervals, nextHourStartUtc, overlapWithMerged } from './time.js';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
@@ -42,32 +42,11 @@ export function computeStandard(input: ComputeStandardInput): Standard {
   const mergedBreaks = mergeIntervals(breaks);
   const currentHour = hourStartUtc(now, tz);
 
-  // --- Step 2 (pre-pass): work minutes per (operator, job, hour) over ALL supplied steps.
-  const work = new Map<string, number>();
-  for (let i = 0; i < steps.length; i++) {
-    const s = steps[i]!;
-    const start = s.start_ts;
-    const end = Math.min(s.complete_ts ?? now, now);
-    if (end <= start) continue;
-    let h = hourStartUtc(start, tz);
-    while (h < end) {
-      const hEnd = nextHourStartUtc(h, tz);
-      const ov = Math.min(end, hEnd) - Math.max(start, h);
-      if (ov > 0) {
-        const key = `${s.operator_id}|${s.job_number}|${h}`;
-        work.set(key, (work.get(key) ?? 0) + ov / MINUTE_MS);
-      }
-      h = hEnd;
-    }
-  }
-
-  const eligibleHour = (operator_id: string, job_number: string, hour: UtcMs): boolean =>
-    (work.get(`${operator_id}|${job_number}|${hour}`) ?? 0) >= settings.eligibility_minutes;
-
-  // --- Step 1: sample filter.
+  // --- Step 1: sample filter. Its eligibility check needs step 2, so it comes last.
   const lookbackStart = now - settings.std_lookback_days * DAY_MS;
   const maxDuration = settings.std_max_unit_minutes * MINUTE_MS;
-  const sampled: UnitStep[] = [];
+  const candidates: UnitStep[] = [];
+  const completeHours = new Map<string, UtcMs[]>(); // `${operator}|${job}` -> the candidates' hours
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i]!;
     const complete = s.complete_ts;
@@ -77,9 +56,62 @@ export function computeStandard(input: ComputeStandardInput): Standard {
     if (complete - s.start_ts > maxDuration) continue;
     if (complete >= currentHour) continue;
     if (rework_flag_mapped && s.rework_flag === true) continue;
-    if (!eligibleHour(s.operator_id, s.job_number, hourStartUtc(complete, tz))) continue;
-    sampled.push(s);
+    candidates.push(s);
+    const key = `${s.operator_id}|${s.job_number}`;
+    let list = completeHours.get(key);
+    if (list === undefined) {
+      list = [];
+      completeHours.set(key, list);
+    }
+    list.push(hourStartUtc(complete, tz));
   }
+
+  // --- Step 2: work minutes per (operator, job, hour) over ALL supplied steps, in the hours the
+  // eligibility check reads: those the candidates completed in. A step adds to those of its hours
+  // still below eligibility_minutes and skips the rest: walking its every hour would take seconds
+  // from a zero-date start (1900, 1970), and many such rows would add to the same hours over and
+  // over, though more work cannot change an hour that has reached it.
+  const eligible = (minutes: number): boolean => minutes >= settings.eligibility_minutes;
+  const work = new Map<string, { hours: UtcMs[]; minutes: number[]; next: number[] }>();
+  for (const [key, list] of completeHours) {
+    const hours = [...new Set(list)].sort((a, b) => a - b);
+    // next[i] === i while hour i is below eligibility_minutes, else an index to look on from.
+    const next = hours.map((_, i) => (eligible(0) ? i + 1 : i));
+    work.set(key, { hours, minutes: hours.map(() => 0), next });
+  }
+  /** The first index at or after `i` whose hour is still below eligibility_minutes. */
+  const below = (next: number[], i: number): number => {
+    let r = i;
+    while (r < next.length && next[r] !== r) r = next[r]!;
+    for (let j = i; j < r; ) {
+      const n = next[j]!;
+      next[j] = r;
+      j = n;
+    }
+    return r;
+  };
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i]!;
+    const start = s.start_ts;
+    const end = Math.min(s.complete_ts ?? now, now);
+    if (end <= start) continue;
+    const w = work.get(`${s.operator_id}|${s.job_number}`);
+    if (w === undefined) continue;
+    let k = below(w.next, firstHourAtOrAfter(w.hours, hourStartUtc(start, tz)));
+    while (k < w.hours.length && w.hours[k]! < end) {
+      const h = w.hours[k]!;
+      const hEnd = nextHourStartUtc(h, tz);
+      const ov = Math.min(end, hEnd) - Math.max(start, h);
+      if (ov > 0) w.minutes[k] = w.minutes[k]! + ov / MINUTE_MS;
+      if (eligible(w.minutes[k]!)) w.next[k] = k + 1;
+      k = below(w.next, firstHourAtOrAfter(w.hours, hEnd));
+    }
+  }
+
+  const sampled = candidates.filter((s) => {
+    const w = work.get(`${s.operator_id}|${s.job_number}`)!;
+    return eligible(w.minutes[firstHourAtOrAfter(w.hours, hourStartUtc(s.complete_ts as number, tz))]!);
+  });
 
   // --- Step 3: sessions per operator (across jobs of this product/operation).
   const byOperator = new Map<string, UnitStep[]>();

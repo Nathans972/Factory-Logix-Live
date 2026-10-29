@@ -29,7 +29,7 @@ describe('public API contract', () => {
       // time
       'getTzOffsetMs', 'utcToLocalParts', 'localToUtc', 'hourStartUtc', 'hourLabel',
       'localDateString', 'addDays', 'dayOfWeek', 'parseLocalTime', 'expandShiftInstance',
-      'listShiftInstances', 'findCurrentShift', 'findCurrentOrMostRecentShift', 'expandBreaks',
+      'resolveShiftVersion', 'listShiftInstances', 'findCurrentShift', 'findCurrentOrMostRecentShift', 'expandBreaks',
       'rollingWindowColumns', 'hourColumns', 'nextLocalTime', 'inLocalWindow',
       'overlapWithIntervals',
       // standards

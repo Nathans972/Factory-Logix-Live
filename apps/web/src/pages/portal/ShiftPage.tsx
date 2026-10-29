@@ -113,7 +113,12 @@ export function ShiftPage() {
   };
 
   const v = view.data;
-  const shifts = picker.data?.shifts ?? [];
+  // One button per shift: the versions in effect on the selected date, not every version (spec 10.2).
+  const allShifts = picker.data?.shifts ?? [];
+  const dateShifts = allShifts.filter((s) => date >= s.effective_from && (s.effective_to === null || date <= s.effective_to));
+  const shifts = dateShifts.length > 0 ? dateShifts : allShifts;
+  // The API evaluates the version in effect on the date, which may not be the id in the URL.
+  const selectedShiftId = v && v.shift.date === date ? v.shift.shift_id : shiftId;
 
   const breakdownRows = useMemo(() => {
     if (!v) return [];
@@ -138,6 +143,8 @@ export function ShiftPage() {
 
   const products = v ? new Set(v.jobs.map((j) => j.product_number)).size : 0;
   const visitorUnits = v?.rollups.overall.visitor_units ?? 0;
+  // counted in charged hours but left out of efficiency (spec 7.11)
+  const noStdHours = v?.summary.charged_hours_without_std ?? 0;
 
   return (
     <>
@@ -148,7 +155,7 @@ export function ShiftPage() {
           <>
             {shifts.length > 0 && (
               <Segmented
-                value={shiftId == null ? '' : String(shiftId)}
+                value={selectedShiftId == null ? '' : String(selectedShiftId)}
                 onChange={(id) => pickShift(date, id === '' ? null : Number(id))}
                 options={shifts.map((s) => ({ value: String(s.id), label: s.name }))}
               />
@@ -184,7 +191,7 @@ export function ShiftPage() {
               label="Shift efficiency"
               value={formatPct(v.summary.efficiency)}
               accent={cellAccent(v.summary.color)}
-              hint={`${formatHours(v.summary.total_earned_hours, 1)} earned / ${formatHours(v.summary.total_charged_hours, 1)} charged`}
+              hint={`${formatHours(v.summary.total_earned_hours, 1)} earned / ${formatHours(v.summary.total_charged_hours - noStdHours, 1)} charged${noStdHours > 0 ? ' with a StdHr' : ''}`}
             />
             <KpiTile
               label="Units completed"
@@ -206,7 +213,7 @@ export function ShiftPage() {
               label="Rows without standard"
               value={v.summary.rows_without_std}
               accent={v.summary.rows_without_std > 0 ? 'amber' : 'none'}
-              hint={v.summary.rows_without_std > 0 ? 'Excluded from efficiency' : 'Every operation has a StdHr'}
+              hint={v.summary.rows_without_std > 0 ? `${formatHours(noStdHours, 1)} excluded from efficiency` : 'Every operation has a StdHr'}
             />
           </KpiRow>
 

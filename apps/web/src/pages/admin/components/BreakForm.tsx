@@ -1,13 +1,14 @@
 /**
  * Break add/edit form (spec 10.3). Validation mirrors `breakWriteSchema`.
- * Rendered inside the 440 px drawer on `/admin/breaks` and inline in the first-run wizard.
+ * Rendered inside the 440 px drawer on `/admin/breaks` and inline in the first-run wizard, where the
+ * wizard footer's "Save and continue" submits it as well as its own "Add break" button.
  */
 import { useMemo, useState, type FormEvent } from 'react';
 import type { BreakDef, BreakWrite, ShiftDef } from '@fld/shared';
 import { Button, Checkbox, DaysPicker, Field, Input, Segmented } from '../../../ui';
 import { formatIsoDate } from '../../../lib/format';
 import { usePlantTz } from '../../../lib/usePlantTz';
-import { ApiError, FieldBlock } from './common';
+import { ApiError, FieldBlock, submittedFromFooter } from './common';
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -17,6 +18,7 @@ export function BreakForm({
   initial,
   shifts,
   onSubmit,
+  onNothingToSave,
   onCancel,
   submitting,
   error,
@@ -26,7 +28,10 @@ export function BreakForm({
   id?: string;
   initial?: BreakDef | null;
   shifts: ShiftDef[];
-  onSubmit: (v: BreakWrite) => void;
+  /** `fromFooter`: a button outside the form submitted it (`submittedFromFooter`), not its own. */
+  onSubmit: (v: BreakWrite, fromFooter: boolean) => void;
+  /** Called instead of validating when a footer submits the form with nothing changed in it. */
+  onNothingToSave?: () => void;
   onCancel?: () => void;
   submitting?: boolean;
   error?: unknown;
@@ -45,6 +50,8 @@ export function BreakForm({
   const [from, setFrom] = useState(initial?.effective_from ?? today);
   const [to, setTo] = useState(initial?.effective_to ?? '');
   const [touched, setTouched] = useState(false);
+  const values = JSON.stringify([name, start, duration, days, appliesToAll, shiftIds, from, to]);
+  const [opened] = useState(values); // what the form opened with: useState keeps the first value
 
   const durationNum = Number(duration);
   const errors: Record<string, string> = {};
@@ -65,19 +72,29 @@ export function BreakForm({
   const toggleShift = (id2: number) =>
     setShiftIds((s) => (s.includes(id2) ? s.filter((x) => x !== id2) : [...s, id2].sort((a, b) => a - b)));
 
-  const submit = (e: FormEvent) => {
+  const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    // The wizard footer stays enabled while this saves: a second press must not add the break twice.
+    if (submitting) return;
+    const fromFooter = submittedFromFooter(e);
+    if (fromFooter && values === opened && onNothingToSave) {
+      onNothingToSave();
+      return;
+    }
     setTouched(true);
     if (!valid) return;
-    onSubmit({
-      name: name.trim(),
-      start_local: start,
-      duration_minutes: durationNum,
-      days_of_week: [...days].sort((a, b) => a - b),
-      shift_ids: appliesToAll ? null : [...shiftIds],
-      effective_from: from,
-      effective_to: to ? to : null,
-    });
+    onSubmit(
+      {
+        name: name.trim(),
+        start_local: start,
+        duration_minutes: durationNum,
+        days_of_week: [...days].sort((a, b) => a - b),
+        shift_ids: appliesToAll ? null : [...shiftIds],
+        effective_from: from,
+        effective_to: to ? to : null,
+      },
+      fromFooter,
+    );
   };
 
   return (

@@ -64,6 +64,52 @@ describe('health status', () => {
     expect(computeStatus(stale.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('down');
   });
 
+  it('stays current but degraded while an optional data source fails', () => {
+    const breaker = new CircuitBreaker();
+    for (let i = 0; i < 5; i += 1) breaker.recordSuccess(now - 1_000, 'defects: OData request failed with HTTP 500');
+    expect(breaker.consecutiveFailures).toBe(0);
+    expect(breaker.nextDelayMs(OPTS)).toBe(INTERVAL);
+    expect(isDelayed(breaker.lastSuccessAt, now, INTERVAL)).toBe(false);
+    expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('degraded');
+
+    breaker.recordSuccess(now);
+    expect(breaker.lastError).toBeNull();
+    expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('ok');
+  });
+
+  it('keeps the last success while the hour cells cannot be recomputed: degraded at once, delayed once it lasts', () => {
+    const opts = { threshold: 3, intervalMs: INTERVAL, configured: true };
+    const breaker = new CircuitBreaker();
+    breaker.recordSuccess(now - 1_000);
+    for (let i = 0; i < 5; i += 1) breaker.recordNotRecomputed('could not recompute the hour cells of 2 hours (deadlock detected)');
+    // FactoryLogix answered: no backoff, and not "down".
+    expect(breaker.consecutiveFailures).toBe(0);
+    expect(breaker.openUntil).toBeNull();
+    expect(breaker.nextDelayMs(OPTS)).toBe(INTERVAL);
+    expect(breaker.lastSuccessAt).toBe(now - 1_000);
+    expect(computeStatus(breaker.snapshot(), now, opts)).toBe('degraded');
+    expect(isDelayed(breaker.lastSuccessAt, now + 3 * INTERVAL, INTERVAL)).toBe(true);
+    expect(computeStatus(breaker.snapshot(), now + 3 * INTERVAL, opts)).toBe('degraded');
+
+    breaker.recordSuccess(now + 4 * INTERVAL);
+    expect(breaker.lastError).toBeNull();
+    expect(computeStatus(breaker.snapshot(), now + 4 * INTERVAL, opts)).toBe('ok');
+  });
+
+  it('stays open with no retry time once the login is refused, until a poll goes through', () => {
+    const breaker = new CircuitBreaker();
+    breaker.recordSuccess(now - 10 * INTERVAL);
+    breaker.recordLoginRefused('FactoryLogix refused the saved login (work_orders: OData request failed with HTTP 401 Unauthorized)');
+    expect(breaker.consecutiveFailures).toBe(1);
+    expect(breaker.openUntil).toBeNull();
+    expect(breaker.snapshot().loginRefused).toBe(true);
+    expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('down');
+
+    breaker.recordSuccess(now);
+    expect(breaker.loginRefused).toBe(false);
+    expect(computeStatus(breaker.snapshot(), now, { threshold: 3, intervalMs: INTERVAL, configured: true })).toBe('ok');
+  });
+
   it('stays open after a restart until the persisted openUntil', () => {
     const restarted = new CircuitBreaker();
     restarted.hydrate({ consecutiveFailures: 4, lastSuccessAt: null, lastError: 'HTTP 503', openUntil: now + 60_000 });

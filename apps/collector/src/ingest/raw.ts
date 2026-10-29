@@ -7,6 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import { bulkUpsert, chunk, q, type Queryable } from '../db.js';
+import { storableText } from '../mapping/extract.js';
 
 export interface RawEvent {
   source: string;
@@ -18,13 +19,18 @@ export function payloadHash(json: string): string {
   return createHash('sha256').update(json).digest('hex');
 }
 
+/** JSON.stringify replacer: every string as jsonb can store it (see `storableText`). */
+function storableJson(_key: string, value: unknown): unknown {
+  return typeof value === 'string' ? storableText(value) : value;
+}
+
 export async function insertRawEvents(db: Queryable, events: RawEvent[]): Promise<number> {
   if (events.length === 0) return 0;
 
   // Last one wins inside a batch, as bulkUpsert does: Postgres refuses to update one row twice.
   const latest = new Map<string, { source: string; natural_key: string; json: string; hash: string }>();
   for (const e of events) {
-    const json = JSON.stringify(e.payload ?? null);
+    const json = JSON.stringify(e.payload ?? null, storableJson);
     latest.set(`${e.source} ${e.natural_key}`, { source: e.source, natural_key: e.natural_key, json, hash: payloadHash(json) });
   }
   const unique = [...latest.values()];

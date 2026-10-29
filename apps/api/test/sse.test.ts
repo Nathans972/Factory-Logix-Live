@@ -31,12 +31,11 @@ describe('notificationToEvent', () => {
     });
   });
 
-  it('maps fld_display_updated', () => {
-    expect(notificationToEvent('fld_display_updated', '{"display_id":3,"device_token":"abc"}', NOW)).toEqual({
+  it('maps fld_display_updated without the device token (/api/events needs no login)', () => {
+    expect(notificationToEvent('fld_display_updated', '{"display_id":3,"device_token":"abc"}', NOW)).toStrictEqual({
       type: 'display_updated',
       at: NOW,
       display_id: 3,
-      device_token: 'abc',
     });
   });
 

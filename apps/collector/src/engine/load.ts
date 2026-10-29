@@ -110,12 +110,17 @@ export async function loadOverrides(db: Queryable): Promise<StandardOverride[]> 
   }));
 }
 
-export async function loadPins(db: Queryable): Promise<Pin[]> {
+/**
+ * Pins in force at some time since `since`, expired and removed ones included: an hour that has
+ * ended keeps the pins that were in force when it ended (spec 7.3), whenever it is computed again.
+ */
+export async function loadPins(db: Queryable, since: number): Promise<Pin[]> {
   const rows = await q<Record<string, unknown>>(
     db,
     `SELECT p.id, p.operator_id, p.job_number, o.name AS operation, p.mode, p.created_by, p.created_at, p.expires_at
        FROM operator_pins p LEFT JOIN operations o ON o.id = p.operation_id
-      WHERE p.expires_at IS NULL OR p.expires_at > now()`,
+      WHERE p.expires_at IS NULL OR p.expires_at > $1`,
+    [new Date(since)],
   );
   return rows.map((r) => ({
     id: Number(r.id),
@@ -129,7 +134,13 @@ export async function loadPins(db: Queryable): Promise<Pin[]> {
   }));
 }
 
-/** Steps overlapping [from - lookback, to); see spec 7.7 / ComputeHourCellsInput. */
+/**
+ * Steps overlapping [from - lookback, to) that started at or after from - lookback - 24 h, plus
+ * every step completed inside [from - lookback, to) however long it ran, so its unit is counted
+ * (spec 7.5, 7.7 / ComputeHourCellsInput). An older step that is still open, or completed after
+ * `to`, is left out: those are mostly forgotten scan-outs and would count as work in every hour
+ * they span.
+ */
 export async function loadUnitSteps(db: Queryable, opts: { from: number; to: number; lookbackMs: number }): Promise<UnitStep[]> {
   const windowStart = new Date(opts.from - opts.lookbackMs);
   const hardStart = new Date(opts.from - opts.lookbackMs - 24 * 3_600_000);
@@ -143,7 +154,18 @@ export async function loadUnitSteps(db: Queryable, opts: { from: number; to: num
       ORDER BY us.start_ts`,
     [hardStart, new Date(opts.to), windowStart],
   );
-  return rows.map(toUnitStep);
+  // Started before hardStart, so none of these is in `rows`. complete_ts is bounded on both sides
+  // so the lookup stays on the complete_ts index.
+  const longSteps = await q<Record<string, unknown>>(
+    db,
+    `SELECT us.unit_id, us.job_number, us.product_number, o.name AS operation, us.operator_id,
+            us.start_ts, us.complete_ts, us.result, us.rework_flag
+       FROM unit_steps us JOIN operations o ON o.id = us.operation_id
+      WHERE us.start_ts < $1 AND us.complete_ts >= $2 AND us.complete_ts < $3
+      ORDER BY us.start_ts`,
+    [hardStart, windowStart, new Date(opts.to)],
+  );
+  return [...longSteps, ...rows].map(toUnitStep);
 }
 
 /** All steps for one (product, operation) inside the standards lookback. */

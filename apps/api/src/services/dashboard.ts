@@ -21,7 +21,7 @@ import { getOperatorNames } from '../db/repo/operators.js';
 import { getRoutesForProducts, getDerivedQtyComplete } from '../db/repo/routes.js';
 import { getSettings } from '../db/repo/settings.js';
 import { getStandardsForProduct, listAdjustments, listOverrides } from '../db/repo/standards.js';
-import { getWorkOrder } from '../db/repo/work-orders.js';
+import { getWorkOrder, getWorkOrderFromActivity } from '../db/repo/work-orders.js';
 import { notFound } from '../errors.js';
 
 export interface DashboardOptions {
@@ -65,7 +65,8 @@ export async function buildDashboard(
   const settings = settingsOverride ?? (await getSettings(db));
   const tz = settings.plant_timezone;
 
-  const workOrder = await getWorkOrder(db, jobNumber);
+  // A job with activity opens before its work order is ingested; only a job with neither is unknown.
+  const workOrder = (await getWorkOrder(db, jobNumber)) ?? (await getWorkOrderFromActivity(db, jobNumber));
   if (!workOrder) throw notFound(`unknown job ${jobNumber}`);
 
   const columns: WindowColumn[] = rollingWindowColumns(now, tz, 12);

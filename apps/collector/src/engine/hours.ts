@@ -9,13 +9,13 @@ export interface HourRange {
   to: number;
 }
 
-/** Merge a set of hour starts into contiguous [from, to) ranges. */
-export function mergeHourRanges(hourStarts: Iterable<number>): HourRange[] {
+/** Merge a set of hour starts into contiguous [from, to) ranges of at most `maxHours` hours each. */
+export function mergeHourRanges(hourStarts: Iterable<number>, maxHours = Infinity): HourRange[] {
   const unique = [...new Set([...hourStarts].filter((h) => Number.isFinite(h)))].sort((a, b) => a - b);
   const ranges: HourRange[] = [];
   for (const hour of unique) {
     const last = ranges[ranges.length - 1];
-    if (last && hour === last.to) {
+    if (last && hour === last.to && last.to - last.from < maxHours * HOUR_MS) {
       last.to = hour + HOUR_MS;
     } else {
       ranges.push({ from: hour, to: hour + HOUR_MS });

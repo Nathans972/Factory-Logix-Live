@@ -4,8 +4,11 @@ build/
 *.log
 .env
 .env.local
+backups/
 .DS_Store
 coverage/
 .vite/
 *.tsbuildinfo
 screenshots/*.tmp.png
+certs/*
+!certs/README.md

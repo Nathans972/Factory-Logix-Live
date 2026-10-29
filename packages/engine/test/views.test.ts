@@ -8,6 +8,7 @@ import {
   buildShiftView,
   buildTvDashboard,
 } from '../src/views.js';
+import { computeRollups } from '../src/rollups.js';
 import { rollingWindowColumns } from '../src/time.js';
 import {
   TZ,
@@ -257,6 +258,7 @@ describe('buildShiftView', () => {
     expect(view.summary.active_jobs).toBe(2);
     expect(view.summary.eligible_operators).toBe(3);
     expect(view.summary.rows_without_std).toBe(0);
+    expect(view.summary.charged_hours_without_std).toBe(0);
     expect(view.generated_at).toBe(SHIFT_NOW);
   });
 
@@ -437,6 +439,7 @@ describe('buildOperatorDetail', () => {
     expect(weld.window_minutes).toBe(150);
     expect(weld.charged_minutes).toBe(150);
     expect(weld.units).toBe(50);
+    expect(weld.visitor_units).toBe(0);
     expect(weld.target_units).toBe(75);
     expect(weld.pace).toBeCloseTo(50 / 75, 6);
     expect(weld.color).toBe('red');
@@ -448,6 +451,10 @@ describe('buildOperatorDetail', () => {
     const test = detail.rows[1]!;
     expect(test.visitor_hours).toBe(1);
     expect(test.eligible_hours).toBe(0);
+    // a visitor's units are shown apart and never judged (spec 7.3)
+    expect(test.units).toBe(0);
+    expect(test.visitor_units).toBe(3);
+    expect(test.pace).toBeNull();
     expect(test.charged_minutes).toBe(0);
     expect(test.color).toBe('neutral');
     expect(test.pinned).toBeNull();
@@ -457,6 +464,139 @@ describe('buildOperatorDetail', () => {
     expect(detail.rows.every((r) => r.units !== 99)).toBe(true);
     expect(detail.range.to_utc).toBe(ms('2025-06-10T22:00-04:00'));
     expect(detail.operator_name).toBe('Alice');
+  });
+
+  it('rolls the range up in earned hours, as the shift view does for the same operator (spec 7.11)', () => {
+    // Label at half its StdHr of 60 and hand solder at 150% of its StdHr of 6, an hour each: 100% overall,
+    // where 39 units over a 66-unit target (59%) would lean towards the fast operation.
+    const cells = [
+      hourCell({ hour: SH09, job: 'JA', op: 'Label', operator: 'OP1', units: 30, charged: 60, std: 60 }),
+      hourCell({ hour: SH10, job: 'JB', op: 'Hand solder', operator: 'OP1', units: 9, charged: 60, std: 6 }),
+      hourCell({ hour: ms('2025-06-10T11:00-04:00'), job: 'JB', op: 'Pack', operator: 'OP1', units: 12, charged: 60, std: null }),
+      hourCell({ hour: ms('2025-06-10T11:00-04:00'), job: 'JA', op: 'Weld', operator: 'OP1', units: 4, eligible: false }),
+      hourCell({ hour: SH10, job: 'JA', op: 'Label', operator: 'OP2', units: 99, charged: 60, std: 60 }),
+    ];
+    const summary = buildOperatorDetail({
+      operator_id: 'OP1',
+      operator_name: 'Alice',
+      cells,
+      columns: rollingWindowColumns(SHIFT_NOW, TZ),
+      assignment: null,
+      pins: [],
+      product_names: {},
+      settings,
+      now: SHIFT_NOW,
+      range: { from_utc: SHIFT.start_utc, to_utc: SHIFT.end_utc },
+    }).summary;
+    expect(summary).toMatchObject({ units: 51, visitor_units: 4, charged_hours: 3, earned_hours: 2, efficiency: 1, color: 'green' });
+    // the hour without a standard is counted and flagged, not judged
+    expect(summary).toMatchObject({ rows_without_std: 1, charged_hours_without_std: 1 });
+
+    const byOperator = buildShiftView({ ...shiftInput(), cells }).rollups.by_operator.find((r) => r.key === 'OP1')!;
+    expect(summary).toMatchObject({
+      units: byOperator.units,
+      visitor_units: byOperator.visitor_units,
+      charged_hours: byOperator.charged_hours,
+      earned_hours: byOperator.earned_hours,
+      efficiency: byOperator.efficiency,
+      color: byOperator.color,
+      rows_without_std: byOperator.rows_without_std,
+      charged_hours_without_std: byOperator.charged_hours_without_std,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rows spanning a standard change
+// ---------------------------------------------------------------------------
+
+describe('rows that span a mid-shift standard change', () => {
+  // Cells keep the StdHr in force when they were computed: an override moved Weld from 20 to 60 at 10:00.
+  // Alice beat the old standard (24 of 20, blue) and fell behind the new one (42 of 60, yellow).
+  const hourAt = (hh: string) => ms(`2025-06-10T${hh}:00-04:00`);
+  const cells = [
+    hourCell({ hour: hourAt('08'), units: 24, charged: 60, std: 20 }),
+    hourCell({ hour: hourAt('09'), units: 24, charged: 60, std: 20 }),
+    hourCell({ hour: hourAt('10'), units: 42, charged: 60, std: 60 }),
+    hourCell({ hour: hourAt('11'), units: 42, charged: 60, std: 60 }),
+  ];
+  const shiftView = (c: HourCell[]) => buildShiftView({ ...shiftInput(), cells: c, active_job_numbers: ['JA'] });
+
+  it('targets the sum of its hours and judges the row in earned hours, like the job efficiency', () => {
+    const view = shiftView(cells);
+    const job = view.jobs[0]!;
+    const op = job.operations[0]!;
+    expect(op.units).toBe(132);
+    expect(op.target_units).toBe(160); // 20 + 20 + 60 + 60
+    expect(op.pace).toBeCloseTo(0.95, 9); // (1.2 + 1.2 + 0.7 + 0.7) earned hours / 4 charged hours
+    expect(op.pace).toBe(job.efficiency);
+    expect(op.pace).toBe(view.rollups.by_job_operation[0]!.efficiency);
+    expect(op.color).toBe('green');
+    expect(job.color).toBe('green');
+    expect(op.operators[0]).toMatchObject({ target_units: 160, pace: op.pace, color: 'green' });
+  });
+
+  it('shows the StdHr of the latest hour, whatever order the cells come in', () => {
+    expect(shiftView(cells).jobs[0]!.operations[0]!.std_hr).toBe(60);
+    expect(shiftView([...cells].reverse()).jobs[0]!.operations[0]!.std_hr).toBe(60);
+  });
+
+  it('leaves the hours without a standard out of the row, like the job efficiency', () => {
+    const view = shiftView([
+      hourCell({ hour: hourAt('08'), units: 30, charged: 60, std: null }),
+      hourCell({ hour: hourAt('09'), units: 30, charged: 60, std: null }),
+      hourCell({ hour: hourAt('10'), units: 40, charged: 60, std: 40 }),
+      hourCell({ hour: hourAt('11'), units: 40, charged: 60, std: 40 }),
+    ]);
+    const job = view.jobs[0]!;
+    const op = job.operations[0]!;
+    // 2 earned hours over the 2 charged hours that had a standard; the other two are flagged
+    expect(job.efficiency).toBe(1);
+    expect(job.charged_hours).toBe(4);
+    expect(job.charged_hours_without_std).toBe(2);
+    expect(view.summary.rows_without_std).toBe(2);
+    expect(view.summary.charged_hours_without_std).toBe(2);
+    expect(op.std_hr).toBe(40);
+    expect(op.charged_minutes).toBe(240);
+    expect(op.target_units).toBe(80);
+    expect(op.pace).toBe(job.efficiency);
+    expect(op.color).toBe('green');
+    expect(op.operators[0]).toMatchObject({ pace: op.pace, color: 'green' });
+  });
+
+  it('judges the colour on the minutes that had a standard', () => {
+    // a standard that arrived with the current hour: three minutes are too few to judge
+    const view = shiftView([
+      hourCell({ hour: hourAt('08'), units: 30, charged: 60, std: null }),
+      hourCell({ hour: hourAt('09'), units: 2, charged: 3, std: 40, provisional: true }),
+    ]);
+    const op = view.jobs[0]!.operations[0]!;
+    expect(op.charged_minutes).toBe(63);
+    expect(op.pace).toBeCloseTo(1, 9);
+    expect(op.color).toBe('neutral');
+    expect(op.operators[0]!.color).toBe('neutral');
+  });
+
+  it('applies the same rules to the operator detail rows and strips', () => {
+    const now = hourAt('11') + 30 * 60_000;
+    const detail = buildOperatorDetail({
+      operator_id: 'OP1',
+      operator_name: 'Alice',
+      cells,
+      columns: rollingWindowColumns(now, TZ),
+      assignment: null,
+      pins: [],
+      product_names: {},
+      settings,
+      now,
+      range: { from_utc: SHIFT.start_utc, to_utc: SHIFT.end_utc },
+    });
+    const row = detail.rows[0]!;
+    expect(row.std_hr).toBe(60);
+    expect(row.target_units).toBe(160);
+    expect(row.pace).toBe(computeRollups(cells, settings).overall.efficiency);
+    expect(row.color).toBe('green');
+    expect(detail.strips[0]!.std_hr).toBe(60);
   });
 });
 
@@ -507,6 +647,27 @@ describe('buildJobDetail', () => {
     expect(row.charged_hours).toBe(2);
     expect(row.earned_hours).toBeCloseTo(1.8333333, 6);
     expect(row.efficiency).toBeCloseTo(0.9166667, 6);
+    expect(row.color).toBe('green');
+    expect(row.charged_hours_without_std).toBe(0);
+  });
+
+  it('leaves hours without a standard out of a shift efficiency instead of blanking it', () => {
+    const row = buildJobDetail({
+      dashboard_separate: dash,
+      dashboard_grouped: grouped,
+      all_cells: [
+        hourCell({ hour: SH09, job: 'JA', op: 'Weld', operator: 'OP1', units: 30, charged: 60, std: 30 }),
+        hourCell({ hour: SH10, job: 'JA', op: 'Pack', operator: 'OP2', units: 4, charged: 15, std: null }),
+      ],
+      shift_instances: [SHIFT],
+      operator_names: {},
+      displays_showing: [],
+      settings,
+      now: SHIFT_NOW,
+    }).shift_history[0]!;
+    expect(row.charged_hours).toBe(1.25);
+    expect(row.charged_hours_without_std).toBe(0.25);
+    expect(row.efficiency).toBe(1);
     expect(row.color).toBe('green');
   });
 

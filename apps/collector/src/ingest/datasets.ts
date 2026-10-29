@@ -2,10 +2,10 @@
  * Per-dataset ingestion: mapped rows -> normalized tables (spec 4.4, 4.8, 6.1).
  * Every write is idempotent by natural key, so overlap re-pulls and backfill are harmless.
  */
-import type { DatasetName, MappingConfig } from '@fld/shared';
-import { bulkUpsert, q, q1, tx, type Pool, type PoolClient } from '../db.js';
+import type { DatasetMapping, DatasetName, MappingConfig } from '@fld/shared';
+import { bulkUpsert, q, q1, toInt4, toMs, tx, type Pool, type PoolClient, type Queryable } from '../db.js';
 import type { Logger } from '../logger.js';
-import { extractRecord, num, str, bool, type TimestampResolver } from '../mapping/extract.js';
+import { buildNaturalKey, extractRecord, getField, num, str, bool, type TimestampResolver } from '../mapping/extract.js';
 import { upsertOperators, upsertProducts, upsertRoutesDerived, upsertRoutesMapped, type RouteEntry } from './derive.js';
 import { insertRawEvents } from './raw.js';
 import type { OperationCache } from './operations.js';
@@ -20,12 +20,23 @@ export interface IngestOutcome {
 
 const EMPTY: IngestOutcome = { received: 0, ingested: 0, skipped: 0, touched: [] };
 
+/**
+ * How far either side of a page's times `deleteMovedRows` looks for stale copies. Fixing the
+ * timestamp mode or plant time zone moves a time by at most 26 hours. The bound keeps the delete
+ * to the chunks around the page instead of every chunk of the hypertable, old compressed ones
+ * included; a time corrected in FactoryLogix by more than this keeps its old copy.
+ */
+const MOVED_ROW_WINDOW_MS = 2 * 86_400_000;
+
 export interface IngestorDeps {
   pool: Pool;
   log: Logger;
   operations: OperationCache;
   timestamps: TimestampResolver;
 }
+
+/** Fetches from FactoryLogix the work orders of `jobs` it has: raw rows of `mapping`'s entity set. */
+export type WorkOrderFetcher = (jobs: string[], mapping: DatasetMapping) => Promise<Record<string, unknown>[]>;
 
 export class Ingestor {
   private mapping: MappingConfig;
@@ -46,14 +57,80 @@ export class Ingestor {
     this.jobProducts.clear();
   }
 
-  /** Route a page of source rows to the right ingest routine. */
-  async ingest(dataset: DatasetName, rows: Record<string, unknown>[]): Promise<IngestOutcome> {
+  /**
+   * `row`'s natural key under each key its dataset had before (`previous_keys`), as long as the row
+   * has all of that key's fields: the key its copy has if it was stored before Admin > Mapping
+   * changed the key. The pull reads those fields too, when the entity set still has them
+   * (`Poller.previousKeyFields`).
+   */
+  private previousKeys(mapping: DatasetMapping, row: Record<string, unknown>, current: string): string[] {
+    const keys: string[] = [];
+    for (const fields of mapping.previous_keys ?? []) {
+      if (fields.some((field) => getField(row, field) === undefined)) continue;
+      const key = buildNaturalKey(row, fields);
+      // A key whose fields were all empty identifies nothing.
+      if (key !== current && /[^|]/.test(key) && !keys.includes(key)) keys.push(key);
+    }
+    return keys;
+  }
+
+  /**
+   * Route a page of source rows to the right ingest routine. `fetchJobs` lets unit_steps fetch the
+   * work orders of its jobs that are not in the database yet (see `fetchMissingJobs`).
+   *
+   * A page is written in one transaction, and Postgres refuses all of it for one value it cannot
+   * store (`isRefusedValue`). The poll would read that page again from the same watermark every
+   * time and stop on it, and on work_orders hold back unit_steps too. So a refused page is written
+   * again in halves, each in its own transaction, down to the rows Postgres refuses on their own:
+   * those are skipped, counted in `skipped` and logged with their natural key.
+   */
+  async ingest(dataset: DatasetName, rows: Record<string, unknown>[], fetchJobs?: WorkOrderFetcher): Promise<IngestOutcome> {
     if (rows.length === 0) return { ...EMPTY };
+    const refused: { key: string; err: string }[] = [];
+    const out = await this.ingestSplitting(dataset, rows, fetchJobs, refused);
+    if (refused.length > 0) {
+      this.deps.log.warn(
+        { dataset, rows: refused.length, refused: refused.slice(0, 10) },
+        'rows skipped: the database refused a value in them',
+      );
+    }
+    return out;
+  }
+
+  private async ingestSplitting(
+    dataset: DatasetName,
+    rows: Record<string, unknown>[],
+    fetchJobs: WorkOrderFetcher | undefined,
+    refused: { key: string; err: string }[],
+  ): Promise<IngestOutcome> {
+    try {
+      return await this.ingestPage(dataset, rows, fetchJobs);
+    } catch (err) {
+      if (!isRefusedValue(err)) throw err;
+      if (rows.length === 1) {
+        // The refused value can be in the key, and as long as the index it did not fit.
+        const key = buildNaturalKey(rows[0], this.mapping[dataset]?.key ?? []);
+        refused.push({ key: key.slice(0, 200), err: err.message.slice(0, 200) });
+        return { received: 1, ingested: 0, skipped: 1, touched: [] };
+      }
+      const half = Math.ceil(rows.length / 2);
+      const first = await this.ingestSplitting(dataset, rows.slice(0, half), fetchJobs, refused);
+      const second = await this.ingestSplitting(dataset, rows.slice(half), fetchJobs, refused);
+      return {
+        received: first.received + second.received,
+        ingested: first.ingested + second.ingested,
+        skipped: first.skipped + second.skipped,
+        touched: [...first.touched, ...second.touched],
+      };
+    }
+  }
+
+  private async ingestPage(dataset: DatasetName, rows: Record<string, unknown>[], fetchJobs?: WorkOrderFetcher): Promise<IngestOutcome> {
     switch (dataset) {
       case 'work_orders':
         return this.workOrders(rows);
       case 'unit_steps':
-        return this.unitSteps(rows);
+        return this.unitSteps(rows, fetchJobs);
       case 'defects':
         return this.defects(rows);
       case 'operators':
@@ -81,7 +158,7 @@ export class Ingestor {
     return this.operationSeqColumn;
   }
 
-  private async lookupJobProducts(db: PoolClient, jobNumbers: string[]): Promise<void> {
+  private async lookupJobProducts(db: Queryable, jobNumbers: string[]): Promise<void> {
     const missing = jobNumbers.filter((j) => j && !this.jobProducts.has(j));
     if (missing.length === 0) return;
     const rows = await q<{ job_number: string; product_number: string }>(
@@ -91,6 +168,39 @@ export class Ingestor {
     );
     if (this.jobProducts.size > 50_000) this.jobProducts.clear();
     for (const row of rows) this.jobProducts.set(row.job_number, row.product_number);
+  }
+
+  /**
+   * The work_orders poll reads the jobs changed since its watermark (on the first run, since the
+   * start of the late-data window). A job still running that FactoryLogix has not changed since
+   * then is not in the database until the backfill reaches it (never with `backfill_days` 0): it
+   * is missing from the job lists, and the steps that take their product from the work order are
+   * skipped every time they are read. Fetch the work orders of these jobs that are not in the
+   * database, before the transaction that writes the steps.
+   */
+  private async fetchMissingJobs(jobs: string[], fetchJobs: WorkOrderFetcher): Promise<void> {
+    const mapping = this.mapping.work_orders;
+    if (!mapping || jobs.length === 0) return;
+    await this.lookupJobProducts(this.deps.pool, jobs);
+    const missing = [...new Set(jobs)].filter((job) => !this.jobProducts.has(job));
+    if (missing.length === 0) return;
+    const rows = await fetchJobs(missing, mapping);
+    if (rows.length > 0) await this.ingest('work_orders', rows);
+  }
+
+  /**
+   * tx() for the routines that resolve operation names on its client. A name seen for the first
+   * time is inserted by that transaction and its id cached at once; if the transaction rolls back
+   * the row is gone but the id stays cached, and every later write using it fails the operation_id
+   * foreign key. Clear the cache then, as the restart command does, so the retry inserts it again.
+   */
+  private async txWithOperations(fn: (client: PoolClient) => Promise<void>): Promise<void> {
+    try {
+      await tx(this.deps.pool, fn);
+    } catch (err) {
+      this.deps.operations.clear();
+      throw err;
+    }
   }
 
   private async workOrders(rows: Record<string, unknown>[]): Promise<IngestOutcome> {
@@ -119,7 +229,7 @@ export class Ingestor {
         job,
         product,
         name,
-        Math.trunc(num(rec.values, 'qty_released') ?? 0),
+        toInt4(num(rec.values, 'qty_released') ?? 0),
         qtyCompleteMapped ? roundOrNull(num(rec.values, 'qty_complete')) : null,
         str(rec.values, 'status'),
         tsOrNull(num(rec.values, 'created_at')),
@@ -155,7 +265,7 @@ export class Ingestor {
     return out;
   }
 
-  private async unitSteps(rows: Record<string, unknown>[]): Promise<IngestOutcome> {
+  private async unitSteps(rows: Record<string, unknown>[], fetchJobs?: WorkOrderFetcher): Promise<IngestOutcome> {
     const mapping = this.mapping.unit_steps;
     const { timestamps } = this.deps;
     const routesMapped = this.mapping.routes !== null;
@@ -163,6 +273,7 @@ export class Ingestor {
 
     interface Staged {
       natural_key: string;
+      previous_keys: string[];
       unit_id: string;
       job_number: string;
       product_number: string | null;
@@ -193,6 +304,7 @@ export class Ingestor {
       }
       staged.push({
         natural_key: rec.natural_key,
+        previous_keys: this.previousKeys(mapping, row, rec.natural_key),
         unit_id: unit,
         job_number: job,
         product_number: str(rec.values, 'product_number'),
@@ -207,7 +319,9 @@ export class Ingestor {
       });
     }
 
-    await tx(this.deps.pool, async (client) => {
+    if (fetchJobs) await this.fetchMissingJobs(staged.map((s) => s.job_number), fetchJobs);
+
+    await this.txWithOperations(async (client) => {
       await this.lookupJobProducts(
         client,
         staged.filter((s) => !s.product_number).map((s) => s.job_number),
@@ -220,6 +334,7 @@ export class Ingestor {
       const withSeq = await this.hasOperationSeqColumn(client);
 
       const stepRows: unknown[][] = [];
+      const keys: StoredKey[] = [];
       const products: { product_number: string; name: string | null }[] = [];
       const operators: { operator_id: string; display_name: string | null }[] = [];
       const routes: RouteEntry[] = [];
@@ -246,8 +361,16 @@ export class Ingestor {
           s.modified_at === null ? null : new Date(s.modified_at),
           s.natural_key,
         ];
-        if (withSeq) stepRow.push(s.operation_seq === null ? null : Math.trunc(s.operation_seq));
+        if (withSeq) stepRow.push(s.operation_seq === null ? null : toInt4(s.operation_seq));
         stepRows.push(stepRow);
+        keys.push({
+          natural_key: s.natural_key,
+          at: s.start_ts,
+          previous_keys: s.previous_keys,
+          unit_id: s.unit_id,
+          job_number: s.job_number,
+          operation_id: operationId,
+        });
         products.push({ product_number: product, name: null });
         operators.push({ operator_id: s.operator_id, display_name: null });
         routes.push({ product_number: product, operation_id: operationId, sequence: s.operation_seq });
@@ -265,6 +388,7 @@ export class Ingestor {
 
       await upsertProducts(client, products);
       await upsertOperators(client, operators);
+      out.touched.push(...(await deleteMovedRows(client, 'unit_steps', 'start_ts', keys, ['start_ts', 'complete_ts'])));
       await bulkUpsert(client, {
         table: 'unit_steps',
         columns: [
@@ -313,6 +437,7 @@ export class Ingestor {
 
     const staged: {
       natural_key: string;
+      previous_keys: string[];
       unit_id: string;
       job_number: string;
       operation: string;
@@ -338,6 +463,7 @@ export class Ingestor {
       }
       staged.push({
         natural_key: rec.natural_key,
+        previous_keys: this.previousKeys(mapping, row, rec.natural_key),
         unit_id: unit,
         job_number: job,
         operation,
@@ -350,12 +476,13 @@ export class Ingestor {
       });
     }
 
-    await tx(this.deps.pool, async (client) => {
+    await this.txWithOperations(async (client) => {
       const operationIds = await this.deps.operations.resolveMany(
         staged.map((s) => s.operation),
         client,
       );
       const defectRows: unknown[][] = [];
+      const keys: StoredKey[] = [];
       const operators: { operator_id: string; display_name: string | null }[] = [];
       for (const s of staged) {
         const operationId = operationIds.get(s.operation);
@@ -375,11 +502,20 @@ export class Ingestor {
           s.modified_at === null ? null : new Date(s.modified_at),
           s.natural_key,
         ]);
+        keys.push({
+          natural_key: s.natural_key,
+          at: s.found_ts,
+          previous_keys: s.previous_keys,
+          unit_id: s.unit_id,
+          job_number: s.job_number,
+          operation_id: operationId,
+        });
         if (s.operator_id) operators.push({ operator_id: s.operator_id, display_name: null });
         out.touched.push(s.found_ts);
         out.ingested += 1;
       }
       await upsertOperators(client, operators);
+      out.touched.push(...(await deleteMovedRows(client, 'defects', 'found_ts', keys, ['found_ts'])));
       await bulkUpsert(client, {
         table: 'defects',
         columns: [
@@ -451,11 +587,11 @@ export class Ingestor {
         out.skipped += 1;
         continue;
       }
-      staged.push({ product_number: product, operation, sequence: Math.trunc(sequence) });
+      staged.push({ product_number: product, operation, sequence: toInt4(sequence) });
       out.ingested += 1;
     }
 
-    await tx(this.deps.pool, async (client) => {
+    await this.txWithOperations(async (client) => {
       const operationIds = await this.deps.operations.resolveMany(
         staged.map((s) => s.operation),
         client,
@@ -497,7 +633,7 @@ export class Ingestor {
       out.ingested += 1;
     }
 
-    await tx(this.deps.pool, async (client) => {
+    await this.txWithOperations(async (client) => {
       const operationIds = await this.deps.operations.resolveMany(
         staged.map((s) => s.operation),
         client,
@@ -522,10 +658,97 @@ export class Ingestor {
   }
 }
 
+/** A row about to be upserted into unit_steps / defects: its natural key, its time column and which step it is. */
+interface StoredKey {
+  natural_key: string;
+  at: number;
+  /** Its natural key under the keys its dataset had before (`Ingestor.previousKeys`). */
+  previous_keys: string[];
+  unit_id: string;
+  job_number: string;
+  operation_id: number;
+}
+
+/**
+ * unit_steps and defects are hypertables, so the unique key the upsert relies on must include the
+ * time column: (natural_key, start_ts / found_ts). A record read again with a different parsed
+ * time (timestamp mode or plant time zone fixed, time corrected in FactoryLogix) does not conflict
+ * with its stored row and would become a second one. Delete the stored copies of these keys at
+ * other times (within MOVED_ROW_WINDOW_MS of the page) and return their `instants`, so the hours
+ * they were counted in get recomputed.
+ *
+ * A record stored before Admin > Mapping changed the natural key is stored under its key from the
+ * old fields, and would become a second row too. Delete its copy under a key the dataset had
+ * before (`previous_keys`): at the record's time, or at another time within the window for the
+ * same unit, job and operation (the time moved as well). Away from the record's own instant, these
+ * keep out the unit's other steps when the old key did not tell them apart (a key that was changed
+ * because it was not unique), and another record whose key from the new fields happens to read like
+ * the old key. No record of the page is deleted under its own key and time.
+ */
+async function deleteMovedRows(
+  db: PoolClient,
+  table: 'unit_steps' | 'defects',
+  time: 'start_ts' | 'found_ts',
+  keys: StoredKey[],
+  instants: string[],
+): Promise<number[]> {
+  // A key whose fields were all empty identifies nothing: leave those rows alone.
+  const keyed = keys.filter((k) => /[^|]/.test(k.natural_key));
+  if (keyed.length === 0) return [];
+  const ats = keyed.map((k) => k.at);
+  const from = new Date(Math.min(...ats) - MOVED_ROW_WINDOW_MS);
+  const to = new Date(Math.max(...ats) + MOVED_ROW_WINDOW_MS);
+  const deleted = await q<Record<string, Date | null>>(
+    db,
+    `DELETE FROM ${table}
+      WHERE natural_key = ANY($1::text[]) AND ${time} BETWEEN $3 AND $4
+        AND (natural_key, ${time}) NOT IN (SELECT * FROM unnest($1::text[], $2::timestamptz[]))
+      RETURNING ${instants.join(', ')}`,
+    [keyed.map((k) => k.natural_key), ats.map((at) => new Date(at)), from, to],
+  );
+  const rekeyed = keyed.flatMap((k) => k.previous_keys.map((previous) => ({ ...k, previous })));
+  if (rekeyed.length > 0) {
+    deleted.push(
+      ...(await q<Record<string, Date | null>>(
+        db,
+        `DELETE FROM ${table}
+          WHERE natural_key = ANY($1::text[]) AND ${time} BETWEEN $6 AND $7
+            AND ((natural_key, ${time}) IN (SELECT * FROM unnest($1::text[], $2::timestamptz[]))
+              OR (natural_key, unit_id, job_number, operation_id) IN (SELECT * FROM unnest($1::text[], $3::text[], $4::text[], $5::int[])))
+            AND (natural_key, ${time}) NOT IN (SELECT * FROM unnest($8::text[], $9::timestamptz[]))
+          RETURNING ${instants.join(', ')}`,
+        [
+          rekeyed.map((k) => k.previous),
+          rekeyed.map((k) => new Date(k.at)),
+          rekeyed.map((k) => k.unit_id),
+          rekeyed.map((k) => k.job_number),
+          rekeyed.map((k) => k.operation_id),
+          from,
+          to,
+          keyed.map((k) => k.natural_key),
+          ats.map((at) => new Date(at)),
+        ],
+      )),
+    );
+  }
+  return deleted.flatMap((row) => instants.map((column) => toMs(row[column])).filter((ms): ms is number => ms !== null));
+}
+
 function tsOrNull(ms: number | null): Date | null {
   return ms === null ? null : new Date(ms);
 }
 
 function roundOrNull(value: number | null): number | null {
-  return value === null ? null : Math.trunc(value);
+  return value === null ? null : toInt4(value);
+}
+
+/**
+ * Postgres refused a value of the rows written: SQLSTATE class 22 (data exception: a number out
+ * of range, a character or time it cannot store), class 23 (integrity constraint violation) or
+ * 54000 (a value too long for an index). Anything else (a lost connection, a deadlock, a timeout,
+ * a missing table) is not about the rows, and fails the page.
+ */
+function isRefusedValue(err: unknown): err is Error {
+  const code = err instanceof Error ? (err as { code?: unknown }).code : undefined;
+  return typeof code === 'string' && (/^2[23]/.test(code) || code === '54000');
 }

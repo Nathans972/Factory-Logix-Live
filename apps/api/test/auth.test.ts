@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ROLE_RANK, roleAtLeast, signSession, verifySession } from '../src/auth/session.js';
+import { updateUser } from '../src/db/repo/users.js';
 
 const SECRET = 'a-very-long-test-session-secret-value';
 
@@ -8,6 +9,11 @@ describe('session jwt', () => {
     const token = await signSession({ userId: 42, role: 'manager' }, SECRET);
     const payload = await verifySession(token, SECRET);
     expect(payload).toEqual({ userId: 42, role: 'manager' });
+  });
+
+  it('carries the session version it was signed with', async () => {
+    const token = await signSession({ userId: 42, role: 'manager', sessionVersion: 3 }, SECRET);
+    expect(await verifySession(token, SECRET)).toEqual({ userId: 42, role: 'manager', sessionVersion: 3 });
   });
 
   it('rejects a token signed with another secret', async () => {
@@ -24,6 +30,24 @@ describe('session jwt', () => {
     const token = await signSession({ userId: 7, role: 'viewer' }, SECRET);
     const header = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString('utf8'));
     expect(header.alg).toBe('HS256');
+  });
+});
+
+describe('what ends the sessions a user already has', () => {
+  it('a password reset and deactivation do; a role change and reactivation do not', async () => {
+    const statements: string[] = [];
+    const db = {
+      query: async (text: string) => {
+        statements.push(text);
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    await updateUser(db as never, 2, { password_hash: 'new-hash' });
+    await updateUser(db as never, 2, { active: false }); // so reactivating later does not bring old cookies back
+    await updateUser(db as never, 2, { role: 'viewer' });
+    await updateUser(db as never, 2, { active: true });
+    const bumps = statements.map((sql) => sql.includes('session_version = session_version + 1'));
+    expect(bumps).toEqual([true, true, false, false]);
   });
 });
 
