@@ -70,14 +70,14 @@ const STEPS: { key: StepKey; label: string; title: string; blurb: string; primar
     label: 'Shifts',
     title: 'Shifts',
     blurb: 'At least one shift is needed for the shift view and the StdDay column.',
-    primary: 'next',
+    primary: 'submit',
   },
   {
     key: 'breaks',
     label: 'Breaks',
     title: 'Breaks',
     blurb: 'Break minutes are removed from charged time for every operator whose window overlaps them.',
-    primary: 'next',
+    primary: 'submit',
   },
   {
     key: 'backfill',
@@ -169,8 +169,8 @@ export function SetupPage() {
             {cur.key === 'timezone' && <TimezoneStep onDone={next} />}
             {cur.key === 'connection' && <ConnectionForm formId={STEP_FORM} hideActions onSaved={next} />}
             {cur.key === 'mapping' && <MappingWizard embedded formId={STEP_FORM} onSaved={next} />}
-            {cur.key === 'shifts' && <ShiftsStep />}
-            {cur.key === 'breaks' && <BreaksStep />}
+            {cur.key === 'shifts' && <ShiftsStep onDone={next} />}
+            {cur.key === 'breaks' && <BreaksStep onDone={next} />}
             {cur.key === 'backfill' && <BackfillStep />}
           </div>
 
@@ -316,7 +316,9 @@ function TimezoneStep({ onDone }: { onDone: () => void }) {
 
 // ---------- step 5: shifts ----------
 
-function ShiftsStep() {
+// "Add shift" saves and stays for the next one. The footer's "Save and continue" saves the shift being
+// typed and moves on; with nothing typed it moves on once a shift exists, else the form says what it needs.
+function ShiftsStep({ onDone }: { onDone: () => void }) {
   const ds = useDataSource();
   const qc = useQueryClient();
   const flash = useFlash();
@@ -353,7 +355,9 @@ function ShiftsStep() {
       </div>
       <ShiftForm
         key={formKey}
-        onSubmit={(v) => createM.mutate(v)}
+        id={STEP_FORM}
+        onSubmit={(v, fromFooter) => createM.mutate(v, { onSuccess: fromFooter ? onDone : undefined })}
+        onNothingToSave={shifts.length > 0 ? onDone : undefined}
         submitting={createM.isPending}
         error={createM.error}
         submitLabel="Add shift"
@@ -364,7 +368,8 @@ function ShiftsStep() {
 
 // ---------- step 6: breaks ----------
 
-function BreaksStep() {
+// "Add break" and the footer's "Save and continue" work as on the shifts step.
+function BreaksStep({ onDone }: { onDone: () => void }) {
   const ds = useDataSource();
   const qc = useQueryClient();
   const flash = useFlash();
@@ -403,8 +408,10 @@ function BreaksStep() {
       </div>
       <BreakForm
         key={formKey}
+        id={STEP_FORM}
         shifts={shiftsQ.data ?? []}
-        onSubmit={(v) => createM.mutate(v)}
+        onSubmit={(v, fromFooter) => createM.mutate(v, { onSuccess: fromFooter ? onDone : undefined })}
+        onNothingToSave={breaks.length > 0 ? onDone : undefined}
         submitting={createM.isPending}
         error={createM.error}
         submitLabel="Add break"

@@ -4,7 +4,7 @@
  *
  * Everything renders with the wave-1 design system (`src/ui`) — no page-specific chrome.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { BackfillProgress } from '@fld/shared';
 import { hasRole, useAuth } from '../../../auth/AuthContext';
 import { DataSourceError } from '../../../data/DataSource';
@@ -186,6 +186,15 @@ export function FieldBlock({
       {error && <span className="field-error">{error}</span>}
     </div>
   );
+}
+
+/**
+ * True when a button outside the form submitted it: a drawer or wizard footer, through `form={id}`.
+ * Enter in a field presses the form's own button when it shows one (it comes first in the page).
+ */
+export function submittedFromFooter(e: FormEvent<HTMLFormElement>): boolean {
+  const submitter = (e.nativeEvent as SubmitEvent).submitter;
+  return !!submitter && !e.currentTarget.contains(submitter);
 }
 
 export function OnlineBadge({ online }: { online: boolean }) {

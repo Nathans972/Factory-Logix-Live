@@ -2,14 +2,15 @@
  * Shift add/edit form (spec 10.2). Validation mirrors `shiftWriteSchema`.
  *
  * Rendered inside the 440 px drawer on `/admin/shifts` (the drawer footer submits it through
- * `form={id}`) and inline in the first-run wizard (where it keeps its own button).
+ * `form={id}`) and inline in the first-run wizard, where it keeps its own "Add shift" button and the
+ * wizard footer's "Save and continue" submits it too.
  */
 import { useMemo, useState, type FormEvent } from 'react';
 import type { ShiftDef, ShiftWrite } from '@fld/shared';
 import { Button, DaysPicker, Field, Input, Note } from '../../../ui';
 import { formatIsoDate } from '../../../lib/format';
 import { usePlantTz } from '../../../lib/usePlantTz';
-import { ApiError, FieldBlock } from './common';
+import { ApiError, FieldBlock, submittedFromFooter } from './common';
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -26,6 +27,7 @@ export function ShiftForm({
   id,
   initial,
   onSubmit,
+  onNothingToSave,
   onCancel,
   submitting,
   error,
@@ -34,7 +36,10 @@ export function ShiftForm({
 }: {
   id?: string;
   initial?: ShiftDef | null;
-  onSubmit: (v: ShiftWrite) => void;
+  /** `fromFooter`: a button outside the form submitted it (`submittedFromFooter`), not its own. */
+  onSubmit: (v: ShiftWrite, fromFooter: boolean) => void;
+  /** Called instead of validating when a footer submits the form with nothing changed in it. */
+  onNothingToSave?: () => void;
   onCancel?: () => void;
   submitting?: boolean;
   error?: unknown;
@@ -54,6 +59,8 @@ export function ShiftForm({
   const [from, setFrom] = useState(current ? today : (initial?.effective_from ?? today));
   const [to, setTo] = useState(initial?.effective_to ?? '');
   const [touched, setTouched] = useState(false);
+  const values = JSON.stringify([name, start, end, days, from, to]);
+  const [opened] = useState(values); // what the form opened with: useState keeps the first value
 
   const errors: Record<string, string> = {};
   if (!name.trim()) errors.name = 'Required';
@@ -68,18 +75,28 @@ export function ShiftForm({
   const valid = Object.keys(errors).length === 0;
   const show = (k: string) => (touched ? errors[k] : undefined);
 
-  const submit = (e: FormEvent) => {
+  const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    // The wizard footer stays enabled while this saves: a second press must not add the shift twice.
+    if (submitting) return;
+    const fromFooter = submittedFromFooter(e);
+    if (fromFooter && values === opened && onNothingToSave) {
+      onNothingToSave();
+      return;
+    }
     setTouched(true);
     if (!valid) return;
-    onSubmit({
-      name: name.trim(),
-      start_local: start,
-      end_local: end,
-      days_of_week: [...days].sort((a, b) => a - b),
-      effective_from: from,
-      effective_to: to ? to : null,
-    });
+    onSubmit(
+      {
+        name: name.trim(),
+        start_local: start,
+        end_local: end,
+        days_of_week: [...days].sort((a, b) => a - b),
+        effective_from: from,
+        effective_to: to ? to : null,
+      },
+      fromFooter,
+    );
   };
 
   return (

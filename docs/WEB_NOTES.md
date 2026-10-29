@@ -81,7 +81,7 @@ Components — `src/ui/` (`import { … } from '@/ui'` / relative `../../ui`), o
 ## Auth pages — `src/pages/auth/`
 
 - `LoginPage.tsx`: username/password, error display, redirect to `?next` or `/`.
-- `SetupPage.tsx` (spec 10.10 first-run wizard): steps: create admin → plant time zone (settings) → FactoryLogix connection (+ test) → mapping wizard (embed the same component as admin) → shifts → breaks → backfill (schedule / run now). Each step saves via the DataSource and can be skipped; show `SetupStatus.steps` progress. After the admin is created the user is logged in (`refresh()`).
+- `SetupPage.tsx` (spec 10.10 first-run wizard): steps: create admin → plant time zone (settings) → FactoryLogix connection (+ test) → mapping wizard (embed the same component as admin) → shifts → breaks → backfill (schedule / run now). Each step saves via the DataSource and can be skipped; show `SetupStatus.steps` progress. After the admin is created the user is logged in (`refresh()`). The footer's "Save and continue" submits the step's form (`form="setup-step-form"`); on shifts and breaks it saves the one being typed before moving on (with nothing typed it moves on once one exists), while the form's own "Add shift"/"Add break" saves and stays.
 
 ## Admin (spec 10) — `src/pages/admin/`
 
