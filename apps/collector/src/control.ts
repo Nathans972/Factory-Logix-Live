@@ -47,10 +47,14 @@ export function parseControlPayload(payload: string | undefined): ControlCommand
 export class ControlListener {
   private client: Client | null = null;
   private queue: ControlCommand[] = [];
+  /** What `take()` handed over last: the main loop runs it in this order. */
+  private taken: ControlCommand[] = [];
   private stopping = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   /** Called when a command arrives so the main loop can wake up early. */
   onCommand: (() => void) | null = null;
+  /** The command the main loop is running, set by it around each one `take()` handed over. */
+  running: ControlCommand | null = null;
 
   constructor(
     private readonly connectionString: string,
@@ -65,6 +69,10 @@ export class ControlListener {
         const command = parseControlPayload(msg.payload);
         if (!command) {
           this.log.warn({ payload: msg.payload }, 'ignored malformed control command');
+          return;
+        }
+        if (this.alreadyRequested(command)) {
+          this.log.info({ command }, 'control command ignored: the same one is already waiting or running');
           return;
         }
         this.log.info({ command }, 'control command received');
@@ -97,11 +105,37 @@ export class ControlListener {
     this.reconnectTimer.unref?.();
   }
 
+  /**
+   * Whether a command still to run already does what `command` asks, so a request made again (the
+   * Recompute buttons show nothing while a run is going) does not queue the same work twice: an
+   * identical command with nothing after it that may change what it computes. A restart may, for
+   * any command (new settings, shifts and breaks), and so may a standards recompute for an hour cell
+   * recompute (new StdHr); the new request may have been made to see that. A standards recompute,
+   * many minutes without a poll in a large plant, is also covered by the identical one running: no
+   * poll goes out meanwhile, and what else it reads changes only with a restart, which would be
+   * waiting after it.
+   */
+  private alreadyRequested(command: ControlCommand): boolean {
+    const running = this.running;
+    const toRun = [
+      ...(running?.cmd === 'recompute_standards' ? [running] : []),
+      ...(running ? this.taken.slice(this.taken.indexOf(running) + 1) : []),
+      ...this.queue,
+    ];
+    const key = JSON.stringify(command);
+    for (const later of toRun.reverse()) {
+      if (JSON.stringify(later) === key) return true;
+      if (later.cmd === 'restart' || (later.cmd === 'recompute_standards' && command.cmd === 'recompute_cells')) return false;
+    }
+    return false;
+  }
+
   /** Drain the queued commands. */
   take(): ControlCommand[] {
     if (this.queue.length === 0) return [];
     const out = this.queue;
     this.queue = [];
+    this.taken = out;
     return out;
   }
 

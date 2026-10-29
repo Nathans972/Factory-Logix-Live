@@ -101,6 +101,12 @@ Payload JSON: `{cmd:'restart'} | {cmd:'backfill_now'} | {cmd:'recompute_standard
 The API sends these; the collector listens. Commands that must survive a collector restart are
 also persisted (`backfill_progress.requested_now`, settings).
 
+The collector runs them one after the other, between polls. A command is not queued again when an
+identical one is still to run with nothing after it that may change what it computes: a `restart`
+(new settings, shifts and breaks), or for `recompute_cells` a `recompute_standards` (new StdHr).
+Nor is a `recompute_standards` while the identical one runs. So a request made again (the Recompute
+buttons show nothing while a run is going) does not hold up the polls a second time.
+
 Hour cells are stored with the settings, shifts and breaks of when they were computed, and on its
 own the collector only recomputes the current and previous hour and the hours new rows touch. So
 after a change to a shift, a break, or a setting the cells depend on (`HOUR_CELL_SETTINGS_KEYS`:

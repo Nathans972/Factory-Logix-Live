@@ -445,10 +445,14 @@ class Collector {
   private async handleCommands(): Promise<void> {
     const commands = this.control.take();
     for (const command of commands) {
+      // So that the same request made again meanwhile is not queued a second time (`ControlListener`).
+      this.control.running = command;
       try {
         await this.runCommand(command);
       } catch (err) {
         this.log.error({ err: errorMessage(err), command }, 'control command failed');
+      } finally {
+        this.control.running = null;
       }
     }
   }

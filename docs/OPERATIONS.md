@@ -372,7 +372,10 @@ last recompute of all products (the nightly run, "Recompute all standards now" o
 a backfill; Admin > Standards shows it as "Last recompute"). You can also trigger a recompute on
 demand from Admin > Standards ("Recompute all standards now") or from a product's page
 ("Recompute now" for just that product). A single product's recompute does not move that
-cutoff, so the other products' new units are still picked up that night.
+cutoff, so the other products' new units are still picked up that night. Pressing a Recompute
+button again while that recompute is waiting or running does not start another one, so it does not
+hold up the polls any longer; pressed after it has finished, or after a setting, shift or break was
+saved, it runs again.
 
 When the nightly recompute fails (a database error, or a product the calculation fails on), StdHr
 stays as it was last computed. Admin > Sync then shows `degraded`, with `could not recompute the
