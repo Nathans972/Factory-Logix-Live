@@ -81,6 +81,13 @@ const SSE_EVENT_NAMES: SseEvent['type'][] = [
 const FALLBACK_HEARTBEAT_MS = 60_000;
 
 /**
+ * Wait before replacing a stream the browser has closed for good, doubling per failed stream up to
+ * the max and back to the min once one opens. The first wait matches the API's `retry: 5000`.
+ */
+const STREAM_REOPEN_MIN_MS = 5_000;
+const STREAM_REOPEN_MAX_MS = 60_000;
+
+/**
  * A TV request still unanswered after this long is aborted and fails. The TV keeps one request in
  * flight, so without a bound a single lost one (half-open connection after a Wi-Fi blip or
  * sleep/wake, an API stalled behind the proxy's 3600 s read timeout) would stop every later poll
@@ -106,6 +113,8 @@ export class ApiDataSource implements DataSource {
   private es: EventSource | null = null;
   private subscribers = new Set<(e: SseEvent) => void>();
   private fallbackTimer: ReturnType<typeof setInterval> | null = null;
+  private reopenTimer: ReturnType<typeof setTimeout> | null = null;
+  private reopenDelayMs = STREAM_REOPEN_MIN_MS;
 
   constructor(public baseUrl: string) {}
 
@@ -239,12 +248,29 @@ export class ApiDataSource implements DataSource {
     };
     for (const name of SSE_EVENT_NAMES) es.addEventListener(name, onMessage);
     es.onmessage = onMessage;
+    es.onopen = () => {
+      this.reopenDelayMs = STREAM_REOPEN_MIN_MS;
+    };
     es.onerror = () => {
-      // Keep the EventSource alive: the browser reconnects on its own. Meanwhile the synthetic
-      // heartbeat lets consumers fall back to polling (spec 8.4).
+      // The browser reconnects on its own only after a dropped connection (readyState CONNECTING).
+      // A reconnect answered with an error status or a body that is not an event stream (nginx's
+      // 502 while the api restarts) closes the stream for good, so open a new one. Meanwhile the
+      // synthetic heartbeat lets consumers fall back to polling (spec 8.4).
       this.startFallback();
+      if (es.readyState === EventSource.CLOSED) this.scheduleReopen(es);
     };
     this.startFallback();
+  }
+
+  private scheduleReopen(closed: EventSource): void {
+    if (this.es !== closed || this.reopenTimer !== null) return;
+    const delay = this.reopenDelayMs;
+    this.reopenDelayMs = Math.min(delay * 2, STREAM_REOPEN_MAX_MS);
+    // closeStream() clears the timer, so a stream nobody listens to any more is not reopened.
+    this.reopenTimer = setTimeout(() => {
+      this.reopenTimer = null;
+      this.openStream();
+    }, delay);
   }
 
   private startFallback(): void {
@@ -259,6 +285,11 @@ export class ApiDataSource implements DataSource {
       this.es.close();
       this.es = null;
     }
+    if (this.reopenTimer !== null) {
+      clearTimeout(this.reopenTimer);
+      this.reopenTimer = null;
+    }
+    this.reopenDelayMs = STREAM_REOPEN_MIN_MS;
     if (this.fallbackTimer !== null) {
       clearInterval(this.fallbackTimer);
       this.fallbackTimer = null;
