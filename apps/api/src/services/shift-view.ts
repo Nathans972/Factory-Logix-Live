@@ -15,6 +15,7 @@ import {
   findCurrentShift,
   hourStartUtc,
   listShiftInstances,
+  resolveShiftVersion,
 } from '@fld/engine';
 import type { Db } from '../db/pool.js';
 import { getActiveJobNumbers, getCellsInRange } from '../db/repo/cells.js';
@@ -70,9 +71,12 @@ export async function resolveShiftInstance(
   if (shifts.length === 0) throw notFound('no shifts are configured');
 
   if (query.date && query.shift_id !== null && query.shift_id !== undefined) {
-    const shift = shifts.find((s) => s.id === query.shift_id);
-    if (!shift) throw notFound(`unknown shift ${query.shift_id}`);
+    const requested = shifts.find((s) => s.id === query.shift_id);
+    if (!requested) throw notFound(`unknown shift ${query.shift_id}`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(query.date)) throw badRequest('date must be YYYY-MM-DD');
+    // The page keeps the shift id when the date changes: use the version in effect that day, not this id's times.
+    const shift = resolveShiftVersion(shifts, requested, query.date);
+    if (!shift) throw notFound(`shift ${requested.name} was not in effect on ${query.date}`);
     return expandShiftInstance(shift, query.date, tz);
   }
   if (query.date || (query.shift_id !== null && query.shift_id !== undefined)) {

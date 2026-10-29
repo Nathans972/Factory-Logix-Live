@@ -292,6 +292,18 @@ function appliesOn(
   return def.days_of_week.includes(dayOfWeek(date));
 }
 
+/**
+ * The version of `shift` in effect on `date` (spec 10.2: past shifts are evaluated against the
+ * definition in effect that day). A versioned edit gives the new version a new id, so another
+ * version's id resolves to the same-named one whose effective range covers `date`; null if none does.
+ */
+export function resolveShiftVersion(shifts: ShiftDef[], shift: ShiftDef, date: LocalDate): ShiftDef | null {
+  const inEffect = (s: ShiftDef) => date >= s.effective_from && (s.effective_to === null || date <= s.effective_to);
+  if (inEffect(shift)) return shift;
+  const versions = shifts.filter((s) => s.name === shift.name && inEffect(s));
+  return versions.find((s) => s.days_of_week.includes(dayOfWeek(date))) ?? versions[0] ?? null;
+}
+
 function localDateRange(fromUtc: UtcMs, toUtc: UtcMs, tz: string): LocalDate[] {
   const first = addDays(localDateString(fromUtc, tz), -1);
   const last = localDateString(Math.max(toUtc, fromUtc), tz);

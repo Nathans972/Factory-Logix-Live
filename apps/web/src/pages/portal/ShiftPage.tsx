@@ -113,7 +113,12 @@ export function ShiftPage() {
   };
 
   const v = view.data;
-  const shifts = picker.data?.shifts ?? [];
+  // One button per shift: the versions in effect on the selected date, not every version (spec 10.2).
+  const allShifts = picker.data?.shifts ?? [];
+  const dateShifts = allShifts.filter((s) => date >= s.effective_from && (s.effective_to === null || date <= s.effective_to));
+  const shifts = dateShifts.length > 0 ? dateShifts : allShifts;
+  // The API evaluates the version in effect on the date, which may not be the id in the URL.
+  const selectedShiftId = v && v.shift.date === date ? v.shift.shift_id : shiftId;
 
   const breakdownRows = useMemo(() => {
     if (!v) return [];
@@ -150,7 +155,7 @@ export function ShiftPage() {
           <>
             {shifts.length > 0 && (
               <Segmented
-                value={shiftId == null ? '' : String(shiftId)}
+                value={selectedShiftId == null ? '' : String(selectedShiftId)}
                 onChange={(id) => pickShift(date, id === '' ? null : Number(id))}
                 options={shifts.map((s) => ({ value: String(s.id), label: s.name }))}
               />

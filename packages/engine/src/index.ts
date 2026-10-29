@@ -78,6 +78,8 @@ export interface EngineTimeApi {
   parseLocalTime(t: LocalTime): number;
   /** Concrete instance of a shift starting on `date` (end may be next day; if end <= start it is next day). Ignores days_of_week/effective range. */
   expandShiftInstance(shift: ShiftDef, date: LocalDate, tz: string): ShiftInstance;
+  /** The version of `shift` in effect on `date`: itself if its effective range covers the date, else the same-named version whose range does (a versioned edit gives the new version a new id). Null if none. */
+  resolveShiftVersion(shifts: ShiftDef[], shift: ShiftDef, date: LocalDate): ShiftDef | null;
   /** All shift instances (respecting days_of_week and effective_from/to) whose [start,end) overlaps [fromUtc,toUtc). Sorted by start. */
   listShiftInstances(shifts: ShiftDef[], fromUtc: UtcMs, toUtc: UtcMs, tz: string): ShiftInstance[];
   /** The instance in progress at `now`, or null. */

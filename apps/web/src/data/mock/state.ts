@@ -98,6 +98,7 @@ import {
   hourStartUtc,
   listShiftInstances,
   localDateString,
+  resolveShiftVersion,
   rollingWindowColumns,
 } from '@fld/engine';
 import { CellCache } from './simulator/cellcache';
@@ -954,7 +955,8 @@ export class MockStore {
     if (valid && Number.isFinite(anchor)) {
       if (shift_id != null) {
         const def = this.shiftDefs.find((s) => s.id === shift_id);
-        if (def !== undefined) return expandShiftInstance(def, date, this.tz);
+        const version = def === undefined ? null : resolveShiftVersion(this.shiftDefs, def, date);
+        if (version !== null) return expandShiftInstance(version, date, this.tz);
       }
       const insts = listShiftInstances(
         this.shiftDefs,
