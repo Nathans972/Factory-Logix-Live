@@ -27,7 +27,7 @@ const H10 = '2025-06-10T10:00-04:00';
 
 /** What the collector does after every poll: recompute the previous and the current hour. */
 function pollAt(nowIso: string) {
-  const now = ms(nowIso);
+  const now = ms(`${nowIso}-04:00`);
   const current = ms(nowIso.slice(0, 13) + ':00-04:00');
   return computeHourCells({
     steps,
